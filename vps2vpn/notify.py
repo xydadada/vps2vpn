@@ -76,6 +76,20 @@ def find_chat(token):
     return None, None
 
 
+
+def _owner_private_message(message, chat_id):
+    """A shared chat ID is not a user identity; privileged commands need a human private sender."""
+    if not isinstance(message, dict):
+        return False
+    chat, sender = message.get('chat') or {}, message.get('from') or {}
+    return (isinstance(chat, dict) and isinstance(sender, dict)
+            and chat.get('type') == 'private'
+            and chat.get('id') is not None
+            and str(chat['id']) == str(chat_id)
+            and str(sender.get('id')) == str(chat_id)
+            and not sender.get('is_bot', False))
+
+
 def send_file(name, data, caption='', s=None):
     """Send a document (e.g. the daily backup) to the owner's chat. Never raises."""
     s = _target(s)
@@ -145,7 +159,7 @@ def bot_loop(stop, handle, log):
                 continue              # old messages from before the panel started: do not act on them
             msg = upd.get('message') or {}
             text = (msg.get('text') or '').strip()
-            if str((msg.get('chat') or {}).get('id')) != str(s['tg_chat']) or not text.startswith('/'):
+            if not text.startswith('/') or not _owner_private_message(msg, s['tg_chat']):
                 continue
             try:
                 out = handle(text)
