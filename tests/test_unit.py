@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 import urllib.parse
 
 ROOT = tempfile.mkdtemp(prefix='v2v-test-')
@@ -337,16 +338,43 @@ class Ops(Base):
     def test_notify_quiet_without_config(self):
         self.assertFalse(notify.send('hi'))
 
+    def test_unverified_legacy_telegram_chat_cannot_send_secrets(self):
+        # A pre-upgrade saved private chat ID is not proof that the owner paired it.
+        db.set_settings(tg_token='123456:' + 'A' * 35, tg_chat='42',
+                        tg_bot=True, setup_done=True, tg_verified=False)
+        with mock.patch.object(notify, '_call') as call, \
+             mock.patch.object(notify.urllib.request, 'urlopen') as upload:
+            self.assertFalse(notify.send('a private username'))
+            self.assertFalse(notify.send_file('backup.json', b'private credentials'))
+        call.assert_not_called()
+        upload.assert_not_called()
+
+        stop = mock.Mock()
+        stop.is_set.side_effect = [False, True]
+        with mock.patch.object(notify, '_call') as call:
+            notify.bot_loop(stop, lambda command: 'secret', lambda line: None)
+        call.assert_not_called()
+
+    def test_restoring_a_backup_always_revokes_telegram_pairing(self):
+        db.set_settings(tg_token='123456:' + 'A' * 35, tg_chat='42',
+                        tg_verified=True, tg_bot=True, setup_done=True)
+        backup = db.export_all()
+        self.assertTrue(backup['settings']['tg_verified'])
+        db.import_all(backup)
+        self.assertFalse(db.settings()['tg_verified'])
+        self.assertEqual(db.settings()['tg_chat'], '42')
+        self.assertFalse(notify.send('should not reach an old owner'))
+
     def test_notify_uses_the_telegram_target_of_now_not_a_stale_snapshot(self):
         sent = []
         orig = notify._call
         notify._call = lambda token, method, params: sent.append((token, params.get('chat_id'))) or {'ok': True}
         try:
-            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='111')
+            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='111', tg_verified=True)
             stale = db.settings()
-            db.set_settings(tg_token='', tg_chat='')            # owner switched alerts off meanwhile
+            db.set_settings(tg_token='', tg_chat='', tg_verified=False)  # owner switched alerts off meanwhile
             self.assertFalse(notify.send('backup', s=stale))
-            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='222')   # ... or moved them to another chat
+            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='222', tg_verified=True)  # freshly rebound chat
             notify.send('backup', s=stale)
             self.assertEqual(sent, [('1234567:' + 'a' * 35, '222')])
         finally:
@@ -584,6 +612,12 @@ class Web(Base):
             self.assertFalse(db.settings()['tg_chat'])
         finally:
             notify.find_chat = orig
+        # An existing positive chat ID from before pairing is still untrusted.
+        db.set_settings(tg_token='123456:' + 'A' * 35, tg_chat='999', tg_verified=False)
+        st, body, _ = self.req('GET', self.pp + '/api/state')
+        state = json.loads(body)['settings']
+        self.assertFalse(state['tg_ready'])
+        self.assertTrue(state['tg_repair_needed'])
         orig_send = notify.send
         notify.find_chat = lambda tok, challenge: ('42', 'Owner') if challenge == 'a' * 32 else (None, None)
         notify.send = lambda *args, **kwargs: True
@@ -592,6 +626,7 @@ class Web(Base):
                                    {'token': '123456:' + 'A' * 35, 'challenge': 'a' * 32})
             self.assertEqual(st, 200)
             self.assertEqual(db.settings()['tg_chat'], '42')
+            self.assertTrue(db.settings()['tg_verified'])
         finally:
             notify.find_chat, notify.send = orig, orig_send
         # the token never leaves the server
@@ -599,6 +634,10 @@ class Web(Base):
         st, body, _ = self.req('GET', self.pp + '/api/state')
         self.assertNotIn(b'BBBBBBBB', body)
         self.assertTrue(json.loads(body)['settings']['tg_ready'])
+        self.assertFalse(json.loads(body)['settings']['tg_repair_needed'])
+        st, _, _ = self.req('POST', self.pp + '/api/telegram', {'off': True})
+        self.assertEqual(st, 200)
+        self.assertFalse(db.settings()['tg_verified'])
 
     def test_login_rate_limit(self):
         db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
