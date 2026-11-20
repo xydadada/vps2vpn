@@ -2,7 +2,7 @@
 
 ## 0.2.5
 
-Follow-up on the integrated review of all earlier audit reports, plus review PRs #9, #11, #12, #18, #20, #22, #24–#26, #30, #31, #34, #36, #39 and #41–#44.
+Follow-up on the integrated review of all earlier audit reports, plus review PRs #9, #11, #12, #18, #20, #22, #24–#26, #30, #31, #34, #36, #39, #41–#44 and #46.
 
 **Security**
 - Telegram pairing: the panel shows a one-time `/bind` code; only the private chat whose own user sends it can become the alert and backup recipient (from #11). Bot commands are answered only in that private chat and only when the owner sent them, never from a group that happens to share the id (from #9).
@@ -11,6 +11,7 @@ Follow-up on the integrated review of all earlier audit reports, plus review PRs
 - The health check says plainly when subscription links use plain HTTP (self-signed certificate), and how to get them encrypted.
 - Switching the Telegram bot off (or to another chat) also stops commands already in progress: no reply, backup or remaining text goes out under the old setting (from #26).
 - The main server re-checks a joined server's DNS name on every sync and connects only to the public addresses it checked, so a name that later points inside the network is refused; a node's refusal or malformed answer is no longer taken as a successful sync (from #24).
+- Changing a subscription link (by the admin, in bulk, or by the member) also ends every member-centre login made with the old one, so a leaked link cannot keep a session open; a member who changes it from the member centre stays logged in with a new session (from #46).
 - **Upgrade note:** a Telegram recipient saved by an older version (or restored from a backup) is no longer trusted on its own: alerts, backups and bot commands pause until you send the panel's `/bind` command once. The System page says so; the saved bot token can be reused (from #36).
 - Turning a user or a joined server off with `"enabled": "false"` (or any text) now really turns it off; values that are neither true nor false are refused with a 400 (from #31).
 - Bulk actions apply once per account even when an id is listed twice (no double quota or expiry), and refuse an id list that is not an array of whole numbers (from #34).

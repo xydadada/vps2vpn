@@ -1109,6 +1109,12 @@ class MemberWeb(tu.Base):
         self.assertIsNone(db.member_session(stolen))
         self.assertIsNone(db.member_session(second))
         self.assertEqual(db.member_session(unaffected), peer['id'])
+        # The member who rotated keeps a fresh session; the old cookies are dead.
+        fresh = self.cookie.split('=', 1)[1]
+        self.assertNotIn(fresh, (stolen, second))
+        self.assertEqual(db.member_session(fresh), victim['id'])
+        self.assertEqual(self.req('GET', '/mem/api/me')[0], 200)
+        self.cookie = 'v2vm=' + stolen
         self.assertEqual(self.req('GET', '/mem/api/me')[0], 401)
         self.assertEqual(self.req('GET', '/s/%s/api/me' % old_link)[0], 404)
         self.assertEqual(self.req('GET', '/s/%s/api/me' % new_link)[0], 200)

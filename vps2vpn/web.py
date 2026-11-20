@@ -1505,8 +1505,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             apply_async()
             nu = db.user(u['id'])
             jobs.log('%s changed their own subscription link' % nu['name'])
+            # Rotation ends every member session (a leaked link may have opened one). The member who
+            # rotated from the member centre keeps going with a fresh session instead of being logged out.
+            headers = None if by_link else {'Set-Cookie': self.member_cookie(db.new_member_session(u['id']))}
             return self.json({'ok': True, 'sub_url': '%s/s/%s' % (self.base_url(s), nu['sub_token']),
-                              'base': '/s/%s/' % nu['sub_token'] if by_link else ''})
+                              'base': '/s/%s/' % nu['sub_token'] if by_link else ''}, headers=headers)
         if api == 'report':
             # Sent by the vps2vpn app when a line keeps failing (or works again); shown to the admin.
             try:
