@@ -298,15 +298,19 @@ def doh_servers(max_age=86400):
 
 # --- addresses ---------------------------------------------------------------------
 def public_ip(v6=False):
-    """Ask Cloudflare's trace endpoint which address we come from (cloud servers are often behind NAT)."""
+    """Ask Cloudflare for a validated globally routable public IP address."""
     host = '[2606:4700:4700::1111]' if v6 else '1.1.1.1'
     ctx = ssl.create_default_context()
     for url in ('https://%s/cdn-cgi/trace' % host, 'https://one.one.one.one/cdn-cgi/trace'):
         try:
-            with urllib.request.urlopen(url, timeout=6, context=ctx) as resp:
-                text = resp.read(4096).decode()
-            raw = re.search(r'^ip=(.+)
-        except (OSError, AttributeError, ValueError):
+            with urllib.request.urlopen(url, timeout=6, context=ctx) as response:
+                text = response.read(4096).decode()
+            raw = next((line[3:].strip() for line in text.splitlines()
+                        if line.startswith('ip=')), '')
+            addr = ipaddress.ip_address(raw)
+            if (addr.version == 6) == v6 and addr.is_global:
+                return str(addr)
+        except (OSError, AttributeError, ValueError, UnicodeError):
             continue
     return ''
 
