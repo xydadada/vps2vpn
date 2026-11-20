@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
 from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, system, web
@@ -226,6 +227,45 @@ class Monitor(tu.Base):
         self.assertEqual(sm['latest']['region'], 'SG')
         with open(monitor.FILE, encoding='utf-8') as f:
             self.assertEqual(len(json.load(f)), 3)
+
+
+class RuleFileColdCache(tu.Base):
+    """Cold Shadowrocket requests must not turn invalid upstream data into a permanent cache."""
+
+    def test_empty_converted_rules_do_not_get_cached(self):
+        paths.ensure_dirs()
+        filename = rules.local_file('private', 'shadowrocket')
+        sent = []
+        handler = type('HandlerStub', (), {
+            'send': lambda _, *args, **kwargs: sent.append((args, kwargs)),
+            'not_found': lambda _: self.fail('known rule set refused'),
+        })()
+        with mock.patch.object(rules, 'fetch_converted', side_effect=[
+                b'\\n', b'DOMAIN-SUFFIX,example.org\\n']) as download:
+            web.Handler.rule_file(handler, 'private', 'list')
+            self.assertEqual(sent[-1][0][0], 503)
+            self.assertFalse(os.path.exists(filename))
+            web.Handler.rule_file(handler, 'private', 'list')
+            self.assertEqual(sent[-1][0][:2], (200, b'DOMAIN-SUFFIX,example.org\\n'))
+            self.assertTrue(os.path.exists(filename))
+            web.Handler.rule_file(handler, 'private', 'list')
+            self.assertEqual(download.call_count, 2)
+            self.assertEqual(sent[-1][0][0], 200)
+
+    def test_malformed_converted_rule_lines_never_overwrite_cold_cache(self):
+        paths.ensure_dirs()
+        filename = rules.local_file('private', 'shadowrocket')
+        sent = []
+        handler = type('HandlerStub', (), {
+            'send': lambda _, *args, **kwargs: sent.append(args),
+            'not_found': lambda _: self.fail('known rule set refused'),
+        })()
+        samples = (b'<html>temporary error</html>', b'DOMAIN-SUFFIX,example.org\\ninvalid', b'DOMAIN,')
+        with mock.patch.object(rules, 'fetch_converted', side_effect=samples):
+            for _ in samples:
+                web.Handler.rule_file(handler, 'private', 'list')
+                self.assertEqual(sent[-1][0], 503)
+                self.assertFalse(os.path.exists(filename))
 
 
 class Shadowrocket(tu.Base):
