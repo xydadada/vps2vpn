@@ -14,8 +14,8 @@ import ssl
 import threading
 import time
 import unittest
+import zlib
 import unittest.mock
-from unittest import mock
 from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
@@ -328,10 +328,59 @@ class Monitor(tu.Base):
             self.assertEqual(len(json.load(f)), 3)
 
 
+# Real zstd frame generated from the bytes 'MRS!fixture'. This verifies outer
+# framing only; parsing a full rule set remains the responsibility of the core.
+MRS_ZSTD_FRAME = bytes.fromhex('28b52ffd04585900004d525321666978747572652c1026bc')
+
+
 class RuleMirrorDownloads(tu.Base):
+    def test_actual_compressed_mrs_frame_is_accepted_but_inner_marker_is_not(self):
+        # The real frame was made with zstd('MRS!fixture'). MRS! is INSIDE it.
+        with mock.patch.object(rules, '_fetch', return_value=MRS_ZSTD_FRAME) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'clash'), MRS_ZSTD_FRAME)
+            fetch.assert_called_once()
+        with mock.patch.object(rules, '_fetch', side_effect=[b'MRS\x01uncompressed', MRS_ZSTD_FRAME]) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'clash'), MRS_ZSTD_FRAME)
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_singbox_srs_frame_is_accepted_after_plaintext_error(self):
+        valid = b'SRS\x01' + zlib.compress(b'\x00')  # SRS version 1; empty compressed rules
+        with mock.patch.object(rules, '_fetch',
+                               side_effect=[b'Access denied: upstream temporary failure', valid]) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'singbox'), valid)
+            self.assertEqual(fetch.call_count, 2)
+        with mock.patch.object(rules, '_fetch', return_value=valid) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'singbox'), valid)
+            self.assertEqual(fetch.call_count, 1)
+
+    def test_plaintext_200_errors_never_replace_cached_mrs_or_srs(self):
+        paths.ensure_dirs()
+        old = {
+            'clash': MRS_ZSTD_FRAME,
+            'singbox': b'SRS\x01' + zlib.compress(b'\x00'),
+        }
+        for fmt, payload in old.items():
+            paths.write_atomic(rules.local_file('private', fmt), payload, 0o644)
+        logs = []
+        with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
+             mock.patch.object(rules, 'FORMATS', ('clash', 'singbox')), \
+             mock.patch.object(rules, '_fetch',
+                               return_value=b'Access denied: upstream temporary failure'):
+            self.assertEqual(rules.refresh(log=logs.append), 0)
+        for fmt, payload in old.items():
+            with open(rules.local_file('private', fmt), 'rb') as f:
+                self.assertEqual(f.read(), payload)
+        self.assertEqual(sum('download failed' in line for line in logs), 2)
+
+    def test_shadowrocket_text_conversion_remains_supported(self):
+        with mock.patch.object(rules, '_fetch', return_value=b'+.example.org\n'):
+            self.assertEqual(rules.fetch_converted('private', 'shadowrocket'),
+                             b'DOMAIN-SUFFIX,example.org\n')
+
+
     def test_oversized_download_rejected_and_old_mirror_retained(self):
         paths.ensure_dirs()
-        old = b'MRS!previous-valid-rule-data'
+        old = MRS_ZSTD_FRAME
         dst = rules.local_file('private', 'clash')
         paths.write_atomic(dst, old, 0o644)
         logs = []
@@ -346,7 +395,7 @@ class RuleMirrorDownloads(tu.Base):
         self.assertTrue(any('download failed' in line for line in logs))
 
     def test_http_200_html_upstream_falls_back_to_cdn(self):
-        valid = b'MRS!controlled-rule-payload'
+        valid = MRS_ZSTD_FRAME
         with mock.patch.object(rules, '_fetch',
                                side_effect=[b'<!DOCTYPE html><html>error</html>', valid]) as fetch:
             self.assertEqual(rules.fetch_converted('private', 'clash'), valid)
@@ -357,7 +406,7 @@ class RuleMirrorDownloads(tu.Base):
     def test_both_mirrors_error_pages_do_not_overwrite_existing_rules(self):
         paths.ensure_dirs()
         dst = rules.local_file('private', 'clash')
-        old = b'MRS!the-existing-good-rule-file'
+        old = MRS_ZSTD_FRAME
         paths.write_atomic(dst, old, 0o644)
         logs = []
         with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
