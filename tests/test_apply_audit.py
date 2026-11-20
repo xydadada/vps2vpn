@@ -3,6 +3,7 @@ import threading
 import unittest
 from unittest import mock
 
+from tests import test_unit as _test_environment
 from vps2vpn import web
 
 
