@@ -163,6 +163,7 @@ def connect():
             _conn = sqlite3.connect(paths.DB, check_same_thread=False, isolation_level=None)
             _conn.row_factory = sqlite3.Row
             _conn.execute('PRAGMA journal_mode=WAL')
+            _conn.execute('PRAGMA busy_timeout=15000')
             # Keys and password hashes live here: owner-only, even inside the owner-only data directory.
             # (SQLite gives the -wal/-shm files the same mode as the database.)
             for f in (paths.DB, paths.DB + '-wal', paths.DB + '-shm'):
@@ -308,12 +309,20 @@ def rotate_user(uid):
 
 
 def delete_user(uid):
-    x('DELETE FROM users WHERE id=?', (uid,))
-    x('DELETE FROM traffic WHERE user_id=?', (uid,))
-    x('DELETE FROM member_sessions WHERE user_id=?', (uid,))
-    x('DELETE FROM requests WHERE user_id=?', (uid,))
-    x("UPDATE invites SET status='revoked' WHERE inviter=? AND status='unused'", (uid,))
-    x('UPDATE users SET invited_by=0, invite_deduct=0 WHERE invited_by=?', (uid,))
+    with _lock:
+        c = connect()
+        c.execute('BEGIN')
+        try:
+            c.execute('DELETE FROM users WHERE id=?', (uid,))
+            c.execute('DELETE FROM traffic WHERE user_id=?', (uid,))
+            c.execute('DELETE FROM member_sessions WHERE user_id=?', (uid,))
+            c.execute('DELETE FROM requests WHERE user_id=?', (uid,))
+            c.execute("UPDATE invites SET status='revoked' WHERE inviter=? AND status='unused'", (uid,))
+            c.execute('UPDATE users SET invited_by=0, invite_deduct=0 WHERE invited_by=?', (uid,))
+            c.execute('COMMIT')
+        except BaseException:
+            c.execute('ROLLBACK')
+            raise
 
 
 def add_traffic(uid, up, down, now=None):
@@ -321,11 +330,15 @@ def add_traffic(uid, up, down, now=None):
     with _lock:
         c = connect()
         c.execute('BEGIN')
-        c.execute('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
-                  (up, down, int(now or time.time()), uid))
-        c.execute('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
-                  'DO UPDATE SET up=up+excluded.up, down=down+excluded.down', (day, uid, up, down))
-        c.execute('COMMIT')
+        try:
+            c.execute('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
+                      (up, down, int(now or time.time()), uid))
+            c.execute('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
+                      'DO UPDATE SET up=up+excluded.up, down=down+excluded.down', (day, uid, up, down))
+            c.execute('COMMIT')
+        except BaseException:
+            c.execute('ROLLBACK')
+            raise
 
 
 def traffic_days(days=30):
@@ -377,11 +390,32 @@ def end_member_session(tok, uid=None):
         x('DELETE FROM member_sessions WHERE token=?', (tok,))
 
 
+def end_other_member_sessions(uid, keep):
+    x('DELETE FROM member_sessions WHERE user_id=? AND token<>?', (uid, keep or ''))
+
+
+def end_all_member_sessions():
+    x('DELETE FROM member_sessions')
+
+
 # --- invites, requests, events ---------------------------------------------------
+INVITE_COLS = ('id', 'code', 'kind', 'inviter', 'quota_gb', 'expire_days', 'reset_day',
+               'max_uses', 'uses', 'used_by', 'valid_until', 'status', 'note', 'created_at')
+REQUEST_COLS = ('id', 'user_id', 'add_gb', 'reason', 'status', 'answer', 'created_at', 'decided_at')
+
+
 def invites(inviter=None):
     if inviter is None:
         return [dict(r) for r in q('SELECT * FROM invites ORDER BY id DESC LIMIT 500')]
     return [dict(r) for r in q('SELECT * FROM invites WHERE inviter=? ORDER BY id DESC LIMIT 100', (inviter,))]
+
+
+def member_live_invites(inviter, now=None):
+    """All unused, unexpired invite codes created by `inviter` (without the display LIMIT)."""
+    now = int(time.time()) if now is None else int(now)
+    return [dict(r) for r in q(
+        "SELECT * FROM invites WHERE inviter=? AND status='unused' AND valid_until>? AND uses<max_uses",
+        (inviter, now))]
 
 
 def invite(iid):
@@ -397,11 +431,17 @@ def invite_by_code(code):
 def add_invite(**kv):
     kv.setdefault('created_at', int(time.time()))
     cols = list(kv)
+    bad = [c for c in cols if c not in INVITE_COLS]
+    if bad:
+        raise KeyError(bad[0])
     return x('INSERT INTO invites(%s) VALUES(%s)' % (','.join(cols), ','.join('?' * len(cols))), [kv[c] for c in cols])
 
 
 def update_invite(iid, **kv):
     if kv:
+        bad = [k for k in kv if k not in INVITE_COLS or k == 'id']
+        if bad:
+            raise KeyError(bad[0])
         x('UPDATE invites SET %s WHERE id=?' % ','.join(k + '=?' for k in kv), list(kv.values()) + [iid])
 
 
@@ -414,6 +454,11 @@ def requests(user_id=None, status=None):
         sql += ' AND status=?'
         args.append(status)
     return [dict(r) for r in q(sql + ' ORDER BY id DESC LIMIT 200', args)]
+
+
+def request_by_id(rid):
+    rows = q('SELECT * FROM requests WHERE id=?', (rid,))
+    return dict(rows[0]) if rows else None
 
 
 def add_request(user_id, add_gb, reason):
@@ -462,6 +507,7 @@ def import_all(data):
     cols = ('id', 'name', 'uuid', 'hy2_pass', 'sub_token', 'quota_gb', 'expire_at', 'reset_day', 'used_up',
             'used_down', 'enabled', 'disabled_reason', 'note', 'last_seen', 'last_reset', 'created_at',
             'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days')
+    table_cols = {'invites': INVITE_COLS, 'requests': REQUEST_COLS}
     with _lock:
         c = connect()
         c.execute('BEGIN')
@@ -472,11 +518,13 @@ def import_all(data):
                 if 'id' not in u:
                     vals[0] = None                     # backups from before ids were kept
                 c.execute('INSERT INTO users(%s) VALUES(%s)' % (','.join(cols), ','.join('?' * len(cols))), vals)
-            for table in ('invites', 'requests'):
+            for table, allowed in table_cols.items():
                 if table in data:
                     c.execute('DELETE FROM ' + table)
                     for row in data[table]:
-                        ks = list(row)
+                        ks = [k for k in row if k in allowed]
+                        if not ks:
+                            continue
                         c.execute('INSERT INTO %s(%s) VALUES(%s)' % (table, ','.join(ks), ','.join('?' * len(ks))),
                                   [row[k] for k in ks])
             for k, v in keep.items():

@@ -60,7 +60,11 @@ def _active(u, now):
 
 def deducting(u, now=None):
     """Is this account currently charged to the person who invited it?"""
-    return bool(u.get('invited_by')) and u.get('invite_deduct', 0) > 0 and _active(u, now or time.time())
+    now = now or time.time()
+    not_expired = not (u['expire_at'] and u['expire_at'] <= now)
+    # Keep quota-exhausted invitees charged so their spent quota cannot be recycled infinitely.
+    charged = bool(u['enabled']) or u.get('disabled_reason') == 'quota'
+    return bool(u.get('invited_by')) and u.get('invite_deduct', 0) > 0 and charged and not_expired
 
 
 def given_away(uid, users=None, now=None):
@@ -84,13 +88,15 @@ def _live(inv, now):
 def reserved(uid, now=None):
     """GB promised by this member's still-usable codes (quota x remaining uses)."""
     now = now or time.time()
-    return sum(i['quota_gb'] * (i['max_uses'] - i['uses']) for i in db.invites(uid) if i['kind'] == 'member' and _live(i, now))
+    return sum(i['quota_gb'] * (i['max_uses'] - i['uses'])
+               for i in db.member_live_invites(uid, now) if i['kind'] == 'member')
 
 
 def _room(u, now):
     if not u['quota_gb']:
         return None
-    return u['quota_gb'] - given_away(u['id'], None, now) - reserved(u['id'], now) - MIN_KEEP_GB
+    used_gb = (u.get('used_up', 0) + u.get('used_down', 0)) / (1024 ** 3)
+    return u['quota_gb'] - used_gb - given_away(u['id'], None, now) - reserved(u['id'], now) - MIN_KEEP_GB
 
 
 def capacity(u, now=None):
@@ -134,7 +140,7 @@ def create_invite(kind, quota_gb, valid_days, max_uses=1, inviter=0, expire_days
         if grant * times > room + 1e-9:
             raise Refused('not enough quota: %d x %g GB is more than the %.2f GB you can share '
                           '(you always keep at least 1 GB)' % (times, grant, room))
-        if by_member and sum(1 for i in db.invites(inviter) if _live(i, now)) >= MEMBER_PENDING_MAX:
+        if by_member and len(db.member_live_invites(inviter, now)) >= MEMBER_PENDING_MAX:
             raise Refused('at most %d unused codes; use or revoke one first' % MEMBER_PENDING_MAX)
         rec.update(inviter=inviter, quota_gb=grant, max_uses=times, reset_day=u['reset_day'])
     elif kind == 'admin':
@@ -238,7 +244,7 @@ def request_more(uid, add_gb, reason):
 
 @_serial
 def decide(rid, approve, add_gb=None, answer=''):
-    r = next((x for x in db.requests() if x['id'] == rid), None)
+    r = db.request_by_id(rid)
     if not r or r['status'] != 'pending':
         raise Refused('no pending request with that id')
     u = db.user(r['user_id'])

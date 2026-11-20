@@ -238,11 +238,11 @@ EOF
 }
 
 show_result() {
-  local json url ports done cloud how
+  local json url ports setup_done cloud how
   json="$1"
   url=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
   ports=$(printf '%s' "$json" | python3 -c 'import json,sys; print("  ".join("%s/%s" % (p, t) for t, p in json.load(sys.stdin)["ports"]))')
-  done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
+  setup_done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
   cloud=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud") or "")')
   how=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud_firewall") or "")')
   echo
@@ -255,7 +255,7 @@ show_result() {
     echo "${c_ok}${c_b}vps2vpn is ready. / 已装好，账号已自动建好。${c_0}"
     return
   fi
-  if [ "$done" = 1 ]; then
+  if [ "$setup_done" = 1 ]; then
     echo "${c_ok}${c_b}vps2vpn is up to date. Users and settings are kept.${c_0}"
     echo "  已更新到最新版，用户和设置都保留。面板地址："
     echo

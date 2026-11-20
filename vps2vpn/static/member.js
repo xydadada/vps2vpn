@@ -12,7 +12,7 @@ const T = {
     art_1: '三种协议随时切换', art_2: '一键导入 Clash / 小火箭', art_3: '用量透明，按天可查',
     logout: '退出', wrong: '用户名或密码错误', mismatch: '两次密码不一样',
     used: '已用', quota: '总额度', left: '剩余', unlimited: '不限量', expires: '到期', never: '永久', reset: '下次重置', none: '不重置',
-    down: '下行', up_: '上行', status: '状态', ok: '正常', paused: '已停用', r_quota: '流量用完了', r_expired: '已到期', r_manual: '被管理员停用', r_remote: '被主服务器停用',
+    down: '下行', up_: '上行', status: '状态', ok: '正常', paused: '已停用', r_quota: '流量用完了', r_expired: '已到期', r_manual: '被管理员停用', r_remote: '被主服务器停用', r_devices: '同时在线设备超限',
     shared: '分给邀请的人', invited_by: '邀请人', online: '在线', online_now: '正在使用', devices: '个设备', offline: '当前未连接',
     import: '导入到 App', import_tip: '手机上直接点按钮；电脑上复制链接，在 App 里「从 URL 导入」。订阅会自动更新。', copy: '复制订阅链接',
     sr_full: '小火箭（完整配置：节点+分流+DNS）', sr_nodes: '小火箭（只导入节点）', scan: '手机扫码导入',
@@ -42,7 +42,7 @@ const T = {
     art_1: 'Three protocols to switch between', art_2: 'One-tap import into Clash / Shadowrocket', art_3: 'Clear usage, day by day',
     logout: 'Log out', wrong: 'Wrong name or password', mismatch: 'Passwords do not match',
     used: 'Used', quota: 'Quota', left: 'Left', unlimited: 'unlimited', expires: 'Expires', never: 'never', reset: 'Next reset', none: 'never',
-    down: 'down', up_: 'up', status: 'Status', ok: 'active', paused: 'paused', r_quota: 'quota used up', r_expired: 'expired', r_manual: 'paused by the admin', r_remote: 'paused by the main server',
+    down: 'down', up_: 'up', status: 'Status', ok: 'active', paused: 'paused', r_quota: 'quota used up', r_expired: 'expired', r_manual: 'paused by the admin', r_remote: 'paused by the main server', r_devices: 'too many devices',
     shared: 'Shared with invitees', invited_by: 'Invited by', online: 'Online', online_now: 'in use now', devices: 'device(s)', offline: 'not connected',
     import: 'Import into an app', import_tip: 'On a phone tap a button; on a computer copy the link and use "Import from URL". It updates itself.', copy: 'Copy subscription link',
     sr_full: 'Shadowrocket (full config: nodes + routing + DNS)', sr_nodes: 'Shadowrocket (nodes only)', scan: 'Scan with your phone',
@@ -138,17 +138,18 @@ function renderLogin(code) {
 async function renderHome() {
   try { M.me = await api('me'); } catch (e) { if (e.message !== 'login') document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
   const me = M.me, used = me.used_up + me.used_down, q = (me.quota_eff || 0) * GB;
-  const reason = {quota: 'r_quota', expired: 'r_expired', manual: 'r_manual', remote: 'r_remote'}[me.disabled_reason] || 'r_manual';
+  const reason = {quota: 'r_quota', expired: 'r_expired', manual: 'r_manual', remote: 'r_remote', devices: 'r_devices'}[me.disabled_reason] || 'r_manual';
   const top = h('header', {class: 'm-top'}, brand(), h('div', {class: 'm-acts'},
     h('div', {class: 'seg', role: 'group'}, ['auto', 'light', 'dark'].map(v => h('button', {'data-theme-btn': v}, icon(v === 'auto' ? 'auto' : v === 'light' ? 'sun' : 'moon')))),
-    M.hello.mode === 'login' ? h('button', {class: 'btn ghost', onclick: async () => { await api('logout', {}); renderLogin(); }}, icon('out'), t('logout')) : null));
+    M.hello.mode === 'login' ? h('button', {class: 'btn ghost', onclick: async () => { try { await api('logout', {}); renderLogin(); } catch (e) { err(e); } }}, icon('out'), t('logout')) : null));
   const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
   const stat = (k, v) => h('div', null, h('small', null, k), h('b', null, v));
   const on = me.online;
+  const dev = on ? (on.devices != null ? on.devices : on.ips.length) : 0;
   const hero = h('div', {class: 'panel m-hero'}, h('div', {class: 'panel-b'},
     h('div', {class: 'm-hello'}, h('div', null, h('div', {class: 'kicker'}, t('kicker')), h('h1', null, me.name)),
       me.enabled ? chip('ok', t('ok')) : chip('bad', t(reason)),
-      on ? chip('info', t('online_now') + (on.ips.length ? ' · ' + on.ips.length + ' ' + t('devices') : '')) : chip('off', t('offline'))),
+      on ? chip('info', t('online_now') + (dev ? ' · ' + dev + ' ' + t('devices') : '')) : chip('off', t('offline'))),
     h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats m-stats'},
       stat(t('used'), fmt.bytes(used)), stat(t('quota'), q ? fmt.bytes(q) : t('unlimited')),
       stat(t('left'), q ? fmt.bytes(Math.max(0, q - used)) : t('unlimited')), stat(t('expires'), dateStr(me.expire_at)),

@@ -30,6 +30,7 @@ UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 PASS_RE = re.compile(r'^[!-~]{6,128}$')   # printable ASCII, no spaces
 _wake = threading.Event()
 _lock = threading.Lock()
+_node_lock = threading.Lock()
 
 
 # --- node side -------------------------------------------------------------------------
@@ -48,7 +49,7 @@ def public_info(s):
 
 
 def join_code(s, base_url):
-    crt, _ = certs.current(s['public_host'])
+    crt, _ = certs.current(s.get('domain') or s['public_host'])
     try:
         pin = certs.fingerprint(crt)
     except OSError:
@@ -78,55 +79,58 @@ def parse_join_code(code):
 
 def handle_sync(s, body, base_url=''):
     """Called on a node by its main server. Returns the node's answer."""
-    master = str(body.get('master') or 'main')[:24]
-    master_id = str(body.get('master_id') or '')[:64]
-    if s['node_master_id'] and master_id and master_id != s['node_master_id']:
-        # Two main servers would delete each other's accounts here every minute.
-        return {'error': 'this server already belongs to main server "%s"; on it press "New join code" to free it'
-                         % s['node_master'], 'conflict': True}
-    wanted = {}
-    for u in body.get('users') or []:
-        try:
-            w = {'name': str(u['name'])[:24], 'uuid': str(u['uuid']), 'hy2_pass': str(u['hy2_pass']),
-                 'enabled': 1 if u.get('enabled') else 0}
-            if UUID_RE.match(w['uuid']) and PASS_RE.match(w['hy2_pass']):   # a bad value would break the cores
-                wanted[int(u['id'])] = w
-        except (KeyError, TypeError, ValueError):
-            continue
-    changed = False
-    mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
-    for rid, w in wanted.items():
-        u = mine.get(rid)
-        if u is None:
-            name = '%s@%s' % (w['name'], master)
-            if db.user_by_name(name):
-                name = '%s#%d' % (name[:26], rid)
-            uid = db.add_user(name[:32], note='from main server %s' % master, remote_id=rid, uuid=w['uuid'],
-                              hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                              disabled_reason='' if w['enabled'] else 'remote')
-            mine[rid] = db.user(uid)
-            changed = True
-        elif (u['uuid'], u['hy2_pass'], u['enabled']) != (w['uuid'], w['hy2_pass'], w['enabled']):
-            db.update_user(u['id'], uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                           disabled_reason='' if w['enabled'] else 'remote')
-            changed = True
-    for rid, u in list(mine.items()):
-        if rid not in wanted:
-            db.delete_user(u['id'])
-            del mine[rid]
-            changed = True
-    if s['node_master'] != master or (master_id and s['node_master_id'] != master_id):
-        db.set_settings(node_master=master, node_master_id=master_id or s['node_master_id'])
-    if changed:
-        from . import web
-        web.apply_async()
-    from . import system
-    h = system.health()
-    return {'ok': True, 'info': public_info(db.settings()),
-            'idmap': {str(rid): u['id'] for rid, u in mine.items()},
-            'traffic': {str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()},
-            'health': {k: h.get(k) for k in ('load', 'cpus', 'mem_total', 'mem_used', 'uptime', 'rx_rate', 'tx_rate')},
-            'version': __import__('vps2vpn').VERSION, 'at': int(time.time())}
+    with _node_lock:
+        s = db.settings()
+        master = str(body.get('master') or 'main')[:24]
+        master_id = str(body.get('master_id') or '')[:64]
+        if s['node_master_id'] and master_id and master_id != s['node_master_id']:
+            # Two main servers would delete each other's accounts here every minute.
+            return {'error': 'this server already belongs to main server "%s"; on it press "New join code" to free it'
+                             % s['node_master'], 'conflict': True}
+        wanted = {}
+        for u in body.get('users') or []:
+            try:
+                w = {'name': str(u['name'])[:24], 'uuid': str(u['uuid']), 'hy2_pass': str(u['hy2_pass']),
+                     'enabled': 1 if u.get('enabled') else 0}
+                if UUID_RE.match(w['uuid']) and PASS_RE.match(w['hy2_pass']):   # a bad value would break the cores
+                    wanted[int(u['id'])] = w
+            except (KeyError, TypeError, ValueError):
+                continue
+        changed = False
+        mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
+        for rid, w in wanted.items():
+            u = mine.get(rid)
+            if u is None:
+                name = ('%s@%s' % (w['name'], master))[:32]
+                if db.user_by_name(name):
+                    suffix = '#%d' % rid
+                    name = name[:max(1, 32 - len(suffix))] + suffix
+                uid = db.add_user(name, note='from main server %s' % master, remote_id=rid, uuid=w['uuid'],
+                                  hy2_pass=w['hy2_pass'], enabled=w['enabled'],
+                                  disabled_reason='' if w['enabled'] else 'remote')
+                mine[rid] = db.user(uid)
+                changed = True
+            elif (u['uuid'], u['hy2_pass'], u['enabled']) != (w['uuid'], w['hy2_pass'], w['enabled']):
+                db.update_user(u['id'], uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
+                               disabled_reason='' if w['enabled'] else 'remote')
+                changed = True
+        for rid, u in list(mine.items()):
+            if rid not in wanted:
+                db.delete_user(u['id'])
+                del mine[rid]
+                changed = True
+        if s['node_master'] != master or (master_id and s['node_master_id'] != master_id):
+            db.set_settings(node_master=master, node_master_id=master_id or s['node_master_id'])
+        if changed:
+            from . import web
+            web.apply_async()
+        from . import system
+        h = system.health()
+        return {'ok': True, 'info': public_info(db.settings()),
+                'idmap': {str(rid): u['id'] for rid, u in mine.items()},
+                'traffic': {str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()},
+                'health': {k: h.get(k) for k in ('load', 'cpus', 'mem_total', 'mem_used', 'uptime', 'rx_rate', 'tx_rate')},
+                'version': __import__('vps2vpn').VERSION, 'at': int(time.time())}
 
 
 # --- main-server side ---------------------------------------------------------------------
@@ -138,9 +142,10 @@ def _request(server, body, timeout=15):
     """POST to the node's sync endpoint over HTTPS with the pinned certificate. Returns (answer, pin)."""
     url = urllib.parse.urlsplit(server['url'])
     port = url.port or 443
-    pin = server.get('pin', '')
+    pin = (server.get('pin') or '').strip()
     payload = json.dumps(body).encode()
-    for attempt in ('pin', 'public'):
+    attempts = ('pin', 'public') if pin else ('public',)
+    for attempt in attempts:
         if attempt == 'pin':
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
@@ -152,7 +157,7 @@ def _request(server, body, timeout=15):
             conn.connect()
             der = conn.sock.getpeercert(True)
             got = hashlib.sha256(der).hexdigest()
-            if attempt == 'pin' and pin and got != pin:
+            if attempt == 'pin' and got != pin:
                 conn.close()
                 continue                             # maybe it renewed to a trusted certificate: try that
             conn.request('POST', url.path + '/api/node/sync', body=payload,

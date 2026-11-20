@@ -13,6 +13,9 @@ XRAY_UNIT = 'vps2vpn-xray'
 HY2_UNIT = 'vps2vpn-hysteria'
 TUIC_UNIT = 'vps2vpn-tuic'
 
+_apply_lock = threading.Lock()
+_online_lock = threading.Lock()
+
 
 def active_users():
     return [u for u in db.users() if u['enabled']]
@@ -53,20 +56,32 @@ def xray_config(s, users):
             {'protocol': 'freedom', 'tag': 'direct', 'streamSettings': {'sockopt': {'domainStrategy': 'UseIP'}}},
             {'protocol': 'blackhole', 'tag': 'block'},
         ],
-        'routing': {'domainStrategy': 'AsIs', 'rules': rules},
+        # IPIfNonMatch resolves domain destinations before evaluating geoip:private, blocking DNS-based SSRF.
+        'routing': {'domainStrategy': 'IPIfNonMatch', 'rules': rules},
     }
 
 
+def _quic_windows(mem_mb=None):
+    """Scale QUIC receive windows with host RAM so small 512 MB VPSes do not OOM under bursts."""
+    mem_mb = mem_mb or system.mem_total_mb()
+    if mem_mb >= 1800:
+        return 16 << 20, 40 << 20
+    if mem_mb >= 900:
+        return 8 << 20, 20 << 20
+    return 4 << 20, 10 << 20
+
+
 def hysteria_config(s, users):
-    cert, key = certs.current()
+    cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
+    stream_win, conn_win = _quic_windows()
     conf = {
         'listen': ':%d' % s['hy2_port'],
         'tls': {'cert': cert, 'key': key},
         'auth': {'type': 'userpass', 'userpass': {email(u): u['hy2_pass'] for u in users}},
         'trafficStats': {'listen': '127.0.0.1:%d' % s['hy2_stats_port'], 'secret': s['stats_secret']},
         # Bigger receive windows than the defaults help on long, fast routes (e.g. China <-> US, ~200-300 ms).
-        'quic': {'initStreamReceiveWindow': 16777216, 'maxStreamReceiveWindow': 16777216,
-                 'initConnReceiveWindow': 41943040, 'maxConnReceiveWindow': 41943040,
+        'quic': {'initStreamReceiveWindow': stream_win, 'maxStreamReceiveWindow': stream_win,
+                 'initConnReceiveWindow': conn_win, 'maxConnReceiveWindow': conn_win,
                  'maxIdleTimeout': '60s', 'disablePathMTUDiscovery': False},
         # No fixed bandwidth: clients that send none get BBR, which adapts by itself.
         'ignoreClientBandwidth': False,
@@ -87,7 +102,7 @@ def hysteria_config(s, users):
 def tuic_config(s, users):
     """sing-box serving TUIC v5. Each user leaves through an outbound tagged with their stats key, so the
     Clash API's connection list tells whose traffic is whose (official builds have no per-user counters)."""
-    cert, key = certs.current()
+    cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
     conf = {
         'log': {'level': 'warn'},
         'experimental': {'clash_api': {'external_controller': '127.0.0.1:%d' % s['tuic_api_port'],
@@ -162,27 +177,28 @@ def check_path(path):
 
 def apply(s=None, force=False):
     """Write configs and restart only what changed. Safe to call any time."""
-    s = s or db.settings()
-    errors = []
-    changed = write_configs(s, errors)
-    units = {XRAY_UNIT: s['reality_enabled'], HY2_UNIT: s['hy2_enabled'], TUIC_UNIT: s['tuic_enabled']}
-    restart = []
-    if force or paths.XRAY_CONFIG in changed:
-        restart.append(XRAY_UNIT)
-    if force or paths.HY2_CONFIG in changed:
-        restart.append(HY2_UNIT)
-    if force or paths.TUIC_CONFIG in changed:
-        restart.append(TUIC_UNIT)
-    for unit, on in units.items():
-        if not on:
-            system.systemctl('disable', '--now', unit)
-        elif unit in restart:
-            system.systemctl('enable', unit)
-            system.systemctl('restart', unit)
-    system.port_hopping(s)
-    if errors:
-        raise RuntimeError('; '.join(errors))
-    return changed
+    with _apply_lock:
+        s = s or db.settings()
+        errors = []
+        changed = write_configs(s, errors)
+        units = {XRAY_UNIT: s['reality_enabled'], HY2_UNIT: s['hy2_enabled'], TUIC_UNIT: s['tuic_enabled']}
+        restart = []
+        if force or paths.XRAY_CONFIG in changed:
+            restart.append(XRAY_UNIT)
+        if force or paths.HY2_CONFIG in changed:
+            restart.append(HY2_UNIT)
+        if force or paths.TUIC_CONFIG in changed:
+            restart.append(TUIC_UNIT)
+        for unit, on in units.items():
+            if not on:
+                system.systemctl('disable', '--now', unit)
+            elif unit in restart:
+                system.systemctl('enable', unit)
+                system.systemctl('restart', unit)
+        system.port_hopping(s)
+        if errors:
+            raise RuntimeError('; '.join(errors))
+        return changed
 
 
 def collect_traffic(s=None):
@@ -209,7 +225,8 @@ def collect_traffic(s=None):
         try:
             req = urllib.request.Request('http://127.0.0.1:%d/traffic?clear=1' % s['hy2_stats_port'],
                                          headers={'Authorization': s['stats_secret']})
-            data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
             for name, t in data.items():
                 if name.startswith('u') and name[1:].isdigit():
                     # Hysteria reports tx = bytes from the client (upload), rx = bytes to the client (download)
@@ -242,7 +259,8 @@ class TuicMeter:
     def poll(s, timeout=3):
         req = urllib.request.Request('http://127.0.0.1:%d/connections' % s['tuic_api_port'],
                                      headers={'Authorization': 'Bearer ' + s['stats_secret']})
-        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
 
     @staticmethod
     def owner(c):
@@ -274,7 +292,11 @@ class TuicMeter:
             for uid, (a, b) in seen.items():
                 self._add(uid, a, b)
             for uid in set(self.share) | set(seen):
-                self.share[uid] = self.share.get(uid, 0) * 0.9 + sum(seen.get(uid, (0, 0)))
+                val = self.share.get(uid, 0.0) * 0.9 + sum(seen.get(uid, (0, 0)))
+                if val < 1.0:
+                    self.share.pop(uid, None)
+                else:
+                    self.share[uid] = val
             total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
             if self.total is not None and total[0] >= self.total[0] and total[1] >= self.total[1]:
                 self.pending[0] += max(0, total[0] - self.total[0] - sum(v[0] for v in seen.values()))
@@ -324,11 +346,12 @@ def online_detail(s=None, max_age=4):
     could be asked. Xray and TUIC also report the client addresses (= devices); Hysteria reports a count.
     Cached for a few seconds: the panel asks on every refresh."""
     import time
-    if max_age and time.time() - _online_cache['at'] < max_age:
-        return _online_cache['value']
-    value = _online_detail(s or db.settings())
-    _online_cache.update(at=time.time(), value=value)
-    return value
+    with _online_lock:
+        if max_age and time.time() - _online_cache['at'] < max_age:
+            return _online_cache['value']
+        value = _online_detail(s or db.settings())
+        _online_cache.update(at=time.time(), value=value)
+        return value
 
 
 def _online_detail(s):
@@ -355,9 +378,13 @@ def _online_detail(s):
         try:
             req = urllib.request.Request('http://127.0.0.1:%d/online' % s['hy2_stats_port'],
                                          headers={'Authorization': s['stats_secret']})
-            for name, n in json.loads(urllib.request.urlopen(req, timeout=1.5).read()).items():
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                online_map = json.loads(resp.read())
+            for name, n in online_map.items():
                 if name[:1] == 'u' and name[1:].isdigit():
-                    mark(int(name[1:]), 'hy2', conns=int(n or 1))
+                    cnt = int(n or 0)
+                    if cnt > 0:
+                        mark(int(name[1:]), 'hy2', conns=cnt)
             known = True
         except (OSError, ValueError):
             pass

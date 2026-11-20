@@ -408,7 +408,8 @@ def recheck(job):
     """Firewall check, then (once the panel port is reachable) the pending join to the main server."""
     rec = job['rec']
     job['ports'] = check_ports(job['host'], rec.get('checks') or [])
-    panel_ok = all(c['ok'] for c in job['ports'] if c['name'] == '管理面板')
+    panel_checks = [c for c in job['ports'] if c['name'] == '管理面板']
+    panel_ok = bool(panel_checks) and all(c['ok'] for c in panel_checks)
     if panel_ok:            # the app downloads the subscription from the panel port
         auto_import(job)
     if rec.get('main') and job.get('join') != 'ok':

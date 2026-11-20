@@ -517,16 +517,17 @@ class Scheduler:
         if s['monitor_enabled'] and paths.LIVE and self.due('monitor', 300):
             monitor.run_in_background(log)
         if paths.LIVE and self.due('cert', 3600) and time.time() >= self.cert_backoff_until:
-            before = certs.current(s['public_host'])
+            cert_host = s['domain'] or s['public_host']
+            before = certs.current(cert_host)
             res = certs.renew_if_needed(s, log=log)
             if res and res != 'ok':
                 self.cert_backoff_until = time.time() + 6 * 3600    # stay well under Let's Encrypt's failure limits
                 db.set_settings(cert_status='failed: ' + res[:200])
-                if certs.trusted(s['public_host']) and not certs.acme_valid(36):
+                if certs.trusted(cert_host) and not certs.acme_valid(36):
                     notify.send('certificate renewal failing: %s / 证书续期失败' % res[:200], key='cert', every=12 * 3600)
             elif res == 'ok':
                 db.set_settings(cert_status='ok')
-            if certs.current(s['public_host']) != before:
+            if certs.current(cert_host) != before:
                 cores.apply()
             elif res == 'ok':
                 # Same file, new certificate: the QUIC servers hold the old one in memory until restarted.

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.2
+
+Fixes from a second outside code review.
+
+**Security**
+- Panel API: a fixed list of endpoints, each with its allowed methods (anything else is 404 / 405). The user list no longer sends account secrets to the browser.
+- Request bodies: Content-Length and chunk sizes are checked strictly; a bad size is a 400 instead of an error.
+- Login lockout counts are safe under parallel requests. Changing the admin or a member password, or restoring a backup, signs out other sessions.
+- Firewall rules are replaced in one step (no open moment), and only apply to outside traffic.
+- Cluster join: a join code without a pinned certificate is no longer tried over an unverified connection; sync requests are handled one at a time.
+- Certificate fingerprints read only the server's own certificate; the public-IP lookup uses verified TLS; Telegram bot tokens are hidden in logs.
+- Database: busy timeout, transactions for multi-step changes, and a whitelist for imported columns.
+
+**Reliability**
+- Settings and config files are written atomically. Rule downloads fall back to a second mirror.
+- Quota requests are charged correctly; invite limits count codes already used.
+- Hysteria 2 online counts fixed; QUIC buffer sizes follow the server's memory.
+- Subscriptions: empty groups fall back cleanly, duplicate names are avoided, Shadowrocket labels are escaped, and sing-box DNS rules only name rule sets that exist.
+- Panel: dates shown in local time, search works with Chinese input methods, Escape closes dialogs once.
+- Installer and deployer: small fixes (a shell variable name clash; a deploy is only "ok" when the panel check actually ran).
+
 ## 0.2.1
 
 - Fixed: with the same line failing on several servers, one server recovering cleared the others' reports; reports are now kept per account and server (alerts still count each account once). At most 64 servers per account and line.

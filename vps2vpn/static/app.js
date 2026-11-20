@@ -233,8 +233,10 @@ function dur(s) {
   const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
   return d ? `${d} ${t('days')} ${hh} ${t('hours')}` : hh ? `${hh} ${t('hours')} ${m} ${t('minutes')}` : `${m} ${t('minutes')}`;
 }
-const last30 = () => { const d = []; for (let i = 29; i >= 0; i--) d.push(new Date(Date.now() - i * 864e5).toISOString().slice(0, 10)); return d; };
-const dateStr = ts => ts ? new Date(ts * 1000).toISOString().slice(0, 10) : t('never');
+const pad2 = n => String(n).padStart(2, '0');
+const localDate = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const last30 = () => { const d = []; for (let i = 29; i >= 0; i--) d.push(localDate(new Date(Date.now() - i * 864e5))); return d; };
+const dateStr = ts => ts ? localDate(new Date(ts * 1000)) : t('never');
 const field = (label, input, hint) => h('label', {class: 'field'}, h('span', null, label), input, hint ? h('em', null, hint) : null);
 const check = (label, input) => h('label', {class: 'check'}, input, h('span', null, label));
 const panel = (title, sub, right, ...body) => h('div', {class: 'panel'},
@@ -389,7 +391,7 @@ async function renderShell() {
     h('nav', {class: 'nav'}, h('div', {class: 'nav-label'}, t('nav_main')), nav(VIEWS[0]), nav(VIEWS[1]), nav(VIEWS[2]),
       h('div', {class: 'nav-label'}, t('nav_infra')), nav(VIEWS[3]), nav(VIEWS[4]), nav(VIEWS[5]), nav(VIEWS[6])),
     h('div', {class: 'side-foot'}, h('div', {class: 'seg', role: 'group'}, themeBtn('auto', 'auto', 'theme_auto'), themeBtn('light', 'sun', 'theme_light'), themeBtn('dark', 'moon', 'theme_dark')),
-      h('button', {class: 'btn ghost', onclick: async () => { await api('logout', {}); location.reload(); }}, icon('out'), t('logout')),
+      h('button', {class: 'btn ghost', onclick: async () => { try { await api('logout', {}); location.reload(); } catch (e) { err(e); } }}, icon('out'), t('logout')),
       h('div', {class: 'ver'}, 'v' + S.data.version)));
   const top = h('header', {class: 'top'}, h('div', null, h('div', {class: 'kicker', id: 'viewKicker'}), h('h1', {id: 'viewTitle'})),
     h('div', {class: 'top-actions'}, h('span', {id: 'livePill', class: 'live-pill'}, 'LIVE'), h('span', {class: 'sync', id: 'syncInfo'}, t('synced')),
@@ -400,7 +402,10 @@ async function renderShell() {
   const scrim = h('div', {class: 'scrim', id: 'scrim', onclick: closeDrawer});
   document.body.replaceChildren(h('div', {class: 'app'}, side, h('main', {class: 'main'}, top, h('div', {id: 'view'}))), tabbar, scrim, drawer);
   Theme.mount();
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  if (!S.escBound) {
+    S.escBound = true;
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  }
   go(S.view);
   clearInterval(S.timer);
   S.timer = setInterval(() => { if (!document.hidden) refresh(false); }, 5000);
@@ -631,51 +636,60 @@ function usageBar(u) {
     h('div', {class: 'bar' + (p > .95 ? ' bad' : p > .8 ? ' warn' : '')}, h('i', {style: 'width:' + Math.min(100, p * 100) + '%'})));
 }
 function drawUsers() {
-  const us = S.data.users, q = S.q.toLowerCase();
+  const us = S.data.users;
   for (const id of [...S.sel]) if (!us.some(u => u.id === id)) S.sel.delete(id);
-  const found = us.filter(u => !q || u.name.toLowerCase().includes(q) || (u.note || '').toLowerCase().includes(q));
-  const list = found.filter(FILTERS[S.f] || FILTERS.all).sort(SORTS[S.sort] || SORTS.id);
+  const listHost = h('div', {class: 'stack'});
+  const renderList = () => {
+    const q = S.q.toLowerCase();
+    const found = us.filter(u => !q || u.name.toLowerCase().includes(q) || (u.note || '').toLowerCase().includes(q));
+    const list = found.filter(FILTERS[S.f] || FILTERS.all).sort(SORTS[S.sort] || SORTS.id);
+    const chips = h('div', {class: 'chips'}, Object.keys(FILTERS).map(k => {
+      const n = found.filter(FILTERS[k]).length;
+      return k !== 'all' && !n && S.f !== k ? null : h('button', {class: 'filter-chip', 'aria-pressed': String(S.f === k), onclick: () => { S.f = k; renderList(); }}, t('f_' + k), h('span', {class: 'n'}, n));
+    }));
+    const allSel = list.length > 0 && list.every(u => S.sel.has(u.id));
+    const selAll = h('input', {type: 'checkbox', 'aria-label': t('sel_all'), checked: allSel});
+    selAll.onchange = () => { for (const u of list) selAll.checked ? S.sel.add(u.id) : S.sel.delete(u.id); renderList(); };
+    const head = h('div', {class: 'acct-grid u-grid acct-head'}, h('div', {class: 'c-sel'}, selAll), h('div', null, t('name')), h('div', {class: 'c-use'}, t('usage')), h('div', {class: 'c-exp'}, t('expires')), h('div', {class: 'c-state'}, t('status')), h('div', {class: 'c-acts'}));
+    const rows = list.map(u => {
+      const box = h('input', {type: 'checkbox', checked: S.sel.has(u.id), 'aria-label': u.name});
+      box.onchange = () => { box.checked ? S.sel.add(u.id) : S.sel.delete(u.id); renderList(); };
+      const dev = u.online ? (u.online.devices != null ? u.online.devices : u.online.ips.length) : 0;
+      return h('div', {class: 'acct-grid u-grid acct-row' + (S.sel.has(u.id) ? ' sel' : ''), tabindex: '0',
+          onclick: e => { if (!e.target.closest('button,input,label')) openUser(u.id); }, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) openUser(u.id); }},
+        h('label', {class: 'c-sel'}, box),
+        h('div', {class: 'who'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
+          h('div', {style: 'min-width:0'}, h('b', null, u.online ? h('span', {class: 'on-dot', title: t('online_now')}) : null, u.name),
+            h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + t('devices') : '') + ' · ' + u.online.protocols.join('/')
+              : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
+        h('div', {class: 'c-use'}, usageBar(u)),
+        h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
+          [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null),
+        h('div', {class: 'c-state'}, userState(u)),
+        h('div', {class: 'row-acts c-acts'}, h('button', {class: 'btn sm primary', onclick: () => openUser(u.id)}, icon('link'), t('share')),
+          h('button', {class: 'btn sm icon', title: t('edit'), onclick: () => editUser(u)}, icon('edit'))));
+    });
+    const bb = (a, ic, k, cls) => h('button', {class: 'btn sm' + (cls ? ' ' + cls : ''), onclick: () => bulk(a)}, icon(ic), t(k));
+    const bulkBar = S.sel.size ? h('div', {class: 'bulk-bar'}, h('b', null, t('selected') + ' ' + S.sel.size),
+      h('div', {class: 'bulk-acts'}, bb('enable', 'play', 'enable'), bb('disable', 'pause', 'disable'), bb('extend', 'clock', 'b_extend'), bb('add_gb', 'plus', 'b_addgb'),
+        bb('reset', 'refresh', 'b_reset'), bb('rotate', 'key', 'b_rotate'), bb('delete', 'x', 'del', 'danger')),
+      h('button', {class: 'btn sm ghost', onclick: () => { S.sel.clear(); renderList(); }}, t('clear_sel'))) : null;
+    listHost.replaceChildren(chips, bulkBar,
+      h('div', {class: 'panel'}, head, ...(rows.length ? rows : [h('div', {class: 'empty'}, us.length ? t('no_match') : t('no_users'))])));
+  };
+  let composing = false;
   const search = h('input', {type: 'search', placeholder: t('search'), value: S.q});
-  search.oninput = () => { S.q = search.value; const pos = search.selectionStart; drawUsers(); const s2 = document.querySelector('.search input'); s2.focus(); s2.setSelectionRange(pos, pos); };
+  search.addEventListener('compositionstart', () => { composing = true; });
+  search.addEventListener('compositionend', () => { composing = false; S.q = search.value; renderList(); });
+  search.oninput = () => { if (!composing) { S.q = search.value; renderList(); } };
   const sort = h('select', {'aria-label': 'sort'}, Object.keys(SORTS).map(k => h('option', {value: k}, t('s_' + k)))); sort.value = S.sort;
-  sort.onchange = () => { S.sort = sort.value; drawUsers(); };
-  const chips = h('div', {class: 'chips'}, Object.keys(FILTERS).map(k => {
-    const n = found.filter(FILTERS[k]).length;
-    return k !== 'all' && !n && S.f !== k ? null : h('button', {class: 'filter-chip', 'aria-pressed': String(S.f === k), onclick: () => { S.f = k; drawUsers(); }}, t('f_' + k), h('span', {class: 'n'}, n));
-  }));
-  const allSel = list.length > 0 && list.every(u => S.sel.has(u.id));
-  const selAll = h('input', {type: 'checkbox', 'aria-label': t('sel_all'), checked: allSel});
-  selAll.onchange = () => { for (const u of list) selAll.checked ? S.sel.add(u.id) : S.sel.delete(u.id); drawUsers(); };
-  const head = h('div', {class: 'acct-grid u-grid acct-head'}, h('div', {class: 'c-sel'}, selAll), h('div', null, t('name')), h('div', {class: 'c-use'}, t('usage')), h('div', {class: 'c-exp'}, t('expires')), h('div', {class: 'c-state'}, t('status')), h('div', {class: 'c-acts'}));
-  const rows = list.map(u => {
-    const box = h('input', {type: 'checkbox', checked: S.sel.has(u.id), 'aria-label': u.name});
-    box.onchange = () => { box.checked ? S.sel.add(u.id) : S.sel.delete(u.id); drawUsers(); };
-    const dev = u.online ? (u.online.devices != null ? u.online.devices : u.online.ips.length) : 0;
-    return h('div', {class: 'acct-grid u-grid acct-row' + (S.sel.has(u.id) ? ' sel' : ''), tabindex: '0',
-        onclick: e => { if (!e.target.closest('button,input,label')) openUser(u.id); }, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) openUser(u.id); }},
-      h('label', {class: 'c-sel'}, box),
-      h('div', {class: 'who'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
-        h('div', {style: 'min-width:0'}, h('b', null, u.online ? h('span', {class: 'on-dot', title: t('online_now')}) : null, u.name),
-          h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + t('devices') : '') + ' · ' + u.online.protocols.join('/')
-            : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
-      h('div', {class: 'c-use'}, usageBar(u)),
-      h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
-        [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null),
-      h('div', {class: 'c-state'}, userState(u)),
-      h('div', {class: 'row-acts c-acts'}, h('button', {class: 'btn sm primary', onclick: () => openUser(u.id)}, icon('link'), t('share')),
-        h('button', {class: 'btn sm icon', title: t('edit'), onclick: () => editUser(u)}, icon('edit'))));
-  });
-  const bb = (a, ic, k, cls) => h('button', {class: 'btn sm' + (cls ? ' ' + cls : ''), onclick: () => bulk(a)}, icon(ic), t(k));
-  const bulkBar = S.sel.size ? h('div', {class: 'bulk-bar'}, h('b', null, t('selected') + ' ' + S.sel.size),
-    h('div', {class: 'bulk-acts'}, bb('enable', 'play', 'enable'), bb('disable', 'pause', 'disable'), bb('extend', 'clock', 'b_extend'), bb('add_gb', 'plus', 'b_addgb'),
-      bb('reset', 'refresh', 'b_reset'), bb('rotate', 'key', 'b_rotate'), bb('delete', 'x', 'del', 'danger')),
-    h('button', {class: 'btn sm ghost', onclick: () => { S.sel.clear(); drawUsers(); }}, t('clear_sel'))) : null;
+  sort.onchange = () => { S.sort = sort.value; renderList(); };
+  renderList();
   $('view').replaceChildren(h('section', {class: 'page' + (S.fresh ? '' : ' still')},
     h('div', {class: 'toolbar'}, h('div', {class: 'search'}, icon('search'), search), sort,
       h('div', {class: 'tool-r'}, h('button', {class: 'btn', onclick: batchAdd}, icon('users'), t('batch_add')),
         h('a', {class: 'btn', href: 'api/users-export', download: ''}, icon('arrowDown'), t('export_csv')))),
-    chips, bulkBar,
-    h('div', {class: 'panel'}, head, ...(rows.length ? rows : [h('div', {class: 'empty'}, us.length ? t('no_match') : t('no_users'))]))));
+    listHost));
 }
 
 function batchAdd() {
@@ -929,7 +943,13 @@ async function drawMonitor() {
   try { [mo, ab] = await Promise.all([api('monitor'), api('abuse')]); } catch (e) { return err(e); }
   if (S.view !== 'monitor') return;
   const run = h('button', {class: 'btn primary'}, icon('refresh'), t('run_now'));
-  run.onclick = async () => { run.disabled = true; await api('monitor', {}); toast('…'); setTimeout(() => { if (S.view === 'monitor') drawMonitor(); }, 9000); };
+  run.onclick = async () => {
+    run.disabled = true;
+    try {
+      await api('monitor', {}); toast('…');
+      setTimeout(() => { if (S.view === 'monitor') drawMonitor(); }, 9000);
+    } catch (e) { err(e); run.disabled = false; }
+  };
   const lt = mo.latest;
   const sites = (mo.sites || []).map(x => {
     const cvs = [], fam = ['v4', 'v6'].filter(k => x[k]);
@@ -1140,7 +1160,7 @@ function drawSystem() {
   const tgCb = k => { const e = h('input', {type: 'checkbox', checked: !!d.settings[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
   const tgBody = tg ? h('div', {class: 'stack'}, h('div', null, chip('ok', t('tg_on'))), h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_cmds')),
       tgCb('tg_bot'), tgCb('tg_backup'),
-      h('div', null, h('button', {class: 'btn sm', onclick: async () => { await api('telegram', {off: true}); await load(); drawSystem(); }}, t('tg_off'))))
+      h('div', null, h('button', {class: 'btn sm', onclick: async () => { try { await api('telegram', {off: true}); await load(); drawSystem(); } catch (e) { err(e); } }}, t('tg_off'))))
     : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_tip')), field(t('tg_token'), tgTok),
       h('div', null, h('button', {class: 'btn', onclick: async () => {
         try { await api('telegram', {token: tgTok.value.trim()}); toast(t('tg_on')); await load(); drawSystem(); }
@@ -1170,8 +1190,8 @@ function drawSystem() {
         h('div', {class: 'act-grid'}, h('a', {class: 'btn', href: 'api/backup'}, icon('arrowDown'), t('download_backup')),
           h('label', {class: 'btn'}, icon('arrowUp'), t('restore'), restore)))),
     panel(t('logs'), `${t('rules_age')} ${d.rules_age == null ? '—' : dur(d.rules_age) + ' ' + t('ago')} · ${t('version')} ${d.version} · ${d.os}`,
-      h('div', {style: 'display:flex;gap:8px'}, h('button', {class: 'btn sm', onclick: async () => { await api('rules-refresh', {}); toast('…'); }}, icon('refresh'), t('rules_refresh')),
-        h('button', {class: 'btn sm', onclick: async () => { if (await confirmBox(t('restart'), '')) { await api('restart', {}); toast(t('saved')); } }}, icon('bolt'), t('restart'))),
+      h('div', {style: 'display:flex;gap:8px'}, h('button', {class: 'btn sm', onclick: async () => { try { await api('rules-refresh', {}); toast('…'); } catch (e) { err(e); } }}, icon('refresh'), t('rules_refresh')),
+        h('button', {class: 'btn sm', onclick: async () => { if (await confirmBox(t('restart'), '')) { try { await api('restart', {}); toast(t('saved')); } catch (e) { err(e); } } }}, icon('bolt'), t('restart'))),
       h('div', {class: 'log'}, d.log.join('\n') || '—'))));
 }
 

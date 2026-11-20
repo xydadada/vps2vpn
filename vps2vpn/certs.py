@@ -56,8 +56,10 @@ def ensure_self_signed(host):
     """Create (or recreate for a new host) a 10-year self-signed ECDSA certificate."""
     paths.ensure_dirs()
     marker = paths.SELF_CRT + '.host'
-    if os.path.exists(paths.SELF_CRT) and os.path.exists(marker) and open(marker).read() == host:
-        return
+    if os.path.exists(paths.SELF_CRT) and os.path.exists(marker):
+        with open(marker, encoding='utf-8') as f:
+            if f.read() == host:
+                return
     with tempfile.TemporaryDirectory() as d:
         key, crt = os.path.join(d, 'k'), os.path.join(d, 'c')
         _openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
@@ -88,6 +90,7 @@ def acme_names():
 
 
 _trust_cache = {}
+_trust_lock = threading.Lock()
 
 
 def trusted(host):
@@ -99,27 +102,38 @@ def trusted(host):
     except OSError:
         return False
     key = (host.lower(), stamp, int(time.time() // 60))
-    if key not in _trust_cache:
-        _trust_cache.clear()
-        _trust_cache[key] = acme_valid(1) and host.lower() in [n.lower() for n in acme_names()]
-    return _trust_cache[key]
+    with _trust_lock:
+        if key in _trust_cache:
+            return _trust_cache[key]
+    ok = acme_valid(1) and host.lower() in [n.lower() for n in acme_names()]
+    with _trust_lock:
+        if len(_trust_cache) > 16:
+            _trust_cache.clear()
+        _trust_cache[key] = ok
+    return ok
 
 
 def current(host=None):
     """(cert, key) paths to use right now."""
     if host is None:
         from . import db
-        host = db.settings()['public_host']
+        s = db.settings()
+        host = s['domain'] or s['public_host']
     if host and trusted(host):
         return paths.ACME_CRT, paths.ACME_KEY
     return paths.SELF_CRT, paths.SELF_KEY
 
 
+_CERT_BLOCK_RE = re.compile(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', re.S)
+
+
 def fingerprint(cert_path):
-    """SHA-256 of the certificate (hex), what clients pin for a self-signed cert."""
-    with open(cert_path) as f:
+    """SHA-256 of the leaf certificate (hex), what clients pin for a self-signed cert."""
+    with open(cert_path, encoding='utf-8') as f:
         pem = f.read()
-    der = ssl.PEM_cert_to_DER_cert(pem)
+    m = _CERT_BLOCK_RE.search(pem)
+    leaf = m.group(0) if m else pem
+    der = ssl.PEM_cert_to_DER_cert(leaf)
     return hashlib.sha256(der).hexdigest()
 
 
@@ -197,6 +211,8 @@ class _ChallengeServer:
         tokens = self.tokens
 
         class H(http.server.BaseHTTPRequestHandler):
+            timeout = 10
+
             def do_GET(self):
                 t = self.path.rsplit('/', 1)[-1]
                 if self.path.startswith('/.well-known/acme-challenge/') and t in tokens:
@@ -212,7 +228,7 @@ class _ChallengeServer:
             def log_message(self, *a):
                 pass
 
-        class S(http.server.ThreadingHTTPServer):
+        class S6(http.server.ThreadingHTTPServer):
             address_family = __import__('socket').AF_INET6
             daemon_threads = True
 
@@ -221,10 +237,16 @@ class _ChallengeServer:
                 self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
                 super().server_bind()
 
+        class S4(http.server.ThreadingHTTPServer):
+            daemon_threads = True
+
         try:
-            self.httpd = S(('::', 80), H)
-        except OSError as e:
-            raise AcmeError('port 80 is busy or blocked (%s); Let\'s Encrypt needs it for a few seconds' % e)
+            self.httpd = S6(('::', 80), H)
+        except OSError:
+            try:
+                self.httpd = S4(('0.0.0.0', 80), H)
+            except OSError as e:
+                raise AcmeError('port 80 is busy or blocked (%s); Let\'s Encrypt needs it for a few seconds' % e)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
     def close(self):

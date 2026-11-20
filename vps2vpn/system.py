@@ -6,6 +6,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import threading
 import time
 import urllib.request
 
@@ -48,19 +49,23 @@ def sysctl_text(mem_mb=None):
     """
     mem_mb = mem_mb or mem_total_mb()
     if mem_mb >= 3500:
-        cap = 64 << 20
+        cap, default_buf = 64 << 20, 1 << 20
     elif mem_mb >= 1800:
-        cap = 32 << 20
+        cap, default_buf = 32 << 20, 1 << 20
     elif mem_mb >= 900:
-        cap = 16 << 20
+        cap, default_buf = 16 << 20, 512 << 10
     else:
-        cap = 8 << 20
-    pages = mem_mb * 256                      # 4 KiB pages in RAM
+        cap, default_buf = 8 << 20, 256 << 10
+    try:
+        page_size = os.sysconf('SC_PAGE_SIZE')
+    except (AttributeError, ValueError, OSError):
+        page_size = 4096
+    pages = (mem_mb << 20) // max(4096, page_size)
     lines = {
         'net.core.default_qdisc': 'fq',
         'net.ipv4.tcp_congestion_control': 'bbr',
         'net.core.rmem_max': cap, 'net.core.wmem_max': cap,
-        'net.core.rmem_default': 1 << 20, 'net.core.wmem_default': 1 << 20,
+        'net.core.rmem_default': default_buf, 'net.core.wmem_default': default_buf,
         'net.ipv4.tcp_rmem': '4096 131072 %d' % cap,
         'net.ipv4.tcp_wmem': '4096 65536 %d' % cap,
         # Total TCP memory: at most ~1/4 of RAM under pressure.
@@ -122,7 +127,7 @@ def nft_rules(s):
     return ('table inet %s {\n'
             ' chain prerouting {\n'
             '  type nat hook prerouting priority dstnat; policy accept;\n'
-            '  udp dport %d-%d redirect to :%d\n'
+            '  iifname != "lo" udp dport %d-%d redirect to :%d\n'
             ' }\n'
             '}\n') % (NFT_TABLE, a, b, s['hy2_port'])
 
@@ -131,10 +136,12 @@ def port_hopping(s):
     """Clients pick random UDP ports in the range; the kernel sends them all to Hysteria."""
     if not paths.LIVE or not shutil.which('nft'):
         return None
-    run(['nft', 'delete', 'table', 'inet', NFT_TABLE])
     if not (s['hy2_enabled'] and s['hy2_hop']):
+        run(['nft', 'delete', 'table', 'inet', NFT_TABLE])
         return 'off'
-    r = subprocess.run(['nft', '-f', '-'], input=nft_rules(s), capture_output=True, text=True)
+    # Atomic replace in one nft transaction (avoids packet-drop window between delete and recreate).
+    script = 'table inet %s\nflush table inet %s\n%s' % (NFT_TABLE, NFT_TABLE, nft_rules(s))
+    r = subprocess.run(['nft', '-f', '-'], input=script, capture_output=True, text=True)
     return 'ok' if r.returncode == 0 else 'failed: ' + r.stderr[-200:]
 
 
@@ -202,13 +209,16 @@ def port_owner(proto, port):
 # --- encrypted DNS ------------------------------------------------------------------
 DOH = (('1.1.1.1', 'cloudflare-dns.com'), ('8.8.8.8', 'dns.google'), ('9.9.9.9', 'dns.quad9.net'))
 _doh_cache = {}
+_doh_lock = threading.Lock()
 
 
 def doh_servers(max_age=86400):
     """Encrypted DNS resolvers this server can actually reach (some hosts block them). Probed once a day:
     a resolver that does not answer would add seconds to every new connection."""
-    if _doh_cache and time.time() - _doh_cache['at'] < max_age:
-        return _doh_cache['ok']
+    with _doh_lock:
+        ttl = max_age if _doh_cache.get('ok') else min(max_age, 300)
+        if _doh_cache and time.time() - _doh_cache['at'] < ttl:
+            return list(_doh_cache['ok'])
     ok = []
     for ip, name in DOH:
         try:
@@ -218,20 +228,20 @@ def doh_servers(max_age=86400):
                     ok.append((ip, name))
         except OSError:
             continue
-    _doh_cache.update(at=time.time(), ok=ok)
-    return ok
+    with _doh_lock:
+        _doh_cache.update(at=time.time(), ok=ok)
+    return list(ok)
 
 
 # --- addresses ---------------------------------------------------------------------
 def public_ip(v6=False):
     """Ask Cloudflare's trace endpoint which address we come from (cloud servers are often behind NAT)."""
     host = '[2606:4700:4700::1111]' if v6 else '1.1.1.1'
-    for url in ('https://%s/cdn-cgi/trace' % host, 'https://%s/cdn-cgi/trace' % ('one.one.one.one')):
+    ctx = ssl.create_default_context()
+    for url in ('https://%s/cdn-cgi/trace' % host, 'https://one.one.one.one/cdn-cgi/trace'):
         try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False if url.startswith('https://1') or url.startswith('https://[') else True
-            ctx.verify_mode = ssl.CERT_REQUIRED if ctx.check_hostname else ssl.CERT_NONE
-            text = urllib.request.urlopen(url, timeout=6, context=ctx).read().decode()
+            with urllib.request.urlopen(url, timeout=6, context=ctx) as resp:
+                text = resp.read().decode()
             ip = re.search(r'^ip=(.+)$', text, re.M).group(1).strip()
             if (':' in ip) == v6:
                 return ip
@@ -275,6 +285,7 @@ def best_target():
 
 # --- health -----------------------------------------------------------------------
 _last_net = {}
+_net_lock = threading.Lock()
 
 
 def health():
@@ -299,11 +310,17 @@ def health():
                 rx += int(v[0])
                 tx += int(v[8])
         now = time.time()
-        if _last_net:
-            dt = max(now - _last_net['t'], 0.001)
-            out['rx_rate'] = int((rx - _last_net['rx']) / dt)
-            out['tx_rate'] = int((tx - _last_net['tx']) / dt)
-        _last_net.update(t=now, rx=rx, tx=tx)
+        with _net_lock:
+            if _last_net:
+                dt = now - _last_net['t']
+                if dt >= 0.5:
+                    rx_rate = int(max(0, rx - _last_net['rx']) / dt)
+                    tx_rate = int(max(0, tx - _last_net['tx']) / dt)
+                    _last_net.update(t=now, rx=rx, tx=tx, rx_rate=rx_rate, tx_rate=tx_rate)
+                out['rx_rate'] = _last_net.get('rx_rate', 0)
+                out['tx_rate'] = _last_net.get('tx_rate', 0)
+            else:
+                _last_net.update(t=now, rx=rx, tx=tx, rx_rate=0, tx_rate=0)
         out['rx_total'], out['tx_total'] = rx, tx
         st = os.statvfs('/')
         out['disk_total'] = st.f_blocks * st.f_frsize

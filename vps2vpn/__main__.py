@@ -51,7 +51,8 @@ def cmd_init(a):
     s = db.settings()
     if not s['setup_done'] and not web.setup_token():
         paths.write_atomic(web.SETUP_TOKEN_FILE, secure.token(16), 0o600)
-    certs.ensure_self_signed(s['public_host'] or 'vps2vpn.local')
+    cert_host = s['domain'] or s['public_host']
+    certs.ensure_self_signed(cert_host or 'vps2vpn.local')
     warnings = []
     if not s['setup_done']:
         best, _ = system.best_target()
@@ -59,16 +60,17 @@ def cmd_init(a):
         warnings += pick_ports(db.settings())
     elif not os.path.exists(paths.TUIC_CONFIG):     # upgrade from a version without TUIC
         warnings += pick_ports(db.settings(), keys=(('tuic_port', 'udp'),))
-    if a.acme and s['cert_mode'] == 'auto' and s['public_host'] and not certs.trusted(s['public_host']):
+    if a.acme and s['cert_mode'] == 'auto' and cert_host and not certs.trusted(cert_host):
         try:
-            certs.issue(s['domain'] or s['public_host'], s['acme_email'])
+            certs.issue(cert_host, s['acme_email'])
             db.set_settings(cert_status='ok')
         except Exception as e:      # never fail the install over a certificate
             db.set_settings(cert_status='failed: %s' % str(e)[:200])
             print('Let\'s Encrypt: %s (using a self-signed certificate for now)' % e)
     system.tune_network(db.settings()['tune_network'])
     system.open_firewall(db.settings())
-    if not system.port_free('tcp', 80) and not certs.trusted(db.settings()['public_host']):
+    s_cur = db.settings()
+    if not system.port_free('tcp', 80) and not certs.trusted(s_cur['domain'] or s_cur['public_host']):
         owner = system.port_owner('tcp', 80) or 'another program'
         warnings.append("TCP 80 is used by %s, so no free Let's Encrypt certificate yet (self-signed is used, "
                         "still encrypted). / 80 端口被 %s 占用，暂用自签名证书（照样加密）。" % (owner, owner))
@@ -128,7 +130,7 @@ def result_info(s):
     host = s['domain'] or s['public_host'] or '<server-ip>'
     h = '[%s]' % host if ':' in host else host
     base = '%s://%s:%d' % ('https' if certs.trusted(host) else 'http', h, s['panel_port'])
-    crt, _ = certs.current(s['public_host'])
+    crt, _ = certs.current(s['domain'] or s['public_host'])
     try:
         pin = certs.fingerprint(crt)
     except OSError:
