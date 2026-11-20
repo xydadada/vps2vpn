@@ -365,6 +365,90 @@ class Servers(tu.Base):
         self.assertEqual(subscription.nodes(dict(db.settings(), reality_enabled=False, hy2_enabled=False,
                                                  tuic_enabled=False, servers=[]), db.user(u['id'])), [])
 
+    def test_node_accounting_checkpoint_is_persisted_and_idempotent(self):
+        u = mk('metered', 20)
+        server = {'id': 'node-atomic', 'name': 'node', 'url': 'https://example.com/panel', 'key': 'secret',
+                  'pin': '', 'seen': {}, 'idmap': {}, 'enabled': True}
+        db.set_settings(servers=[server])
+        snapshots = [(0, 0), (110, 220), (110, 220), (135, 241)]
+        original = cluster._request
+        def fake_request(server, body, timeout=15):
+            up, down = snapshots.pop(0)
+            rid = str(u['id'])
+            return {'info': {}, 'idmap': {rid: 7}, 'traffic': {rid: [up, down]}}, 'a' * 64
+        cluster._request = fake_request
+        try:
+            for _ in range(4):
+                # Each time load a fresh copy as the background loop does.
+                self.assertTrue(cluster.sync_one(db.settings()['servers'][0]))
+        finally:
+            cluster._request = original
+        got = db.user(u['id'])
+        self.assertEqual((got['used_up'], got['used_down']), (135, 241))
+        stored = db.settings()['servers'][0]
+        self.assertEqual(stored['seen'][str(u['id'])], [135, 241])
+        self.assertEqual(stored['idmap'][str(u['id'])], 7)
+
+    def test_node_accounting_rolls_back_if_checkpoint_fails(self):
+        u = mk('safe-counter', 20)
+        rid = str(u['id'])
+        server = {'id': 'node-rollback', 'name': 'node', 'url': 'https://example.com/panel', 'key': 'secret',
+                  'pin': '', 'seen': {rid: [15, 20]}, 'idmap': {rid: 9}, 'enabled': True}
+        db.set_settings(servers=[server])
+        original_request = cluster._request
+        original_settings = db.set_settings
+        cluster._request = lambda server, body, timeout=15: (
+            {'info': {}, 'idmap': {rid: 9}, 'traffic': {rid: [25, 43]}}, 'b' * 64)
+        def reject_checkpoint(**kv):
+            if 'servers' in kv:
+                raise RuntimeError('injected checkpoint write failure')
+            return original_settings(**kv)
+        db.set_settings = reject_checkpoint
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'checkpoint write failure'):
+                cluster.sync_one(db.settings()['servers'][0])
+        finally:
+            db.set_settings = original_settings
+            cluster._request = original_request
+        self.assertEqual((db.user(u['id'])['used_up'], db.user(u['id'])['used_down']), (0, 0))
+        self.assertEqual(db.settings()['servers'][0]['seen'][rid], [15, 20])
+        self.assertFalse(db.user_traffic(u['id']))
+
+    def test_node_accounting_rejects_negative_counters_without_writing(self):
+        u = mk('bad-counter')
+        rid = str(u['id'])
+        server = {'id': 'node-neg', 'name': 'node', 'url': 'https://example.com/panel', 'key': 'secret',
+                  'pin': '', 'seen': {rid: [10, 20]}, 'enabled': True}
+        db.set_settings(servers=[server])
+        original_request = cluster._request
+        cluster._request = lambda server, body, timeout=15: (
+            {'info': {}, 'traffic': {rid: [-200, 99]}, 'idmap': {rid: 8}}, 'c' * 64)
+        try:
+            self.assertFalse(cluster.sync_one(db.settings()['servers'][0]))
+        finally:
+            cluster._request = original_request
+        self.assertEqual((db.user(u['id'])['used_up'], db.user(u['id'])['used_down']), (0, 0))
+        self.assertEqual(db.settings()['servers'][0]['seen'][rid], [10, 20])
+        self.assertIn('invalid', db.settings()['servers'][0]['error'])
+
+    def test_node_accounting_does_not_recreate_removed_settings(self):
+        u = mk('orphan-checkpoint')
+        rid = str(u['id'])
+        saved = {'id': 'deleted-node', 'name': 'node', 'url': 'https://example.com/panel',
+                 'key': 'secret', 'seen': {rid: [7, 12]}}
+        db.set_settings(servers=[saved])
+        original_request = cluster._request
+        def removed_during_network(server, body, timeout=15):
+            db.set_settings(servers=[])
+            return {'info': {}, 'traffic': {rid: [100, 120]}, 'idmap': {rid: 10}}, 'd' * 64
+        cluster._request = removed_during_network
+        try:
+            self.assertFalse(cluster.sync_one(db.settings()['servers'][0]))
+        finally:
+            cluster._request = original_request
+        self.assertEqual(db.settings()['servers'], [])
+        self.assertEqual((db.user(u['id'])['used_up'], db.user(u['id'])['used_down']), (0, 0))
+
     def test_join_code(self):
         db.set_settings(panel_path='pp', node_name='Osaka')
         code = cluster.join_code(db.settings(), 'https://203.0.113.7:9443')

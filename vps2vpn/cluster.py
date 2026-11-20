@@ -172,10 +172,9 @@ def _request(server, body, timeout=15):
     """POST to the node's sync endpoint over HTTPS with the pinned certificate. Returns (answer, pin)."""
     url = urllib.parse.urlsplit(server['url'])
     port = url.port or 443
-    pin = (server.get('pin') or '').strip()
+    pin = server.get('pin', '')
     payload = json.dumps(body).encode()
-    attempts = ('pin', 'public') if pin else ('public',)
-    for attempt in attempts:
+    for attempt in (('pin', 'public') if pin else ('public',)):
         if attempt == 'pin':
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
@@ -187,21 +186,26 @@ def _request(server, body, timeout=15):
             conn.connect()
             der = conn.sock.getpeercert(True)
             got = hashlib.sha256(der).hexdigest()
-            if attempt == 'pin' and got != pin:
+            if attempt == 'pin' and pin and got != pin:
                 conn.close()
                 continue                             # maybe it renewed to a trusted certificate: try that
             conn.request('POST', url.path + '/api/node/sync', body=payload,
                          headers={'Content-Type': 'application/json', 'X-V2V': '1',
                                   'Authorization': 'Bearer ' + server['key']})
             r = conn.getresponse()
-            data = r.read(8 << 20)
+            data = r.read((8 << 20) + 1)
+            if len(data) > 8 << 20:
+                raise SyncError('node response is too large')
             if r.status != 200:
                 try:
                     why = json.loads(data).get('error') or ''
                 except ValueError:
                     why = data[:120].decode('utf-8', 'replace')
                 raise SyncError('node answered %d: %s' % (r.status, why[:200]))
-            return json.loads(data), got
+            answer = json.loads(data)
+            if not isinstance(answer, dict) or answer.get('error'):
+                raise SyncError('node returned an invalid sync response')
+            return answer, got
         except ssl.SSLError as e:
             if attempt == 'public':
                 raise SyncError('certificate changed and is not publicly trusted (%s); remove and re-add the server'
@@ -218,30 +222,80 @@ def push_users():
             for u in db.users() if not u['remote_id']]
 
 
+def _stored_server(servers, server):
+    return next((x for x in servers if x['id'] == server['id'] and x['url'] == server['url']
+                 and x['key'] == server['key']), None)
+
+
+def _save_status(server, **updates):
+    with db.transaction():
+        servers = db.settings()['servers']
+        stored = _stored_server(servers, server)
+        if stored is not None:
+            stored.update(updates)
+            db.set_settings(servers=servers)
+    server.update(updates)
+
+
 def sync_one(server, s=None, log=print):
     s = s or db.settings()
+    sent = push_users()
+    saved_before = _stored_server(db.settings()['servers'], server) is not None
     try:
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
-                                         'users': push_users()})
+                                        'users': sent})
+        traffic, idmap = ans.get('traffic') or {}, ans.get('idmap') or {}
+        epochs = ans.get('traffic_epochs') or {}
+        if not all(isinstance(x, dict) for x in (ans.get('info') or {}, traffic, idmap, epochs)):
+            raise SyncError('invalid node response fields')
+        for rid, values in traffic.items():
+            if (not isinstance(rid, str) or not 1 <= len(rid) <= 19 or not rid.isascii()
+                    or not rid.isdigit() or not 0 < int(rid) < (1 << 63)):
+                raise SyncError('invalid node user ID')
+            if not isinstance(values, (list, tuple)) or len(values) != 2 or any(
+                    type(n) is not int or not 0 <= n < (1 << 63) for n in values):
+                raise SyncError('invalid node traffic counters')
+            if rid in epochs and (type(epochs[rid]) is not int or epochs[rid] < 0):
+                raise SyncError('invalid node traffic epoch')
+        for rid, lid in idmap.items():
+            if type(lid) is not int or not 0 < lid < (1 << 63):
+                raise SyncError('invalid node account mapping')
     except SyncError as e:
-        server.update(error=str(e)[:200], fail_count=server.get('fail_count', 0) + 1)
+        _save_status(server, error=str(e)[:200], fail_count=server.get('fail_count', 0) + 1)
         if server['fail_count'] == 5:
             notify.send('server %s unreachable: %s / 子服务器 %s 连不上了' % (server['name'], e, server['name']),
                         key='node-down-' + server['id'], every=6 * 3600)
         return False
-    seen = server.get('seen') or {}
-    known = {u['id'] for u in db.users()}
-    for rid, (up, down) in (ans.get('traffic') or {}).items():
-        uid = int(rid)
-        up0, down0 = seen.get(rid, (0, 0))
-        # A lower count means the node lost the account (re-created, restored): count from zero again.
-        dup = up - up0 if up >= up0 else up
-        ddown = down - down0 if down >= down0 else down
-        if uid in known and (dup or ddown) and rid in seen:
-            db.add_traffic(uid, dup, ddown)
-        seen[rid] = (up, down)
-    server.update(info=ans.get('info') or {}, idmap=ans.get('idmap') or {}, seen=seen, health=ans.get('health') or {},
-                  version=ans.get('version', ''), last_ok=int(time.time()), error='', fail_count=0, pin=got_pin)
+    with db.transaction():
+        servers = db.settings()['servers']
+        stored = _stored_server(servers, server)
+        if saved_before and stored is None:
+            return False
+        previous = stored if stored is not None else server
+        seen = previous.get('seen') or {}
+        prior_epochs, prior_ids = previous.get('seen_epochs') or {}, previous.get('idmap') or {}
+        credentials = {u['id']: u['uuid'] for u in sent}
+        known = {u['id'] for u in db.users() if not u['remote_id'] and credentials.get(u['id']) == u['uuid']}
+        new_seen = {}
+        for rid, (up, down) in traffic.items():
+            uid = int(rid)
+            if uid not in known:
+                continue
+            up0, down0 = seen.get(rid, (0, 0))
+            reset = ((rid in prior_epochs and rid in epochs and epochs[rid] != prior_epochs[rid]) or
+                     (rid in prior_ids and rid in idmap and prior_ids[rid] != idmap[rid]))
+            dup = up - up0 if not reset and up >= up0 else up
+            ddown = down - down0 if not reset and down >= down0 else down
+            if rid in seen and (dup or ddown):
+                db.add_traffic(uid, dup, ddown)
+            new_seen[rid] = (up, down)
+        updates = {'info': ans.get('info') or {}, 'idmap': idmap, 'seen': new_seen,
+                   'seen_epochs': epochs, 'health': ans.get('health') or {}, 'version': ans.get('version', ''),
+                   'last_ok': int(time.time()), 'error': '', 'fail_count': 0, 'pin': got_pin}
+        if stored is not None:
+            stored.update(updates)
+            db.set_settings(servers=servers)
+    server.update(updates)
     return True
 
 
@@ -255,8 +309,6 @@ def sync_all(log=print):
         for server in servers:
             if server.get('enabled', True):
                 sync_one(server, s, log)
-        # write back only the server list (other settings may have changed meanwhile)
-        db.set_settings(servers=servers)
         if json.dumps([(x.get('info'), x.get('idmap')) for x in servers], sort_keys=True) != before:
             log('servers synced: %s' % ', '.join('%s %s' % (x['name'], 'ok' if not x.get('error') else 'FAILED')
                                                 for x in servers))
