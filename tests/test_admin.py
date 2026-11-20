@@ -208,6 +208,32 @@ class AdminWeb(tu.Base):
         st, body, _ = self.req('POST', '/adm/api/users-bulk', {'ids': ids, 'action': 'delete'})
         self.assertIsNone(db.user(ids[0]))
 
+    def test_bulk_repeated_ids_are_applied_only_once(self):
+        self.login()
+        expires = int(time.time()) + 20 * 86400
+        uid = db.add_user('bulk-once', 10, expire_at=expires)
+        repeated = [uid, str(uid), uid]
+
+        status, body, _ = self.req('POST', '/adm/api/users-bulk',
+                                   {'ids': repeated, 'action': 'add_gb', 'value': 3})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)['done'], 1)
+        self.assertEqual(db.user(uid)['quota_gb'], 13)
+
+        status, body, _ = self.req('POST', '/adm/api/users-bulk',
+                                   {'ids': repeated, 'action': 'extend', 'value': 2})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)['done'], 1)
+        self.assertEqual(db.user(uid)['expire_at'], expires + 2 * 86400)
+
+        # A string is not an ID array: iterating its characters used to
+        # silently mutate unrelated accounts that happened to have those IDs.
+        for bad in (str(uid), {'id': uid}, 10, True):
+            status, _, _ = self.req('POST', '/adm/api/users-bulk',
+                                    {'ids': bad, 'action': 'add_gb', 'value': 99})
+            self.assertEqual(status, 400)
+        self.assertEqual(db.user(uid)['quota_gb'], 13)
+
     def test_two_step_sign_in_and_history(self):
         self.login()
         st, body, _ = self.req('GET', '/adm/api/totp')
