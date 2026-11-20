@@ -16,8 +16,6 @@ XRAY_UNIT = 'vps2vpn-xray'
 HY2_UNIT = 'vps2vpn-hysteria'
 TUIC_UNIT = 'vps2vpn-tuic'
 _apply_lock = threading.RLock()
-
-_apply_lock = threading.Lock()
 _online_lock = threading.Lock()
 
 def _serial_apply(fn):

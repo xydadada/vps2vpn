@@ -87,3 +87,22 @@ class ApplyWorker(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             apply_call.assert_called_once_with(force=True)
             self.assertIsNone(web._apply_thread)
+
+
+class ApplyLockSafety(unittest.TestCase):
+    def test_nested_apply_uses_reentrant_lock(self):
+        """apply() is serialized and invokes write_configs(), which takes the same lock."""
+        entered, released = threading.Event(), threading.Event()
+
+        def nested():
+            with web.cores._apply_lock:
+                entered.set()
+                with web.cores._apply_lock:
+                    released.set()
+
+        worker = threading.Thread(target=nested, daemon=True)
+        worker.start()
+        self.assertTrue(entered.wait(2))
+        self.assertTrue(released.wait(2), 'nested apply/write_configs deadlocked')
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
