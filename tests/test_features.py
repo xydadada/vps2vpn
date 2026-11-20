@@ -215,10 +215,11 @@ class Shadowrocket(tu.Base):
 
 
 class EmptySubscription(tu.Base):
-    def test_suspended_account_cannot_fall_back_to_direct_in_any_format(self):
-        uid = db.add_user('suspended')
-        db.update_user(uid, enabled=0)
-        user, settings = db.user(uid), db.settings()
+    def test_empty_node_list_cannot_fall_back_to_direct_in_any_format(self):
+        uid = db.add_user('empty-proxy-list')
+        user = db.user(uid)
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=False,
+                        tuic_enabled=False, servers=[])
         base = 'https://example.invalid'
         self.assertEqual(subscription.nodes(settings, user), [])
 
