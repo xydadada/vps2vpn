@@ -21,7 +21,7 @@ Follow-up on the integrated review of all earlier audit reports, plus review PRs
 - Certificates: the key and certificate are installed as a pair (the old key is put back if the certificate cannot be written), a certificate from an already-finished ACME order that does not fit the new key is refused, and a self-signed certificate whose key went missing is recreated.
 - Rule mirror: truncated downloads and HTTP-200 error pages are no longer published as rule sets (from #12), and a first Shadowrocket request that converts to nothing is not cached as an empty rule set (from #25).
 - Monitor: the bandwidth probe counts only a complete, uncompressed payload (from #18); a damaged history or AI-check file is skipped row by row instead of breaking the page (from #22); one malformed stream in the abuse scan no longer hides all the others (from #20).
-- Online-user and TUIC traffic counting skip malformed records from Hysteria and sing-box instead of stopping, and a malformed connection list no longer resets the traffic baseline (from #30).
+- Online-user and TUIC traffic counting skip malformed records from Hysteria and sing-box instead of stopping (an oversized or non-ASCII account tag included), and a malformed connection list no longer resets the traffic baseline (from #30).
 - QR codes refuse text that does not fit instead of cutting the link short; the invite "revoke" button works again; with no users, configs no longer change (and restart the cores) on every apply; the "server unreachable" alert is sent outside the database transaction.
 
 ## 0.2.4
