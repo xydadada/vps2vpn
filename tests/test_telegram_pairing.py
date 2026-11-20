@@ -66,5 +66,60 @@ class TelegramPairing(unittest.TestCase):
             self.assertEqual(notify.find_chat('token', CODE), (None, None))
 
 
+
+class TelegramLegacyCommandAuthorization(unittest.TestCase):
+    def test_only_private_sender_may_run_commands_from_legacy_state(self):
+        s = {'tg_token': '123456:' + 'A' * 35, 'tg_chat': '42',
+             'tg_bot': True, 'setup_done': True}
+        stop = __import__('threading').Event()
+        handled = []
+        polls = [
+            {'ok': True, 'result': []},  # first poll drains prior messages
+            {'ok': True, 'result': [
+                message(42, '/backup', chat_type='group', update_id=11),
+                message(42, '/backup', sender_id=99, update_id=12),
+                message(42, '/backup', is_bot=True, update_id=13),
+                message(42, '/status', update_id=14),
+            ]},
+        ]
+
+        def fake_call(*args, **kwargs):
+            answer = polls.pop(0)
+            if not polls:
+                stop.set()
+            return answer
+
+        with patch.object(notify.db, 'settings', return_value=s), \
+             patch.object(notify, '_call', side_effect=fake_call), \
+             patch.object(notify, 'reply') as reply, \
+             patch.object(notify, 'send_file') as send_file:
+            notify.bot_loop(stop, lambda cmd: handled.append(cmd) or 'ok', lambda *_: None)
+
+        self.assertEqual(handled, ['/status'])
+        reply.assert_called_once_with(s, '42', 'ok')
+        send_file.assert_not_called()
+
+    def test_preexisting_group_cannot_execute_or_receive_backups(self):
+        group = {'tg_token': 'token', 'tg_chat': '-1001234', 'tg_bot': True,
+                 'setup_done': True, 'node_name': 'server'}
+        self.assertFalse(notify._owner_private_message(
+            message(-1001234, '/backup', chat_type='supergroup')['message'],
+            group['tg_chat']))
+        with patch.object(notify.urllib.request, 'urlopen') as urlopen:
+            self.assertFalse(notify.send_file('backup.json', b'passwords', s=group))
+        urlopen.assert_not_called()
+
+    def test_malformed_or_missing_sender_fails_closed(self):
+        for value in (
+                None, [], {}, {'chat': {'id': 42, 'type': 'private'}},
+                {'chat': {'id': 42, 'type': 'private'},
+                 'from': {'id': 42}},  # Telegram sender.is_bot is required
+                {'chat': {'id': 42, 'type': 'private'},
+                 'from': {'id': '42', 'is_bot': False}}):
+            self.assertFalse(notify._owner_private_message(value, '42'))
+        self.assertTrue(notify._owner_private_message(
+            message(42, '/status')['message'], '42'))
+
+
 if __name__ == '__main__':
     unittest.main()
