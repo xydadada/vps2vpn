@@ -63,44 +63,58 @@ def deducting(u, now=None):
     return bool(u.get('invited_by')) and u.get('invite_deduct', 0) > 0 and _active(u, now or time.time())
 
 
-def given_away(uid, users=None, now=None):
-    """Allocated or already consumed GB; disabling an invitee never refunds traffic."""
-    now = time.time() if now is None else now
-    rows = users if users is not None else db.users()
-    children = {}
-    for u in rows:
-        if u.get('invited_by') and u.get('invite_deduct', 0) > 0:
-            children.setdefault(u['invited_by'], []).append(u)
-
-    def charged(u, seen):
-        grant = u['invite_deduct']
-        if _active(u, now) or u['id'] in seen:
-            return grant
-        used = (u['used_up'] + u['used_down']) / (1 << 30)
-        used += sum(charged(child, seen | {u['id']}) for child in children.get(u['id'], []))
-        return min(grant, used)
-
-    return sum(charged(u, {uid}) for u in children.get(uid, []))
-
-
-def spent_bytes(u, users=None):
-    """Actual consumed bytes in an invite subtree, capped by each child's grant."""
-    rows = users if users is not None else db.users()
+def _invite_children(rows):
     children = {}
     for child in rows:
         if child.get('invited_by') and child.get('invite_deduct', 0) > 0:
             children.setdefault(child['invited_by'], []).append(child)
+    return children
 
-    def spent(account, seen):
-        if account['id'] in seen:
-            return int(account.get('invite_deduct', 0) * (1 << 30))
-        used = account['used_up'] + account['used_down']
-        return used + sum(min(int(child['invite_deduct'] * (1 << 30)),
-                              spent(child, seen | {account['id']}))
-                          for child in children.get(account['id'], []))
 
-    return spent(u, set())
+def _subtree_charge(account, children, now=None, allocate=False, ancestors=()):
+    """Walk the invitation tree without depending on Python's recursion limit."""
+    visiting = set(ancestors)
 
+    def grant(u):
+        return int(u.get('invite_deduct', 0) * (1 << 30))
+
+    if account['id'] in visiting or (allocate and _active(account, now)):
+        return grant(account)
+    visiting.add(account['id'])
+    stack = [[account, iter(children.get(account['id'], [])),
+              account['used_up'] + account['used_down']]]
+    while stack:
+        frame = stack[-1]
+        try:
+            child = next(frame[1])
+        except StopIteration:
+            u, _, used = stack.pop()
+            visiting.remove(u['id'])
+            if not stack:
+                return used
+            stack[-1][2] += min(grant(u), used)
+            continue
+        if child['id'] in visiting or (allocate and _active(child, now)):
+            frame[2] += grant(child)
+        else:
+            visiting.add(child['id'])
+            stack.append([child, iter(children.get(child['id'], [])),
+                          child['used_up'] + child['used_down']])
+
+
+def given_away(uid, users=None, now=None):
+    """Allocated or already consumed GB; disabling an invitee never refunds traffic."""
+    now = time.time() if now is None else now
+    children = _invite_children(users if users is not None else db.users())
+    return sum(min(int(u['invite_deduct'] * (1 << 30)),
+                   _subtree_charge(u, children, now, True, (uid,)))
+               for u in children.get(uid, [])) / (1 << 30)
+
+
+def spent_bytes(u, users=None):
+    """Actual consumed bytes in an invite subtree, capped by each child's grant."""
+    children = _invite_children(users if users is not None else db.users())
+    return _subtree_charge(u, children)
 
 def effective_quota(u, users=None, now=None):
     """GB left for this account; zero means unlimited only when quota_gb is zero."""

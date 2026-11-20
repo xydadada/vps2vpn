@@ -184,6 +184,44 @@ class SharedQuota(tu.Base):
         self.assertEqual(db.invite(inv['id'])['uses'], 0)
 
 
+    def test_deep_invitation_chain_has_bounded_python_stack(self):
+        depth = 2500
+        rows = [
+            {'id': i, 'invited_by': i - 1, 'invite_deduct': depth - i + 2,
+             'quota_gb': depth - i + 2, 'enabled': 0, 'expire_at': 0,
+             'used_up': 0, 'used_down': 0}
+            for i in range(1, depth + 1)
+        ]
+        rows[-1]['used_down'] = GIB
+        self.assertEqual(members.given_away(1, rows, now=100), 1)
+        self.assertEqual(members.spent_bytes(rows[0], rows), GIB)
+        rows[-1]['enabled'] = 1
+        self.assertEqual(members.given_away(1, rows, now=100), 2)
+        self.assertEqual(members.spent_bytes(rows[0], rows), GIB)
+
+    def test_imported_invitation_cycle_is_conservatively_bounded(self):
+        rows = [
+            {'id': 1, 'invited_by': 2, 'invite_deduct': 4, 'quota_gb': 4,
+             'enabled': 0, 'expire_at': 0, 'used_up': 0, 'used_down': GIB},
+            {'id': 2, 'invited_by': 1, 'invite_deduct': 4, 'quota_gb': 4,
+             'enabled': 0, 'expire_at': 0, 'used_up': 0, 'used_down': GIB},
+        ]
+        self.assertEqual(members.given_away(1, rows, now=100), 4)
+        self.assertEqual(members.effective_quota(rows[0], rows, now=100), 0)
+        self.assertEqual(members.spent_bytes(rows[0], rows), 5 * GIB)
+
+    def test_admin_delete_keeps_consumption_but_detaches_live_descendants(self):
+        parent = db.add_user('parent', quota_gb=10)
+        child = self.invite(parent, 8, 'child')
+        grandchild = self.invite(child, 5, 'grandchild')
+        db.add_traffic(grandchild, 0, GIB)
+        db.delete_user(child)
+        self.assertEqual(db.user(parent)['used_down'], GIB)
+        self.assertEqual(db.user(grandchild)['invited_by'], 0)
+        self.assertEqual(db.user(grandchild)['invite_deduct'], 0)
+        self.assertTrue(db.user(grandchild)['enabled'])
+
+
 class AtomicFiles(tu.Base):
     def test_predictable_temporary_symlink_is_not_followed(self):
         target = os.path.join(paths.VAR, 'atomic.txt')
