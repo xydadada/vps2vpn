@@ -64,7 +64,10 @@ def find_chat(token, challenge):
     res = _call(token, 'getUpdates', {'limit': 100, 'offset': -100, 'allowed_updates': '["message"]'})
     if not isinstance(res, dict) or not res.get('ok', True):
         return None, None
-    for upd in reversed(res.get('result') or []):
+    updates = res.get('result')
+    if not isinstance(updates, list):
+        return None, None
+    for upd in reversed(updates):
         if not isinstance(upd, dict):
             continue
         msg = upd.get('message')
