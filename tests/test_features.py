@@ -241,12 +241,12 @@ class RuleFileColdCache(tu.Base):
             'not_found': lambda _: self.fail('known rule set refused'),
         })()
         with mock.patch.object(rules, 'fetch_converted', side_effect=[
-                b'\\n', b'DOMAIN-SUFFIX,example.org\\n']) as download:
+                b'\n', b'DOMAIN-SUFFIX,example.org\n']) as download:
             web.Handler.rule_file(handler, 'private', 'list')
             self.assertEqual(sent[-1][0][0], 503)
             self.assertFalse(os.path.exists(filename))
             web.Handler.rule_file(handler, 'private', 'list')
-            self.assertEqual(sent[-1][0][:2], (200, b'DOMAIN-SUFFIX,example.org\\n'))
+            self.assertEqual(sent[-1][0][:2], (200, b'DOMAIN-SUFFIX,example.org\n'))
             self.assertTrue(os.path.exists(filename))
             web.Handler.rule_file(handler, 'private', 'list')
             self.assertEqual(download.call_count, 2)
@@ -260,7 +260,7 @@ class RuleFileColdCache(tu.Base):
             'send': lambda _, *args, **kwargs: sent.append(args),
             'not_found': lambda _: self.fail('known rule set refused'),
         })()
-        samples = (b'<html>temporary error</html>', b'DOMAIN-SUFFIX,example.org\\ninvalid', b'DOMAIN,')
+        samples = (b'<html>temporary error</html>', b'DOMAIN-SUFFIX,example.org\ninvalid', b'DOMAIN,')
         with mock.patch.object(rules, 'fetch_converted', side_effect=samples):
             for _ in samples:
                 web.Handler.rule_file(handler, 'private', 'list')
