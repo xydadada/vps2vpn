@@ -62,6 +62,8 @@ class TelegramPairing(unittest.TestCase):
             self.assertEqual(notify.find_chat('token', CODE), (None, None))
         with patch.object(notify, '_call', return_value={'ok': False, 'result': [message(42, '/bind ' + CODE)]}):
             self.assertEqual(notify.find_chat('token', CODE), (None, None))
+        with patch.object(notify, '_call', return_value={'ok': True, 'result': {'unexpected': 'shape'}}):
+            self.assertEqual(notify.find_chat('token', CODE), (None, None))
 
 
 if __name__ == '__main__':
