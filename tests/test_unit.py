@@ -431,12 +431,29 @@ class Web(Base):
         st, body, _ = self.req('POST', self.pp + '/api/telegram', {'token': 'not-a-token'})
         self.assertEqual((st, json.loads(body)['error']), (400, 'bad_token'))
         orig = notify.find_chat
-        notify.find_chat = lambda tok: (None, None)
+        notify.find_chat = lambda tok, challenge: (None, None)
         try:
             st, body, _ = self.req('POST', self.pp + '/api/telegram', {'token': '123456:' + 'A' * 35})
+            self.assertEqual((st, json.loads(body)['error']), (400, 'pairing_required'))
+            st, body, _ = self.req('POST', self.pp + '/api/telegram',
+                                   {'token': '123456:' + 'A' * 35, 'challenge': 'x' * 32})
+            self.assertEqual((st, json.loads(body)['error']), (400, 'pairing_required'))
+            st, body, _ = self.req('POST', self.pp + '/api/telegram',
+                                   {'token': '123456:' + 'A' * 35, 'challenge': 'a' * 32})
             self.assertEqual((st, json.loads(body)['error']), (400, 'no_chat'))
+            self.assertFalse(db.settings()['tg_chat'])
         finally:
             notify.find_chat = orig
+        orig_send = notify.send
+        notify.find_chat = lambda tok, challenge: ('42', 'Owner') if challenge == 'a' * 32 else (None, None)
+        notify.send = lambda *args, **kwargs: True
+        try:
+            st, body, _ = self.req('POST', self.pp + '/api/telegram',
+                                   {'token': '123456:' + 'A' * 35, 'challenge': 'a' * 32})
+            self.assertEqual(st, 200)
+            self.assertEqual(db.settings()['tg_chat'], '42')
+        finally:
+            notify.find_chat, notify.send = orig, orig_send
         # the token never leaves the server
         db.set_settings(tg_token='123456:' + 'B' * 35, tg_chat='42')
         st, body, _ = self.req('GET', self.pp + '/api/state')
