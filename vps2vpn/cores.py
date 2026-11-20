@@ -83,6 +83,7 @@ def _quic_windows(mem_mb=None):
 
 def hysteria_config(s, users):
     cert, key = certs.current(s.get('domain') or s['public_host'])
+    stream_win, conn_win = _quic_windows()
     credentials = {email(u): u['hy2_pass'] for u in users}
     if not credentials:
         # Hysteria rejects an empty map. Keep the service healthy after the last user is paused,
