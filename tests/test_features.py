@@ -328,14 +328,14 @@ class Monitor(tu.Base):
             self.assertEqual(len(json.load(f)), 3)
 
 
-# Real zstd frame generated from the bytes 'MRS!fixture'. This verifies outer
+# Real zstd frame generated from the bytes b'MRS\\x01fixture'. This verifies outer
 # framing only; parsing a full rule set remains the responsibility of the core.
-MRS_ZSTD_FRAME = bytes.fromhex('28b52ffd04585900004d525321666978747572652c1026bc')
+MRS_ZSTD_FRAME = bytes.fromhex('28b52ffd04585900004d525301666978747572659fb54dd4')
 
 
 class RuleMirrorDownloads(tu.Base):
     def test_actual_compressed_mrs_frame_is_accepted_but_inner_marker_is_not(self):
-        # The real frame was made with zstd('MRS!fixture'). MRS! is INSIDE it.
+        # The real frame was made with zstd(b'MRS\\x01fixture'); the MRS version byte is INSIDE it.
         with mock.patch.object(rules, '_fetch', return_value=MRS_ZSTD_FRAME) as fetch:
             self.assertEqual(rules.fetch_converted('private', 'clash'), MRS_ZSTD_FRAME)
             fetch.assert_called_once()
