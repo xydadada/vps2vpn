@@ -474,6 +474,25 @@ class RuleFileColdCache(tu.Base):
 class CoreOnlineTelemetry(tu.Base):
     """Malformed local core JSON must not break online users or traffic accounting."""
 
+    def test_invalid_connection_array_never_advances_traffic_baseline(self):
+        meter = cores.TuicMeter()
+        first = {'uploadTotal': 100, 'downloadTotal': 80,
+                 'connections': [{'id': 'active', 'chains': ['u7'],
+                                  'upload': 40, 'download': 30}]}
+        self.assertTrue(meter.sample({}, data=first, users={7}))
+        snapshot = (meter.total, dict(meter.conns), dict(meter.acc), list(meter.pending))
+        for value in ('malformed', {}, 7, False):
+            bad = {'uploadTotal': 110, 'downloadTotal': 95, 'connections': value}
+            with self.subTest(value=value):
+                self.assertFalse(meter.sample({}, data=bad, users={7}))
+                self.assertEqual(
+                    (meter.total, meter.conns, meter.acc, meter.pending), snapshot)
+        second = {'uploadTotal': 120, 'downloadTotal': 100,
+                  'connections': [{'id': 'active', 'chains': ['u7'],
+                                   'upload': 50, 'download': 40}]}
+        self.assertTrue(meter.sample({}, data=second, users={7}))
+        self.assertEqual(meter.acc[7], (20, 20))
+
     def test_tuic_owner_rejects_bad_tags_and_unhashable_connection_ids(self):
         meter = cores.TuicMeter()
         self.assertIsNone(meter.owner(None))

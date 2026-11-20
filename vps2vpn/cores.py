@@ -354,7 +354,13 @@ class TuicMeter:
         if not isinstance(d, dict):
             return False
         total = (_count(d.get('uploadTotal', 0)), _count(d.get('downloadTotal', 0)))
-        raw = d.get('connections') or []
+        raw = d.get('connections')
+        # A non-list snapshot is invalid, not a genuine zero-connection poll.
+        # Advancing total/conns here loses the running per-connection baseline
+        # and can double-bill a persistent connection on the next valid poll.
+        if raw is not None and not isinstance(raw, list):
+            return False
+        raw = raw or []
         # Connection IDs become dictionary keys. A malformed JSON array/object
         # ID is unhashable and must not abort quota accounting for valid users.
         listed = [c for c in (raw if isinstance(raw, list) else ())
