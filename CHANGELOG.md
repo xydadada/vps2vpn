@@ -2,6 +2,10 @@
 
 ## 0.2.6 (unreleased)
 
+**Install and upgrade**
+- `install.sh` installs the latest tagged release instead of the tip of `main`, and checks the release's SHA-256 file before unpacking anything (a mismatch stops the install). Each release now carries a reproducible source tarball and its checksum. `V2V_REF=main` is the explicit, unverified development path.
+- Every upgrade first saves a consistent copy of the database (SQLite online backup, integrity-checked) and the previous panel code; the last three are kept, and the one-line rollback command is printed. An upgrade never silently downgrades.
+
 **Reliability**
 - Rule mirror: a downloaded `.mrs` must be a complete Zstandard frame sequence and a `.srs` a complete zlib stream with a valid checksum (decoded in small pieces, never held in memory), so a cut-off download is not published (from #48). Any SRS version from 1 up is accepted, so a newer sing-box format is not refused.
 
