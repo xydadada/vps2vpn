@@ -97,7 +97,11 @@ install_cores() {
     say "downloading sing-box $SINGBOX_VERSION (TUIC)"
     local v=${SINGBOX_VERSION#v} want got
     fetch "https://github.com/SagerNet/sing-box/releases/download/$SINGBOX_VERSION/sing-box-$v-linux-$SB_ARCH.tar.gz" "$tmp/sb.tgz"
-    want=$(eval echo "\$SINGBOX_SHA256_$SB_ARCH")
+    case "$SB_ARCH" in
+      amd64) want=$SINGBOX_SHA256_amd64 ;;
+      arm64) want=$SINGBOX_SHA256_arm64 ;;
+      *) die "unsupported sing-box architecture: $SB_ARCH" ;;
+    esac
     got=$(sha256sum "$tmp/sb.tgz" | awk '{print $1}')
     [ "$want" = "$got" ] || die "sing-box checksum mismatch (expected $want, got $got)"
     mkdir -p "$tmp/sb" && tar -xzf "$tmp/sb.tgz" -C "$tmp/sb" --strip-components=1
@@ -238,11 +242,11 @@ EOF
 }
 
 show_result() {
-  local json url ports done cloud how
+  local json url ports setup_done cloud how
   json="$1"
   url=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
   ports=$(printf '%s' "$json" | python3 -c 'import json,sys; print("  ".join("%s/%s" % (p, t) for t, p in json.load(sys.stdin)["ports"]))')
-  done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
+  setup_done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
   cloud=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud") or "")')
   how=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud_firewall") or "")')
   echo
@@ -255,7 +259,7 @@ show_result() {
     echo "${c_ok}${c_b}vps2vpn is ready. / 已装好，账号已自动建好。${c_0}"
     return
   fi
-  if [ "$done" = 1 ]; then
+  if [ "$setup_done" = 1 ]; then
     echo "${c_ok}${c_b}vps2vpn is up to date. Users and settings are kept.${c_0}"
     echo "  已更新到最新版，用户和设置都保留。面板地址："
     echo

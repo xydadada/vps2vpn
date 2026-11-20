@@ -91,7 +91,7 @@ def bot_loop(stop, handle, log):
         chat = str(s.get('tg_chat') or '')
         if not (s.get('tg_token') and chat.isascii() and chat.isdecimal() and int(chat) > 0
                 and s.get('tg_bot') and s.get('setup_done')):
-            offset = None
+            offset, token = None, None
             stop.wait(30)
             continue
         if token != s['tg_token']:

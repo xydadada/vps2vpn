@@ -24,7 +24,7 @@ def log(msg):
 
 def over_limit(u, now=None, quota=None):
     """quota: effective GB (after what the user shares with people they invited); defaults to quota_gb."""
-    now = now or time.time()
+    now = time.time() if now is None else now
     quota = u['quota_gb'] if quota is None else quota
     if u['expire_at'] and now >= u['expire_at']:
         return 'expired'
@@ -35,59 +35,91 @@ def over_limit(u, now=None, quota=None):
 
 def monthly_reset(u, now=None):
     """Reset usage on the user's reset day, once per month."""
-    t = time.localtime(now or time.time())
+    t = time.localtime(time.time() if now is None else now)
     month = time.strftime('%Y-%m', t)
     return bool(u['reset_day']) and t.tm_mday >= u['reset_day'] and u['last_reset'] != month, month
 
 
-def enforce(now=None):
-    """Turn users off/on according to quota, expiry and reset day. Returns True if cores need new configs."""
-    changed = False
-    users = db.users()
-    t_now = now or time.time()
+def _quota_order(users):
+    """Children before inviters, independent of restored IDs; iterate to avoid recursion depth limits."""
+    children = {}
     for u in users:
-        if u['remote_id']:
-            continue                 # an account of a main server: it decides about limits
-        if u['expire_after_days'] and not u['expire_at'] and u['used_up'] + u['used_down'] > 0:
-            # "N days from first use": the clock starts with the first traffic
-            u['expire_at'] = int(t_now + u['expire_after_days'] * 86400)
-            db.update_user(u['id'], expire_at=u['expire_at'], expire_after_days=0)
-            log('%s used the account for the first time; expires in %d days' % (u['name'], u['expire_after_days']))
-        if not u['enabled'] and u['disabled_reason'] == 'devices' and t_now >= u['paused_until']:
-            db.update_user(u['id'], enabled=1, disabled_reason='', paused_until=0)
-            u.update(enabled=1, disabled_reason='')
-            log('device pause over: %s' % u['name'])
-            changed = True
-        due, month = monthly_reset(u, now)
-        if due:
-            db.update_user(u['id'], used_up=0, used_down=0, last_reset=month)
-            u.update(used_up=0, used_down=0)
-            log('monthly reset: %s' % u['name'])
-    # Reset every account before evaluating any shared quota. Descendants are created after their
-    # inviters; evaluate them first so released allocations are visible in this same pass.
-    for u in reversed(users):
-        if u['remote_id']:
-            continue
-        month = time.strftime('%Y-%m', time.localtime(t_now))
-        quota = members.effective_quota(u, users, now)
-        reason = over_limit(u, now, quota)
-        if u['quota_gb'] and u['enabled'] and not reason and \
-                u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
-            notify.send('%s has used 80%% of %g GB / %s 已用掉 80%% 流量' % (u['name'], quota, u['name']),
-                        key='q80-%d-%s' % (u['id'], month), every=40 * 86400)
-        if u['enabled'] and reason:
-            db.update_user(u['id'], enabled=0, disabled_reason=reason)
-            u.update(enabled=0, disabled_reason=reason)
-            log('disabled %s (%s)' % (u['name'], reason))
-            notify.send('%s paused: %s / %s 已停用（%s）' % (u['name'], reason, u['name'],
-                                                         '流量用完' if reason == 'quota' else '已到期'),
-                        key='off-%d-%s' % (u['id'], reason), every=86400)
-            changed = True
-        elif not u['enabled'] and u['disabled_reason'] in ('quota', 'expired') and not reason:
-            db.update_user(u['id'], enabled=1, disabled_reason='')
-            u.update(enabled=1, disabled_reason='')
-            log('re-enabled %s' % u['name'])
-            changed = True
+        if u.get('invited_by'):
+            children.setdefault(u['invited_by'], []).append(u)
+    done, visiting, ordered = set(), set(), []
+    for root in users:
+        stack = [(root, False)]
+        while stack:
+            u, expanded = stack.pop()
+            uid = u['id']
+            if uid in done:
+                continue
+            if expanded:
+                visiting.discard(uid)
+                done.add(uid)
+                ordered.append(u)
+            elif uid not in visiting:
+                visiting.add(uid)
+                stack.append((u, True))
+                stack.extend((child, False) for child in reversed(children.get(uid, [])))
+            # An imported cycle has no topological order. Visit it once; the quota ledger
+            # conservatively charges cyclic grants instead of recursing indefinitely.
+    return ordered
+
+
+def enforce(now=None):
+    """Atomically reset/evaluate limits. Send alerts only after committing the decisions."""
+    changed, messages, alerts = False, [], []
+    t_now = time.time() if now is None else now
+    month = time.strftime('%Y-%m', time.localtime(t_now))
+    with db.transaction():
+        users = db.users()
+        for u in users:
+            if u['remote_id']:
+                continue                 # an account of a main server: it decides about limits
+            if u['expire_after_days'] and not u['expire_at'] and u['used_up'] + u['used_down'] > 0:
+                days = u['expire_after_days']
+                u.update(expire_at=int(t_now + days * 86400), expire_after_days=0)
+                db.update_user(u['id'], expire_at=u['expire_at'], expire_after_days=0)
+                messages.append('%s used the account for the first time; expires in %d days' % (u['name'], days))
+            if not u['enabled'] and u['disabled_reason'] == 'devices' and t_now >= u['paused_until']:
+                db.update_user(u['id'], enabled=1, disabled_reason='', paused_until=0)
+                u.update(enabled=1, disabled_reason='', paused_until=0)
+                messages.append('device pause over: %s' % u['name'])
+                changed = True
+            due, reset_month = monthly_reset(u, t_now)
+            if due:
+                db.update_user(u['id'], used_up=0, used_down=0, last_reset=reset_month)
+                u.update(used_up=0, used_down=0, last_reset=reset_month)
+                messages.append('monthly reset: %s' % u['name'])
+        # Every reset is visible before any parent is checked. Follow the actual inviter edges:
+        # restored backups are not required to assign larger IDs to descendants.
+        for u in _quota_order(users):
+            if u['remote_id']:
+                continue
+            quota = members.effective_quota(u, users, t_now)
+            reason = over_limit(u, t_now, quota)
+            if u['quota_gb'] and u['enabled'] and not reason and \
+                    u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
+                alerts.append(('%s has used 80%% of %g GB / %s 已用掉 80%% 流量' % (u['name'], quota, u['name']),
+                               {'key': 'q80-%d-%s' % (u['id'], month), 'every': 40 * 86400}))
+            if u['enabled'] and reason:
+                db.update_user(u['id'], enabled=0, disabled_reason=reason)
+                u.update(enabled=0, disabled_reason=reason)
+                messages.append('disabled %s (%s)' % (u['name'], reason))
+                alerts.append(('%s paused: %s / %s 已停用（%s）' % (u['name'], reason, u['name'],
+                               '流量用完' if reason == 'quota' else '已到期'),
+                               {'key': 'off-%d-%s' % (u['id'], reason), 'every': 86400}))
+                changed = True
+            elif not u['enabled'] and u['disabled_reason'] in ('quota', 'expired') and not reason:
+                db.update_user(u['id'], enabled=1, disabled_reason='')
+                u.update(enabled=1, disabled_reason='')
+                messages.append('re-enabled %s' % u['name'])
+                changed = True
+    for message in messages:
+        log(message)
+    for text, kwargs in alerts:
+        notify.send(text, **kwargs)
     return changed
 
 

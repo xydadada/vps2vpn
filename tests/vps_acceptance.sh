@@ -54,6 +54,15 @@ checks() {
   vps2vpn bench --quick || true
 }
 
+if [ $FULL = 1 ] && [ "$(settings setup_done)" != "True" ]; then
+  echo "== finish first-time setup on this disposable acceptance server"
+  if vps2vpn init --auto >/dev/null && vps2vpn apply --force && vps2vpn rules; then
+    ok "initial setup and routing rules"
+  else
+    bad "initial setup and routing rules"
+  fi
+fi
+
 checks
 if [ $FULL = 1 ]; then
   echo "== reinstall over a running install"

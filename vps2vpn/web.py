@@ -485,7 +485,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not s['setup_done'] or not secure.hmac_eq(auth[7:] if auth.startswith('Bearer ') else '', s['node_key']):
                 time.sleep(0.5)
                 return self.json({'error': 'bad node key'}, 403)
-            res = cluster.handle_sync(s, self.body_json(8 << 20))
+            try:
+                res = cluster.handle_sync(s, self.body_json(8 << 20))
+            except ValueError as e:
+                return self.json({'error': str(e)}, 400)
             return self.json(res, 409 if res.get('conflict') else 200)
         if not s['setup_done'] or not db.session_ok(self.cookie('v2v')):
             return self.json({'error': 'login required'}, 401)

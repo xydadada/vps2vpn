@@ -80,6 +80,10 @@ def fetch_via(port):
 
 
 def check(name, ok, detail=''):
+    if isinstance(detail, (list, tuple)):
+        detail = ' | '.join(str(part) for part in detail)
+    else:
+        detail = str(detail)
     results.append((name, ok, detail))
     print(('PASS ' if ok else 'FAIL ') + name + ('  ' + detail if detail else ''), flush=True)
 
@@ -298,13 +302,18 @@ def main():
             ok = len(res) == len(clash['proxies']) and all(v['latency']['median'] and v['down_1'] > 0 for v in res.values())
         except (OSError, ValueError, KeyError):
             ok, res = False, None
-        check('tools/bench.py measures every protocol', ok, (r.stdout.strip().splitlines() or [r.stderr[-200:]])[-4:] if not ok else
-              '; '.join('%s %sms %sMb' % (k.split()[-1], v['latency']['median'], v['down_4']) for k, v in res.items()))
+        detail = ('; '.join('%s %sms %sMb' % (k.split()[-1], v['latency']['median'], v['down_4'])
+                            for k, v in res.items()) if ok else
+                  'exit %d | stdout: %s | stderr: %s' % (r.returncode, r.stdout[-2000:], r.stderr[-1500:]))
+        check('tools/bench.py measures every protocol', ok, detail)
 
 
 if __name__ == '__main__':
     try:
         main()
+    except Exception as exc:
+        check('unhandled e2e exception', False, '%s: %s' % (type(exc).__name__, exc))
+        raise
     finally:
         for p in procs:
             if p.poll() is None:
@@ -314,6 +323,7 @@ if __name__ == '__main__':
                 p.wait(5)
             except subprocess.TimeoutExpired:
                 p.kill()
+                p.wait()
         db.close()
         failed = [r for r in results if not r[1]]
         print('\n%d passed, %d failed' % (len(results) - len(failed), len(failed)))
@@ -321,4 +331,4 @@ if __name__ == '__main__':
             print('logs kept in', ROOT)
         else:
             shutil.rmtree(ROOT, ignore_errors=True)
-        sys.exit(1 if failed else 0)
+    sys.exit(1 if failed else 0)

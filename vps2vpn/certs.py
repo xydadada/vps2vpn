@@ -116,7 +116,7 @@ def trusted(host):
         if valid:
             try:
                 # Checking expiry/SAN alone also accepts staging and arbitrary self-signed certificates.
-                _openssl('verify', '-untrusted', paths.ACME_CRT, paths.ACME_CRT)
+                _openssl('verify', '-purpose', 'sslserver', '-untrusted', paths.ACME_CRT, paths.ACME_CRT)
                 ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(paths.ACME_CRT, paths.ACME_KEY)
             except (OSError, RuntimeError):
                 valid = False

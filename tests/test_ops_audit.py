@@ -5,6 +5,7 @@ These tests use temporary dev paths and mocks, never production services.
 """
 import base64
 import copy
+import http.client
 import http.server
 import importlib.util
 import json
@@ -255,7 +256,7 @@ class TrustAndOperations(tu.Base):
 
         with patch.object(jobs.members, 'effective_quota', side_effect=effective):
             jobs.enforce()
-        self.assertEqual(checked, list(reversed(ids)))
+        self.assertCountEqual(checked, ids)
 
     def test_kernel_memory_uses_actual_page_size(self):
         with patch.object(system.os, 'sysconf', return_value=65536, create=True):
@@ -304,6 +305,166 @@ class TrustAndOperations(tu.Base):
             self.assertNotIn('Claude ' + aicheck.MARK['ok'], aicheck.summary(res))
 
 
+
+class EnforcementConcurrency(tu.Base):
+    def interleave(self, update):
+        """Pause immediately after the scheduler snapshot and attempt a competing write."""
+        captured, resume, attempted, completed = (threading.Event() for _ in range(4))
+        original = db.users
+        errors = []
+
+        def snapshot():
+            rows = original()
+            captured.set()
+            if not resume.wait(5):
+                raise RuntimeError('snapshot test timeout')
+            return rows
+
+        def enforce():
+            try:
+                jobs.enforce()
+            except BaseException as exc:
+                errors.append(exc)
+
+        def mutate():
+            attempted.set()
+            try:
+                update()
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                completed.set()
+
+        a = threading.Thread(target=enforce, daemon=True)
+        b = threading.Thread(target=mutate, daemon=True)
+        with patch.object(db, 'users', side_effect=snapshot), patch.object(jobs, 'log'):
+            a.start()
+            try:
+                self.assertTrue(captured.wait(3))
+                b.start()
+                self.assertTrue(attempted.wait(3))
+                self.assertFalse(completed.wait(0.1), 'write interleaved after the scheduler snapshot')
+            finally:
+                resume.set()
+                a.join(5)
+                if b.ident is not None:
+                    b.join(5)
+        self.assertFalse(a.is_alive())
+        self.assertFalse(b.is_alive())
+        self.assertEqual(errors, [])
+
+    def test_month_reset_does_not_erase_concurrent_traffic(self):
+        uid = db.add_user('metered', reset_day=1)
+        db.add_traffic(uid, 100, 200)
+        self.interleave(lambda: db.add_traffic(uid, 7, 11))
+        u = db.user(uid)
+        self.assertEqual((u['used_up'], u['used_down']), (7, 11))
+        self.assertEqual(u['last_reset'], time.strftime('%Y-%m'))
+
+    def test_enforce_cannot_overwrite_a_concurrent_manual_pause(self):
+        uid = db.add_user('paused', enabled=0, disabled_reason='quota')
+        self.interleave(lambda: db.update_user(uid, enabled=0, disabled_reason='manual'))
+        u = db.user(uid)
+        self.assertEqual((u['enabled'], u['disabled_reason']), (0, 'manual'))
+
+    def test_alerts_are_sent_after_database_commit(self):
+        uid = db.add_user('exhausted', quota_gb=1)
+        db.add_traffic(uid, 0, 1 << 30)
+        sent = []
+
+        def send(text, **kwargs):
+            self.assertFalse(db.connect().in_transaction)
+            self.assertEqual(db.user(uid)['disabled_reason'], 'quota')
+            sent.append(text)
+
+        with patch.object(notify, 'send', side_effect=send), patch.object(jobs, 'log'):
+            self.assertTrue(jobs.enforce())
+        self.assertEqual(len(sent), 1)
+
+    def test_failed_reset_rolls_back_every_account_without_external_side_effects(self):
+        ids = [db.add_user(name, reset_day=1) for name in ('first', 'second')]
+        for uid in ids:
+            db.add_traffic(uid, 100, 200)
+        original, calls = db.update_user, []
+
+        def update(uid, **kwargs):
+            calls.append(uid)
+            if len(calls) == 2:
+                raise RuntimeError('injected update failure')
+            return original(uid, **kwargs)
+
+        with patch.object(db, 'update_user', side_effect=update), \
+                patch.object(notify, 'send') as send, patch.object(jobs, 'log') as log:
+            with self.assertRaisesRegex(RuntimeError, 'injected update failure'):
+                jobs.enforce()
+            send.assert_not_called()
+            log.assert_not_called()
+        for uid in ids:
+            self.assertEqual((db.user(uid)['used_up'], db.user(uid)['used_down']), (100, 200))
+            self.assertEqual(db.user(uid)['last_reset'], '')
+
+    def test_restored_ids_do_not_change_descendant_first_enforcement(self):
+        parent = db.add_user('parent', quota_gb=10)
+        child = db.add_user('child', quota_gb=4, invited_by=parent, invite_deduct=4,
+                            enabled=0, disabled_reason='quota')
+        db.add_traffic(parent, 0, 8 << 30)
+        backup = db.export_all()
+        for u in backup['users']:
+            if u['id'] == parent:
+                u['id'] = 200
+            elif u['id'] == child:
+                u.update(id=100, invited_by=200)
+        db.import_all(backup)
+        with patch.object(notify, 'send'), patch.object(jobs, 'log'):
+            self.assertTrue(jobs.enforce())
+        self.assertEqual(db.user(100)['enabled'], 1)
+        self.assertEqual((db.user(200)['enabled'], db.user(200)['disabled_reason']), (0, 'quota'))
+
+    def test_quota_order_handles_deep_graphs_and_cycles_without_recursion(self):
+        rows = [{'id': i, 'invited_by': i - 1} for i in range(1, 2501)]
+        self.assertEqual([u['id'] for u in jobs._quota_order(rows)], list(range(2500, 0, -1)))
+        cycle = [{'id': 1, 'invited_by': 2}, {'id': 2, 'invited_by': 1}]
+        self.assertCountEqual([u['id'] for u in jobs._quota_order(cycle)], [1, 2])
+
+
+class NodeSyncHttp(tu.Base):
+    def setUp(self):
+        super().setUp()
+        db.set_settings(setup_done=True, panel_path='adm', public_host='127.0.0.1')
+        self.httpd = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
+        self.port = self.httpd.server_address[1]
+        self.worker = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.worker.start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.worker.join(5)
+
+    def test_malformed_node_snapshots_are_http_400_and_leave_accounts_unchanged(self):
+        with patch.object(web, 'apply_async'):
+            cluster.handle_sync(db.settings(), {'master_id': 'owner', 'users': [remote(7)]})
+        before = db.users()
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # this isolated test connects to the temporary self-signed server
+        bodies = [b'{', b'[]', b'{"master_id":"owner"}',
+                  json.dumps({'master_id': 'owner', 'users': [dict(remote(7), uuid='broken')]}).encode()]
+        for body in bodies:
+            conn = http.client.HTTPSConnection('127.0.0.1', self.port, context=ctx, timeout=5)
+            try:
+                conn.request('POST', '/adm/api/node/sync', body,
+                             headers={'Content-Type': 'application/json', 'X-V2V': '1',
+                                      'Authorization': 'Bearer ' + db.settings()['node_key']})
+                response = conn.getresponse()
+                content = response.read()
+                self.assertEqual(response.status, 400, content)
+                self.assertIn('error', json.loads(content))
+            finally:
+                conn.close()
+            self.assertEqual(db.users(), before)
+
+
 class TelegramSafety(tu.Base):
     def test_empty_startup_poll_does_not_discard_first_command(self):
         db.set_settings(tg_token='token', tg_chat='7', tg_bot=True, setup_done=True)
@@ -325,6 +486,28 @@ class TelegramSafety(tu.Base):
         handle.assert_called_once_with('/status')
         self.assertEqual(seen[0]['offset'], -1)
         self.assertEqual(seen[1]['offset'], 0)
+
+    def test_reenabling_bot_skips_messages_received_while_disabled(self):
+        enabled = {'tg_token': 'token', 'tg_chat': '7', 'tg_bot': True, 'setup_done': True}
+        disabled = dict(enabled, tg_bot=False)
+        stop, calls = threading.Event(), []
+
+        def call(_token, _method, params, **kwargs):
+            calls.append(dict(params))
+            if len(calls) == 1:
+                return {'result': []}
+            stop.set()
+            return {'result': [{'update_id': 1, 'message': {'date': 150, 'text': '/backup',
+                                'chat': {'id': 7, 'type': 'private'}, 'from': {'id': 7}}}]}
+
+        with patch.object(db, 'settings', side_effect=[enabled, disabled, enabled]), \
+                patch.object(notify.time, 'time', side_effect=[100, 100, 200]), \
+                patch.object(stop, 'wait', return_value=False), \
+                patch.object(notify, '_call', side_effect=call), patch.object(notify, 'reply'):
+            handle = MagicMock()
+            notify.bot_loop(stop, handle, lambda *_: None)
+        handle.assert_not_called()
+        self.assertEqual([p['offset'] for p in calls], [-1, -1])
 
     def test_groups_cannot_receive_backup_or_replace_private_discovery(self):
         updates = {'result': [{'message': {'chat': {'id': 7, 'type': 'private', 'username': 'owner'}}},
