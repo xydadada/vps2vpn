@@ -47,7 +47,7 @@ def send(text, key=None, every=6 * 3600, s=None):
             _pending.add(key)
     sent = False
     try:
-        _call(s['tg_token'], 'sendMessage', {'chat_id': s['tg_chat'], 'text': msg,
+        _call(s['tg_token'], 'sendMessage', {'chat_id': s['tg_chat'], 'text': '[%s] %s' % (s['node_name'], text),
                                              'disable_web_page_preview': 'true'})
         sent = True
         return True
@@ -118,7 +118,7 @@ def bot_loop(stop, handle, log):
         if token != s['tg_token']:
             token, offset, started_at = s['tg_token'], None, int(time.time())
         try:
-            params = {'timeout': 25 if primed else 0, 'allowed_updates': '["message"]'}
+            params = {'timeout': 25, 'allowed_updates': '["message"]'}
             if offset is None:
                 params.update(offset=-1, timeout=0)  # only the tail of any backlog
             else:
@@ -127,8 +127,7 @@ def bot_loop(stop, handle, log):
         except (OSError, ValueError, http.client.HTTPException):
             stop.wait(30)
             continue
-        first = not primed
-        primed = True
+        first = offset is None
         for upd in res.get('result', []):
             offset = upd['update_id'] + 1
             msg = upd.get('message') or {}
@@ -149,9 +148,8 @@ def bot_loop(stop, handle, log):
             try:
                 out = handle(text)
             except Exception as e:      # a bad command must not stop the bot
-                safe_err = str(e).replace(token, '***')
-                out = 'error: %s' % safe_err
-                log('telegram command failed: %s' % safe_err)
+                out = 'error: %s' % e
+                log('telegram command failed: %s' % e)
             if isinstance(out, tuple):
                 send_file(out[1], out[2], out[3], s=s)
             elif out:

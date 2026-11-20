@@ -109,7 +109,6 @@ def acme_names():
 
 
 _trust_cache = {}
-_trust_lock = threading.Lock()
 
 
 def _identity(host):
@@ -151,12 +150,9 @@ def current(host=None):
     return paths.SELF_CRT, paths.SELF_KEY
 
 
-_CERT_BLOCK_RE = re.compile(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', re.S)
-
-
 def fingerprint(cert_path):
-    """SHA-256 of the leaf certificate (hex), what clients pin for a self-signed cert."""
-    with open(cert_path, encoding='utf-8') as f:
+    """SHA-256 of the certificate (hex), what clients pin for a self-signed cert."""
+    with open(cert_path) as f:
         pem = f.read()
     leaf = re.search(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', pem, re.S)
     if not leaf:
@@ -239,8 +235,6 @@ class _ChallengeServer:
         tokens = self.tokens
 
         class H(http.server.BaseHTTPRequestHandler):
-            timeout = 10
-
             def do_GET(self):
                 t = self.path.rsplit('/', 1)[-1]
                 if self.path.startswith('/.well-known/acme-challenge/') and t in tokens:
@@ -256,16 +250,13 @@ class _ChallengeServer:
             def log_message(self, *a):
                 pass
 
-        class S6(http.server.ThreadingHTTPServer):
+        class S(http.server.ThreadingHTTPServer):
             address_family = socket.AF_INET6
             daemon_threads = True
 
             def server_bind(self):
                 self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
                 super().server_bind()
-
-        class S4(http.server.ThreadingHTTPServer):
-            daemon_threads = True
 
         try:
             try:

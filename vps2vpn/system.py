@@ -7,7 +7,6 @@ import shutil
 import socket
 import ssl
 import subprocess
-import threading
 import time
 import urllib.request
 
@@ -50,11 +49,11 @@ def sysctl_text(mem_mb=None):
     """
     mem_mb = mem_mb or mem_total_mb()
     if mem_mb >= 3500:
-        cap, default_buf = 64 << 20, 1 << 20
+        cap = 64 << 20
     elif mem_mb >= 1800:
-        cap, default_buf = 32 << 20, 1 << 20
+        cap = 32 << 20
     elif mem_mb >= 900:
-        cap, default_buf = 16 << 20, 512 << 10
+        cap = 16 << 20
     else:
         cap = 8 << 20
     try:
@@ -66,7 +65,7 @@ def sysctl_text(mem_mb=None):
         'net.core.default_qdisc': 'fq',
         'net.ipv4.tcp_congestion_control': 'bbr',
         'net.core.rmem_max': cap, 'net.core.wmem_max': cap,
-        'net.core.rmem_default': default_buf, 'net.core.wmem_default': default_buf,
+        'net.core.rmem_default': 1 << 20, 'net.core.wmem_default': 1 << 20,
         'net.ipv4.tcp_rmem': '4096 131072 %d' % cap,
         'net.ipv4.tcp_wmem': '4096 65536 %d' % cap,
         # Total TCP memory: at most ~1/4 of RAM under pressure.
@@ -128,7 +127,7 @@ def nft_rules(s):
     return ('table inet %s {\n'
             ' chain prerouting {\n'
             '  type nat hook prerouting priority dstnat; policy accept;\n'
-            '  iifname != "lo" udp dport %d-%d redirect to :%d\n'
+            '  udp dport %d-%d redirect to :%d\n'
             ' }\n'
             '}\n') % (NFT_TABLE, a, b, s['hy2_port'])
 
@@ -212,16 +211,13 @@ def port_owner(proto, port):
 # --- encrypted DNS ------------------------------------------------------------------
 DOH = (('1.1.1.1', 'cloudflare-dns.com'), ('8.8.8.8', 'dns.google'), ('9.9.9.9', 'dns.quad9.net'))
 _doh_cache = {}
-_doh_lock = threading.Lock()
 
 
 def doh_servers(max_age=86400):
     """Encrypted DNS resolvers this server can actually reach (some hosts block them). Probed once a day:
     a resolver that does not answer would add seconds to every new connection."""
-    with _doh_lock:
-        ttl = max_age if _doh_cache.get('ok') else min(max_age, 300)
-        if _doh_cache and time.time() - _doh_cache['at'] < ttl:
-            return list(_doh_cache['ok'])
+    if _doh_cache and time.time() - _doh_cache['at'] < max_age:
+        return _doh_cache['ok']
     ok = []
     for ip, name in DOH:
         try:
@@ -231,17 +227,15 @@ def doh_servers(max_age=86400):
                     ok.append((ip, name))
         except OSError:
             continue
-    with _doh_lock:
-        _doh_cache.update(at=time.time(), ok=ok)
-    return list(ok)
+    _doh_cache.update(at=time.time(), ok=ok)
+    return ok
 
 
 # --- addresses ---------------------------------------------------------------------
 def public_ip(v6=False):
     """Ask Cloudflare's trace endpoint which address we come from (cloud servers are often behind NAT)."""
     host = '[2606:4700:4700::1111]' if v6 else '1.1.1.1'
-    ctx = ssl.create_default_context()
-    for url in ('https://%s/cdn-cgi/trace' % host, 'https://one.one.one.one/cdn-cgi/trace'):
+    for url in ('https://%s/cdn-cgi/trace' % host, 'https://%s/cdn-cgi/trace' % ('one.one.one.one')):
         try:
             ctx = ssl.create_default_context()
             with urllib.request.urlopen(url, timeout=6, context=ctx) as response:
@@ -289,7 +283,6 @@ def best_target():
 
 # --- health -----------------------------------------------------------------------
 _last_net = {}
-_net_lock = threading.Lock()
 
 
 def health():
@@ -314,17 +307,11 @@ def health():
                 rx += int(v[0])
                 tx += int(v[8])
         now = time.time()
-        with _net_lock:
-            if _last_net:
-                dt = now - _last_net['t']
-                if dt >= 0.5:
-                    rx_rate = int(max(0, rx - _last_net['rx']) / dt)
-                    tx_rate = int(max(0, tx - _last_net['tx']) / dt)
-                    _last_net.update(t=now, rx=rx, tx=tx, rx_rate=rx_rate, tx_rate=tx_rate)
-                out['rx_rate'] = _last_net.get('rx_rate', 0)
-                out['tx_rate'] = _last_net.get('tx_rate', 0)
-            else:
-                _last_net.update(t=now, rx=rx, tx=tx, rx_rate=0, tx_rate=0)
+        if _last_net:
+            dt = max(now - _last_net['t'], 0.001)
+            out['rx_rate'] = int((rx - _last_net['rx']) / dt)
+            out['tx_rate'] = int((tx - _last_net['tx']) / dt)
+        _last_net.update(t=now, rx=rx, tx=tx)
         out['rx_total'], out['tx_total'] = rx, tx
         st = os.statvfs('/')
         out['disk_total'] = st.f_blocks * st.f_frsize

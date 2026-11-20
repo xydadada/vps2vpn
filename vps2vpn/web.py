@@ -21,7 +21,6 @@ import os
 import re
 import shutil
 import socket
-import sqlite3
 import ssl
 import threading
 import time
@@ -390,20 +389,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         h = '[%s]' % host if ':' in host and not host.startswith('[') else host
         return '%s://%s:%d' % (scheme, h, s['panel_port'])
 
-    def _https_location(self, s):
-        """Safe HTTPS redirect URL using configured host (never trusting an arbitrary Host header)."""
-        host = s['domain'] or s['public_host']
-        if host:
-            h = '[%s]' % host if ':' in host and not host.startswith('[') else host
-            netloc = '%s:%d' % (h, s['panel_port'])
-        else:
-            raw = (self.headers.get('Host') or '').strip()
-            if not re.fullmatch(r'(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+)(?::\d{1,5})?', raw):
-                return None
-            netloc = raw
-        safe_path = '/' + self.path.lstrip('/')
-        return 'https://%s%s' % (netloc, safe_path)
-
     # --- routing ----------------------------------------------------------------
     def do_HEAD(self):
         self.do_GET()
@@ -449,8 +434,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             mp = '/' + s['member_path']
             if s['member_path'] and s['member_enabled'] and s['setup_done'] and (path == mp or path.startswith(mp + '/')):
                 if not self.secure_ok():
-                    loc = self._https_location(s)
-                    return self.send(301, '', headers={'Location': loc}) if loc else self.not_found()
+                    host = self.headers.get('Host', '')
+                    return self.send(301, '', headers={'Location': 'https://%s%s' % (host, self.path)})
                 if path == mp:
                     return self.send(301, '', headers={'Location': mp + '/'})
                 uid = db.member_session(self.cookie('v2vm'))
@@ -548,19 +533,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'missing header'}, 403)     # blocks cross-site form posts
         # endpoints that work without a session
         if api == 'hello':
-            if method != 'GET':
-                return self.json({'error': 'GET only'}, 405)
             return self.json({'setup_done': s['setup_done'], 'language': s['language'], 'version': VERSION,
                               'logged_in': db.session_ok(self.cookie('v2v'))})
-        if api == 'setup':
-            return self.api_setup(s) if method == 'POST' else self.json({'error': 'POST only'}, 405)
-        if api == 'setup-info':
-            return self.api_setup_info(s) if method == 'GET' else self.json({'error': 'GET only'}, 405)
-        if api == 'login':
-            return self.api_login(s) if method == 'POST' else self.json({'error': 'POST only'}, 405)
-        if api == 'node/sync':
-            if method != 'POST':
-                return self.json({'error': 'POST only'}, 405)
+        if api == 'setup' and method == 'POST':
+            return self.api_setup(s)
+        if api == 'setup-info' and method == 'GET':
+            return self.api_setup_info(s)
+        if api == 'login' and method == 'POST':
+            return self.api_login(s)
+        if api == 'node/sync' and method == 'POST':
             auth = self.headers.get('Authorization', '')
             if not s['setup_done'] or not secure.hmac_eq(auth[7:] if auth.startswith('Bearer ') else '', s['node_key']):
                 time.sleep(0.5)
@@ -569,65 +550,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json(res, 409 if res.get('conflict') else 200)
         if not s['setup_done'] or not db.session_ok(self.cookie('v2v')):
             return self.json({'error': 'login required'}, 401)
+        fn = getattr(self, 'api_' + api.replace('-', '_').replace('/', '__'), None)
         m = re.fullmatch(r'users/(\d+)/(save|delete|rotate|reset|login)', api)
-        if m:
-            return self.api_user_action(int(m.group(1)), m.group(2)) if method == 'POST' else self.json({'error': 'POST only'}, 405)
+        if m and method == 'POST':
+            return self.api_user_action(int(m.group(1)), m.group(2))
         m = re.fullmatch(r'users/(\d+)/history', api)
         if m:
-            if method != 'GET':
-                return self.json({'error': 'GET only'}, 405)
             try:
                 days = max(1, min(400, int(self.query.get('days', 30))))
             except ValueError:
                 days = 30
             return self.json({'days': db.user_traffic(int(m.group(1)), days)})
         m = re.fullmatch(r'invites/(\d+)/revoke', api)
-        if m:
-            return self.refused(lambda: members.revoke_invite(int(m.group(1)))) if method == 'POST' else self.json({'error': 'POST only'}, 405)
+        if m and method == 'POST':
+            return self.refused(lambda: members.revoke_invite(int(m.group(1))))
         m = re.fullmatch(r'requests/(\d+)/(approve|reject)', api)
-        if m:
-            if method != 'POST':
-                return self.json({'error': 'POST only'}, 405)
+        if m and method == 'POST':
             d = self.body_json()
             return self.refused(lambda: members.decide(int(m.group(1)), m.group(2) == 'approve', d.get('add_gb'),
                                                        d.get('answer', '')), after=lambda: (jobs.enforce(), apply_async()))
         m = re.fullmatch(r'servers/([0-9a-f]{8})/(remove|save|sync)', api)
-        if m:
-            return self.api_server_action(m.group(1), m.group(2)) if method == 'POST' else self.json({'error': 'POST only'}, 405)
-        routes = {
-            'security': (('GET', 'POST'), self.api_security),
-            'totp': (('GET', 'POST'), self.api_totp),
-            'sys-history': (('GET',), self.api_sys_history),
-            'aicheck': (('GET', 'POST'), self.api_aicheck),
-            'logout': (('POST',), self.api_logout),
-            'state': (('GET',), self.api_state),
-            'change-port': (('POST',), self.api_change_port),
-            'traffic': (('GET',), self.api_traffic),
-            'settings': (('POST',), self.api_settings),
-            'users': (('GET', 'POST'), self.api_users),
-            'users-batch': (('POST',), self.api_users_batch),
-            'users-bulk': (('POST',), self.api_users_bulk),
-            'users-export': (('GET',), self.api_users_export),
-            'invites': (('GET', 'POST'), self.api_invites),
-            'requests': (('GET',), self.api_requests),
-            'monitor': (('GET', 'POST'), self.api_monitor),
-            'abuse': (('GET', 'POST'), self.api_abuse),
-            'servers': (('GET', 'POST'), self.api_servers),
-            'node-key': (('POST',), self.api_node_key),
-            'password': (('POST',), self.api_password),
-            'check-targets': (('GET', 'POST'), self.api_check_targets),
-            'cert': (('POST',), self.api_cert),
-            'qr': (('GET',), self.api_qr),
-            'user-links': (('GET',), self.api_user_links),
-            'restart': (('POST',), self.api_restart),
-            'rules-refresh': (('POST',), self.api_rules_refresh),
-            'doctor': (('POST',), self.api_doctor),
-            'telegram': (('POST',), self.api_telegram),
-            'backup': (('GET',), self.api_backup),
-            'restore': (('POST',), self.api_restore),
-        }
-        entry = routes.get(api)
-        if entry is None:
+        if m and method == 'POST':
+            return self.api_server_action(m.group(1), m.group(2))
+        if fn is None:
             return self.json({'error': 'unknown endpoint'}, 404)
         if api in ('logout', 'password', 'restart', 'rules-refresh') and method != 'POST':
             return self.json({'error': 'POST only'}, 405, {'Allow': 'POST'})
@@ -728,7 +673,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not db.users():
             db.add_user(first)
         s = db.settings()
-        certs.ensure_self_signed(s['domain'] or s['public_host'])
+        certs.ensure_self_signed(s['public_host'])
         db.set_settings(setup_done=True)
         try:
             os.unlink(SETUP_TOKEN_FILE)
@@ -738,7 +683,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         system.open_firewall(s)
         apply_async(force=True)
         rules.refresh_in_background(jobs.log)
-        self._clear_fails()
         tok = db.new_session()
         self.auth_succeeded()
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(tok)})
@@ -757,7 +701,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if s['admin_totp']:
             code = str(d.get('code') or '')
             if not code:
-                self._record_fail()
                 return self.json({'error': 'totp_required'}, 403)
             if not secure.totp_check(s['admin_totp'], code):
                 db.add_event('login', 0, 'fail2fa|%s|%s' % (self.client_ip(), ua))
@@ -892,11 +835,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.json({'ok': True, 'port': port})
 
     def api_traffic(self, method, s):
-        try:
-            days = max(1, min(400, int(self.query.get('days', 30))))
-        except ValueError:
-            days = 30
-        return self.json({'days': db.traffic_days(days)})
+        return self.json({'days': db.traffic_days(int(self.query.get('days', 30)))})
 
     def api_settings(self, method, s):
         if method != 'POST':
@@ -906,8 +845,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': changes}, 400)
         db.set_settings(**changes)
         s2 = db.settings()
-        if 'public_host' in changes or 'domain' in changes:
-            certs.ensure_self_signed(s2['domain'] or s2['public_host'])
+        if 'public_host' in changes:
+            certs.ensure_self_signed(s2['public_host'])
         if 'tune_network' in changes:
             system.tune_network(s2['tune_network'])
         system.open_firewall(s2)
@@ -916,9 +855,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def api_users(self, method, s):
         if method != 'POST':
-            secret_fields = {'login_hash', 'uuid', 'hy2_pass', 'sub_token'}
-            clean = [{k: v for k, v in u.items() if k not in secret_fields} for u in db.users()]
-            return self.json({'users': clean})
+            return self.json({'users': db.users()})
         d = self.body_json()
         name = str(d.get('name', '')).strip()[:32]
         if not name:
@@ -1067,8 +1004,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.json({'error': fields}, 400)
             if 'enabled' in fields:
                 fields['disabled_reason'] = '' if fields['enabled'] else 'manual'
-                if fields['enabled']:
-                    fields['paused_until'] = 0
             other = db.user_by_name(fields['name']) if 'name' in fields else None
             if other and other['id'] != uid:
                 return self.json({'error': 'name already used'}, 400)
@@ -1098,13 +1033,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method != 'POST':
             return self.json({'invites': [members.invite_view(i, names, reg) for i in db.invites()]})
         d = self.body_json()
-        try:
-            inviter = int(d.get('inviter') or 0)
-        except (TypeError, ValueError):
-            return self.json({'error': 'invalid inviter'}, 400)
         rec = lambda: {'invite': members.invite_view(db.invite(members.create_invite(
             d.get('kind', 'admin'), d.get('quota_gb', 0), d.get('valid_days', 7), d.get('max_uses', 1),
-            inviter=inviter, expire_days=d.get('expire_days', 0), reset_day=d.get('reset_day', 0),
+            inviter=int(d.get('inviter') or 0), expire_days=d.get('expire_days', 0), reset_day=d.get('reset_day', 0),
             note=d.get('note', ''))['id']), names, reg)}
         return self.refused(rec)
 
@@ -1282,11 +1213,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.json({'error': str(e)}, 400)
             return self.json({'ok': True})
         if api == 'invite-revoke' and s['member_invites']:
-            try:
-                iid = int(d.get('id', 0))
-            except (TypeError, ValueError):
-                return self.json({'error': 'invalid invite id'}, 400)
-            return self.refused(lambda: members.revoke_invite(iid, by_member=u['id']))
+            return self.refused(lambda: members.revoke_invite(int(d.get('id', 0)), by_member=u['id']))
         return self.json({'error': 'unknown endpoint'}, 404)
 
     def download(self, name):
@@ -1367,8 +1294,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
         host = s['domain'] or s['public_host']
-        if not _cert_lock.acquire(blocking=False):
-            return self.json({'error': 'certificate renewal already in progress'}, 409)
 
         def go():
             try:
@@ -1378,8 +1303,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 db.set_settings(cert_status='failed: %s' % str(e)[:200])
                 jobs.log('certificate failed: %s' % e)
-            finally:
-                _cert_lock.release()
         threading.Thread(target=go, daemon=True).start()
         return self.json({'ok': True, 'started': host})
 
@@ -1390,11 +1313,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send(200, qr.svg(text, scale=5), 'image/svg+xml', {'Cache-Control': 'no-store'})
 
     def api_user_links(self, method, s):
-        try:
-            uid = int(self.query.get('id', 0))
-        except ValueError:
-            return self.json({'error': 'invalid user id'}, 400)
-        u = db.user(uid)
+        u = db.user(int(self.query.get('id', 0)))
         if not u:
             return self.json({'error': 'no such user'}, 404)
         sub = '%s/s/%s' % (self.base_url(s), u['sub_token'])
@@ -1448,12 +1367,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'POST only'}, 405)
         try:
             db.import_all(self.body_json(limit=32 << 20))
-        except (ValueError, KeyError, TypeError, sqlite3.Error) as e:
+        except (ValueError, KeyError, TypeError) as e:
             return self.json({'error': 'restore failed: %s' % e}, 400)
         s2 = db.ensure_secrets()
-        certs.ensure_self_signed(s2['domain'] or s2['public_host'])
+        certs.ensure_self_signed(s2['public_host'])
         apply_async(force=True)
-        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
+        return self.json({'ok': True})
 
 
 _DUMMY = []
@@ -1719,9 +1638,7 @@ def serve(port=None, host='::'):
         if ip:
             db.set_settings(public_host=ip)
     s = db.settings()
-    certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
-    if s['setup_done']:
-        system.port_hopping(s)
+    certs.ensure_self_signed(s['public_host'] or 'vps2vpn.local')
     tls = TLSContext()
     tls.get()
     try:
