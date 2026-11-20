@@ -4,6 +4,7 @@ per-user history, server monthly traffic, site monitor, abuse watch, Shadowrocke
     python -m unittest tests.test_unit tests.test_features
 """
 import http.client
+import io
 import json
 import os
 import sqlite3
@@ -11,6 +12,7 @@ import ssl
 import threading
 import time
 import unittest
+from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
 from vps2vpn import abuse, certs, cluster, db, jobs, members, monitor, paths, rules, secure, subscription, web
@@ -184,6 +186,47 @@ class Monitor(tu.Base):
         self.assertEqual(sm['latest']['region'], 'SG')
         with open(monitor.FILE, encoding='utf-8') as f:
             self.assertEqual(len(json.load(f)), 3)
+
+
+class RuleMirrorDownloads(tu.Base):
+    def test_oversized_download_rejected_and_old_mirror_retained(self):
+        paths.ensure_dirs()
+        old = b'MRS!previous-valid-rule-data'
+        dst = rules.local_file('private', 'clash')
+        paths.write_atomic(dst, old, 0o644)
+        logs = []
+        with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
+             mock.patch.object(rules, 'FORMATS', ('clash',)), \
+             mock.patch.object(rules, 'MAX_RULE_DOWNLOAD_BYTES', 16), \
+             mock.patch.object(rules.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: io.BytesIO(b'x' * 17)):
+            self.assertEqual(rules.refresh(log=logs.append), 0)
+        with open(dst, 'rb') as f:
+            self.assertEqual(f.read(), old)
+        self.assertTrue(any('download failed' in line for line in logs))
+
+    def test_http_200_html_upstream_falls_back_to_cdn(self):
+        valid = b'MRS!controlled-rule-payload'
+        with mock.patch.object(rules, '_fetch',
+                               side_effect=[b'<!DOCTYPE html><html>error</html>', valid]) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'clash'), valid)
+            self.assertEqual(fetch.call_count, 2)
+            self.assertIn('github.com', fetch.call_args_list[0].args[0])
+            self.assertIn('jsdelivr.net', fetch.call_args_list[1].args[0])
+
+    def test_both_mirrors_error_pages_do_not_overwrite_existing_rules(self):
+        paths.ensure_dirs()
+        dst = rules.local_file('private', 'clash')
+        old = b'MRS!the-existing-good-rule-file'
+        paths.write_atomic(dst, old, 0o644)
+        logs = []
+        with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
+             mock.patch.object(rules, 'FORMATS', ('clash',)), \
+             mock.patch.object(rules, '_fetch', return_value=b'<html><body>blocked</body></html>'):
+            self.assertEqual(rules.refresh(log=logs.append), 0)
+        with open(dst, 'rb') as f:
+            self.assertEqual(f.read(), old)
+        self.assertTrue(any('download failed' in line for line in logs))
 
 
 class Shadowrocket(tu.Base):
