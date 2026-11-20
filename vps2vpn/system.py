@@ -1,4 +1,5 @@
 """Talking to the operating system: services, kernel tuning, port hopping, firewall, health."""
+import ipaddress
 import json
 import os
 import re
@@ -298,17 +299,19 @@ def doh_servers(max_age=86400):
 
 # --- addresses ---------------------------------------------------------------------
 def public_ip(v6=False):
-    """Ask Cloudflare's trace endpoint which address we come from (cloud servers are often behind NAT)."""
+    """Return only a canonical public IP obtained over verified HTTPS."""
     host = '[2606:4700:4700::1111]' if v6 else '1.1.1.1'
     ctx = ssl.create_default_context()
     for url in ('https://%s/cdn-cgi/trace' % host, 'https://one.one.one.one/cdn-cgi/trace'):
         try:
-            with urllib.request.urlopen(url, timeout=6, context=ctx) as resp:
-                text = resp.read().decode()
-            ip = re.search(r'^ip=(.+)$', text, re.M).group(1).strip()
-            if (':' in ip) == v6:
-                return ip
-        except (OSError, AttributeError, ValueError):
+            with urllib.request.urlopen(url, timeout=6, context=ctx) as response:
+                text = response.read(4096).decode()
+            raw = next((line[3:].strip() for line in text.splitlines()
+                        if line.startswith('ip=')), '')
+            addr = ipaddress.ip_address(raw)
+            if (addr.version == 6) == v6 and addr.is_global:
+                return str(addr)
+        except (OSError, AttributeError, ValueError, UnicodeError):
             continue
     return ''
 

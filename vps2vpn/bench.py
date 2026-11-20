@@ -21,6 +21,11 @@ LATENCY_URL = 'https://www.gstatic.com/generate_204'
 DOWN_URL = 'https://speed.cloudflare.com/__down?bytes=%d'
 UP_URL = 'https://speed.cloudflare.com/__up'
 UA = {'User-Agent': 'vps2vpn-bench'}
+# Cloudflare rate-limits __down and refuses it from some data-centre ranges (GitHub's runners among them),
+# which used to show up as "0 Mb" download. These plain test files are tried in order instead.
+DOWN_FALLBACKS = ('https://proof.ovh.net/files/100Mb.dat',
+                  'https://ash-speed.hetzner.com/100MB.bin',
+                  'https://fsn1-speed.hetzner.com/100MB.bin')
 
 
 class _ExplicitProxy(urllib.request.ProxyHandler):
@@ -112,7 +117,8 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagn
     def one():
         while time.perf_counter() < stop:
             try:
-                with op.open(urllib.request.Request(url % size, headers=UA), timeout=timeout) as r:
+                with op.open(urllib.request.Request(url % size if '%d' in url else url, headers=UA),
+                             timeout=timeout) as r:
                     read = getattr(r, 'read1', r.read)       # read1: return whatever arrived, do not wait for 64 KB
                     while time.perf_counter() < stop:
                         b = read(65536)
@@ -159,8 +165,27 @@ def upload(proxy=None, size=25 << 20, timeout=30, url=UP_URL, errors=None):
     return round(len(data) * 8 / (time.perf_counter() - t0) / 1e6, 1)
 
 
+def working_download_url(proxy=None, size=50 << 20, timeout=15, candidates=None):
+    """The first download source that sends data through this proxy, or None."""
+    op = _opener(proxy)
+    for url in candidates or (DOWN_URL,) + DOWN_FALLBACKS:
+        try:
+            with op.open(urllib.request.Request(url % size if '%d' in url else url, headers=UA),
+                         timeout=timeout) as r:
+                if getattr(r, 'read1', r.read)(65536):
+                    return url
+        except (OSError, ValueError, http.client.HTTPException):
+            continue
+    return None
+
+
 def run(proxy=None, quick=False, log=print, origin=None):
     latency_url, down_url, up_url = measurement_urls(origin)
+    if origin is None:          # public endpoints: step past a refusing Cloudflare instead of reporting 0
+        picked = working_download_url(proxy)
+        if picked and picked != down_url:
+            log('  (Cloudflare refused the download test; using %s)' % urllib.parse.urlsplit(picked).hostname)
+        down_url = picked or down_url
     errors = []
     out = {'errors': errors}
     log('  latency…')
@@ -171,6 +196,16 @@ def run(proxy=None, quick=False, log=print, origin=None):
         log('  download, %d connection%s…' % (streams, '' if streams == 1 else 's'))
         diagnostic = {}
         out[label] = download(proxy, streams, 5 if quick else 10, diagnostics=diagnostic, url=down_url, errors=errors)
+        if not out[label] and origin is None:
+            # the source answered the probe but broke off during the test: try the next public source
+            rest = (DOWN_URL,) + DOWN_FALLBACKS
+            for alt in rest[rest.index(down_url) + 1:] if down_url in rest else ():
+                diagnostic = {}
+                out[label] = download(proxy, streams, 5 if quick else 10, diagnostics=diagnostic, url=alt, errors=errors)
+                if out[label]:
+                    log('  (download source switched to %s)' % urllib.parse.urlsplit(alt).hostname)
+                    down_url = alt
+                    break
         out['download_diagnostics'][label] = diagnostic
         for error in dict.fromkeys(diagnostic.get('errors', [])):
             log('  download failed: ' + error)

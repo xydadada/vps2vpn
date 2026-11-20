@@ -48,6 +48,43 @@ class Secure(unittest.TestCase):
         self.assertFalse(secure.hmac_eq('', ''))
 
 
+class BenchSources(unittest.TestCase):
+    """A refusing or breaking Cloudflare must not show up as a 0 Mb download."""
+
+    def setUp(self):
+        from vps2vpn import bench
+        self.bench = bench
+        self.saved = (bench.working_download_url, bench.download, bench.latency, bench.upload)
+        bench.latency = lambda *a, **k: {'median': 10, 'p90': 12, 'min': 9, 'fails': 0}
+        bench.upload = lambda *a, **k: 5.0
+
+    def tearDown(self):
+        (self.bench.working_download_url, self.bench.download, self.bench.latency, self.bench.upload) = self.saved
+
+    def test_refused_cloudflare_uses_the_first_working_fallback(self):
+        b = self.bench
+        b.working_download_url = lambda proxy=None, **k: b.DOWN_FALLBACKS[0]
+        used = []
+        b.download = lambda proxy, streams, secs, url=None, **k: used.append(url) or 42.0
+        r = b.run(quick=True, log=lambda m: None)
+        self.assertEqual((r['down_1'], r['down_4']), (42.0, 42.0))
+        self.assertEqual(set(used), {b.DOWN_FALLBACKS[0]})
+
+    def test_source_breaking_off_mid_test_switches_to_the_next(self):
+        b = self.bench
+        b.working_download_url = lambda proxy=None, **k: b.DOWN_URL
+        b.download = lambda proxy, streams, secs, url=None, **k: 0.0 if url == b.DOWN_URL else 30.0
+        r = b.run(quick=True, log=lambda m: None)
+        self.assertEqual((r['down_1'], r['down_4']), (30.0, 30.0))
+
+    def test_explicit_origin_is_never_replaced(self):
+        b = self.bench
+        b.working_download_url = lambda *a, **k: self.fail('public sources probed for a fixture origin')
+        b.download = lambda proxy, streams, secs, url=None, **k: 0.0
+        r = b.run(quick=True, log=lambda m: None, origin='http://127.0.0.1:9')
+        self.assertEqual(r['down_1'], 0.0)
+
+
 class QR(unittest.TestCase):
     def test_sizes(self):
         self.assertEqual(len(qr.matrix('a')), 21)
