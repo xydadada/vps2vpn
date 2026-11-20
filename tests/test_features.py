@@ -27,6 +27,52 @@ def mk(name, quota=0, **kv):
     return db.user(uid)
 
 
+class CachedTelemetry(tu.Base):
+    def test_ai_cache_rejects_malformed_status_and_metadata(self):
+        from vps2vpn import aicheck
+        paths.ensure_dirs()
+        valid = {
+            'at': 123, 'country': 'US', 'ip': {},
+            'sites': {key: {'status': 'ok'} for key in aicheck.SITES},
+        }
+        bad_cases = [
+            dict(valid, sites={**valid['sites'], 'claude': {'status': []}}),
+            dict(valid, sites={**valid['sites'], 'claude_api': {'status': {}}}),
+            dict(valid, sites={**valid['sites'], 'gemini': {'status': 'unexpected'}}),
+            dict(valid, sites={**valid['sites'], 'chatgpt': {}}),
+            dict(valid, ip=['not-an-object']),
+            dict(valid, country=['US']),
+        ]
+        for bad in bad_cases:
+            paths.write_atomic(aicheck.FILE, json.dumps(bad))
+            self.assertIsNone(aicheck.latest(), bad)
+        paths.write_atomic(aicheck.FILE, json.dumps(valid))
+        self.assertEqual(aicheck.latest(), valid)
+        self.assertIn('Claude', aicheck.summary(aicheck.latest()))
+
+    def test_monitor_recovers_from_non_array_and_skips_corrupt_rows(self):
+        paths.ensure_dirs()
+        good = {'at': 123, 'v6': False,
+                'sites': {'github/4': {'ok': True, 'total': 12.5}},
+                'speed': {'ok': True, 'at': 123, 'mbps': 32.0}}
+        broken = [
+            42, None, {'at': 123}, {'at': 123, 'sites': []},
+            {'at': 123, 'sites': {'github/4': {'ok': []}}},
+            {'at': 123, 'sites': {'github/4': {'ok': True, 'total': 'slow'}}},
+            {'at': 123, 'sites': {}, 'speed': ['bad']},
+            {'at': 123, 'sites': {}, 'speed': {'at': 'yesterday'}},
+        ]
+        for document, expected in (({'sites': []}, []), (broken, []),
+                                   (broken + [good], [good])):
+            paths.write_atomic(monitor.FILE, json.dumps(document))
+            monitor._hist = None
+            self.assertEqual(monitor.history(), expected)
+            report = monitor.summary()
+            self.assertEqual(report['latest']['at'] if expected else None,
+                             123 if expected else None)
+        self.assertEqual(monitor.summary()['sites'][0]['v4']['median_ms'], 12.5)
+
+
 class TrustAndRouting(tu.Base):
     def test_untrusted_chain_does_not_satisfy_public_ca_predicate(self):
         paths.ensure_dirs()
