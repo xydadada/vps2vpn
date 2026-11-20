@@ -209,6 +209,10 @@ def clash(s, u, base_url):
             rule_lines.append('DOMAIN-SUFFIX,%s,%s' % (value, t))
         else:
             rule_lines.append('MATCH,%s' % t)
+    if not pn:
+        # Disabled subscriptions must not keep domain/IP rules that explicitly
+        # send traffic DIRECT. Restrict all routed proxy traffic to REJECT.
+        providers, rule_lines = {}, ['MATCH,REJECT']
     cn_dns = ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query']
     ns_policy = {'rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private': cn_dns}
     for d in list(rules.CN_DIRECT_SUFFIX) + list(s.get('custom_direct') or []):
@@ -279,6 +283,19 @@ def singbox(s, u, base_url):
                          'reality': {'enabled': True, 'public_key': n['pbk'], 'short_id': n['sid']}}}
         outs.append(o)
     tags = [o['tag'] for o in outs]
+    if not tags:
+        # A disabled or exhausted subscription must not silently switch from
+        # proxy to direct Internet access when all usable nodes disappear.
+        return {
+            'log': {'level': 'warn'},
+            'inbounds': [
+                {'type': 'tun', 'tag': 'tun-in', 'address': ['172.19.0.1/30', 'fdfe:dcba:9876::1/126'],
+                 'auto_route': True, 'strict_route': True, 'stack': 'mixed'},
+                {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 7890},
+            ],
+            'outbounds': [{'type': 'direct', 'tag': 'direct'}],
+            'route': {'rules': [{'action': 'reject'}], 'auto_detect_interface': True},
+        }
     per = server_groups(ns)
     many = len(per) > 1
     if tags:
@@ -411,7 +428,7 @@ def shadowrocket(s, u, base_url, sub_url=''):
         groups.append('%s = url-test, %s, %s, tolerance=80' % (g['auto'], ', '.join(p[0] for p in per), test))
         groups += ['%s = fallback, %s, %s' % (label, ', '.join(m), test) for label, m in per if m]
     else:
-        groups.append('%s = fallback, %s, %s' % (g['auto'], ', '.join(pn) or 'DIRECT', test))
+        groups.append('%s = fallback, %s, %s' % (g['auto'], ', '.join(pn) or 'REJECT', test))
     if s.get('ai_group', True):
         ai_labels = [_sr_label(l) for l in ai_servers(ok, raw_per)] if many else []
         groups.append('%s = select, %s' % (g['ai'], ', '.join(ai_labels + [g['proxy']] + pn)))
@@ -430,6 +447,10 @@ def shadowrocket(s, u, base_url, sub_url=''):
             rule_lines.append('DOMAIN-SUFFIX,%s,%s' % (value, t))
         else:
             rule_lines.append('FINAL,%s,dns-failed' % t)
+    if not pn:
+        # Ordinary DIRECT routing rules must not remain active after every
+        # proxy has been withdrawn.
+        rule_lines = ['FINAL,REJECT,dns-failed']
     general = [
         '[General]',
         'bypass-system = true',

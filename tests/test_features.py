@@ -214,6 +214,40 @@ class Shadowrocket(tu.Base):
         self.assertEqual(out, ['IP-CIDR,1.0.1.0/24', 'IP-CIDR6,2001:db8::/32'])
 
 
+class EmptySubscription(tu.Base):
+    def test_suspended_account_cannot_fall_back_to_direct_in_any_format(self):
+        uid = db.add_user('suspended')
+        db.update_user(uid, enabled=0)
+        user, settings = db.user(uid), db.settings()
+        base = 'https://example.invalid'
+        self.assertEqual(subscription.nodes(settings, user), [])
+
+        clash = subscription.clash(settings, user, base)
+        auto = subscription.names(settings)['auto']
+        group = next(g for g in clash['proxy-groups'] if g['name'] == auto)
+        self.assertEqual(group['proxies'], ['REJECT'])
+        self.assertEqual(clash['rules'], ['MATCH,REJECT'])
+        self.assertEqual(clash['rule-providers'], {})
+
+        singbox = subscription.singbox(settings, user, base)
+        self.assertEqual(singbox['route']['rules'], [{'action': 'reject'}])
+        self.assertFalse(any(o['type'] in ('selector', 'urltest') for o in singbox['outbounds']))
+
+        shadow = subscription.shadowrocket(settings, user, base)
+        self.assertIn('%s = fallback, REJECT' % auto, shadow)
+        self.assertIn('FINAL,REJECT,dns-failed', shadow)
+        self.assertNotIn('%s = fallback, DIRECT' % auto, shadow)
+
+    def test_all_node_protocols_disabled_still_reject_traffic(self):
+        user = mk('no-protocol')
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=False,
+                        tuic_enabled=False, servers=[])
+        self.assertEqual(subscription.nodes(settings, user), [])
+        self.assertEqual(subscription.clash(settings, user, 'https://example.invalid')['rules'], ['MATCH,REJECT'])
+        self.assertEqual(subscription.singbox(settings, user, 'https://example.invalid')['route']['rules'],
+                         [{'action': 'reject'}])
+
+
 class Servers(tu.Base):
     def test_node_side_sync(self):
         local = mk('own-user')
