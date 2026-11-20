@@ -41,6 +41,9 @@ class CachedTelemetry(tu.Base):
             dict(valid, sites={**valid['sites'], 'gemini': {'status': 'unexpected'}}),
             dict(valid, sites={**valid['sites'], 'chatgpt': {}}),
             dict(valid, ip=['not-an-object']),
+            dict(valid, ip={'city': ['Austin']}),
+            dict(valid, ip={'country': ['US']}),
+            dict(valid, ip={'city': {'name': 'Austin'}}),
             dict(valid, country=['US']),
         ]
         for bad in bad_cases:
@@ -49,6 +52,14 @@ class CachedTelemetry(tu.Base):
         paths.write_atomic(aicheck.FILE, json.dumps(valid))
         self.assertEqual(aicheck.latest(), valid)
         self.assertIn('Claude', aicheck.summary(aicheck.latest()))
+        # An absent/null city from ipinfo is allowed; valid location text is
+        # safe to look up and display after the cache validation.
+        with_city = dict(valid, ip={'city': 'Tokyo', 'country': 'JP'})
+        paths.write_atomic(aicheck.FILE, json.dumps(with_city))
+        self.assertEqual(aicheck.place_name(aicheck.latest()), '东京')
+        with_null = dict(valid, ip={'city': None, 'country': None})
+        paths.write_atomic(aicheck.FILE, json.dumps(with_null))
+        self.assertEqual(aicheck.place_name(aicheck.latest()), '美国')
 
     def test_monitor_recovers_from_non_array_and_skips_corrupt_rows(self):
         paths.ensure_dirs()
