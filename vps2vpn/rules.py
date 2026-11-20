@@ -91,6 +91,7 @@ def used_sets(s):
 
 FORMATS = ('clash', 'singbox', 'shadowrocket')
 MAX_RULE_DOWNLOAD_BYTES = 50 << 20
+MRS_ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'  # outer zstd frame; Mihomo's MRS marker is inside
 
 
 def ext(fmt):
@@ -124,8 +125,8 @@ def to_shadowrocket(data, kind):
     return ('\n'.join(out) + '\n').encode()
 
 
-def _rule_payload(url):
-    """Download a rule without accepting a CDN's HTTP-200 error document."""
+def _rule_payload(url, fmt):
+    """Reject 200 error documents and wrong binary framing before cache publication."""
     data = _fetch(url)
     # Both mirrors sometimes return a branded error page with HTTP 200. That
     # is never a valid .mrs/.srs or a MetaCubeX text rule list. Avoid silently
@@ -133,14 +134,22 @@ def _rule_payload(url):
     head = data[:256].lstrip().lower()
     if head.startswith((b'<!doctype', b'<html', b'<?xml', b'{"message"', b'{"error"')):
         raise OSError('rule download returned an error document')
+    # Mihomo's .mrs is a Zstandard stream: its inner MRS + version marker is
+    # written via zstd.NewWriter and is NOT the on-disk file prefix.
+    # sing-box writes 'SRS' + version directly before its zlib payload.
+    # These are framing checks, not substitutes for full client-side parsing.
+    if fmt == 'clash' and not data.startswith(MRS_ZSTD_MAGIC):
+        raise OSError('invalid MRS Zstandard frame header')
+    if fmt == 'singbox' and not data.startswith(b'SRS'):
+        raise OSError('invalid SRS file header')
     return data
 
 
 def fetch_converted(name, fmt):
     try:
-        data = _rule_payload(upstream_url(name, fmt, cdn=False))
+        data = _rule_payload(upstream_url(name, fmt, cdn=False), fmt)
     except OSError:
-        data = _rule_payload(upstream_url(name, fmt, cdn=True))
+        data = _rule_payload(upstream_url(name, fmt, cdn=True), fmt)
     return to_shadowrocket(data, SETS[name][0]) if fmt == 'shadowrocket' else data
 
 
