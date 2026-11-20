@@ -52,14 +52,31 @@ def send(text, key=None, every=6 * 3600, s=None):
         return False
 
 
-def find_chat(token):
-    """The chat id of whoever last messaged the bot."""
-    res = _call(token, 'getUpdates', {'limit': 20})
-    for upd in reversed(res.get('result', [])):
-        msg = upd.get('message') or upd.get('my_chat_member') or {}
-        chat = msg.get('chat', {})
-        if chat.get('id'):
-            return str(chat['id']), chat.get('username') or chat.get('title') or ''
+def find_chat(token, challenge):
+    """Bind only a private chat whose user sent this panel's random pairing challenge.
+
+    Telegram returns the oldest unconfirmed updates by default. A negative offset
+    looks at the newest 100, so a busy bot's old backlog cannot conceal the
+    fresh pairing command. The user explicitly initiates this operation.
+    """
+    if not re.fullmatch(r'[0-9a-f]{32}', str(challenge or '')):
+        return None, None
+    res = _call(token, 'getUpdates', {'limit': 100, 'offset': -100, 'allowed_updates': '["message"]'})
+    if not isinstance(res, dict) or not res.get('ok', True):
+        return None, None
+    for upd in reversed(res.get('result') or []):
+        if not isinstance(upd, dict):
+            continue
+        msg = upd.get('message')
+        if not isinstance(msg, dict) or msg.get('text') != '/bind ' + challenge:
+            continue
+        chat, sender = msg.get('chat') or {}, msg.get('from') or {}
+        if not isinstance(chat, dict) or not isinstance(sender, dict):
+            continue
+        if (chat.get('type') != 'private' or not chat.get('id')
+                or str(sender.get('id')) != str(chat['id']) or sender.get('is_bot')):
+            continue
+        return str(chat['id']), chat.get('username') or chat.get('first_name') or ''
     return None, None
 
 
