@@ -210,9 +210,13 @@ def clash(s, u, base_url):
         else:
             rule_lines.append('MATCH,%s' % t)
     if not pn:
-        # Disabled subscriptions must not keep domain/IP rules that explicitly
-        # send traffic DIRECT. Restrict all routed proxy traffic to REJECT.
-        providers, rule_lines = {}, ['MATCH,REJECT']
+        # No proxy nodes means no outbound routing or DNS lookups. The normal
+        # DNS nameserver policy refers to remote rule providers and would be
+        # invalid once those providers disappear. Do not configure them at all.
+        return {'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule',
+                'log-level': 'warning', 'dns': {'enable': False},
+                'proxies': [], 'proxy-groups': groups, 'rule-providers': {},
+                'rules': ['MATCH,REJECT']}
     cn_dns = ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query']
     ns_policy = {'rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private': cn_dns}
     for d in list(rules.CN_DIRECT_SUFFIX) + list(s.get('custom_direct') or []):
