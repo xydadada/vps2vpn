@@ -30,11 +30,17 @@ Assert-Equal (Get-ShowLines $job "progress`n" $false 'Err') "progress`n"
 Assert-Equal (Get-ShowLines $job "ULT:c2VjcmV0`n" $false 'Out') ''
 Assert-Equal (Get-ShowLines $job "prefix V2V_RESULT:c2VjcmV0`n" $false 'Err') ''
 # Failed ACL hardening is an error, not a successfully saved secret.
-function icacls.exe { $global:LASTEXITCODE = 5 }
-$rejected = $false
-try { Restrict-Path $source } catch { $rejected = $true }
-if (-not $rejected) { throw 'ACL failure was ignored' }
-Remove-Item Function:icacls.exe
+$exitCodeBeforeAclTest = $global:LASTEXITCODE
+try {
+  function icacls.exe { $global:LASTEXITCODE = 5 }
+  $rejected = $false
+  try { Restrict-Path $source } catch { $rejected = $true }
+  if (-not $rejected) { throw 'ACL failure was ignored' }
+} finally {
+  Remove-Item Function:icacls.exe
+  # GitHub's pwsh wrapper propagates LASTEXITCODE after the script returns.
+  $global:LASTEXITCODE = $exitCodeBeforeAclTest
+}
 $Records = Join-Path ([IO.Path]::GetTempPath()) ('v2v-record-test-' + [Guid]::NewGuid().ToString('N'))
 $Server = 'fixture'
 $script:rejectAcl = $false

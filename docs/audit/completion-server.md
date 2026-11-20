@@ -95,9 +95,9 @@ git diff --check
 | 前端 | Node 共 7 个 TAP 测试条目通过（6 个独立前端回归 + 1 个 UI 文件级测试）；覆盖本地日期、离开页面的 spark/observer、单次媒体事件、401 DOM、刷新不重叠和有限零配额。 |
 | PowerShell | PowerShell 7 下真实解析部署脚本并执行流分片、跨流凭据隐藏、UTF-8、私有写入顺序、原子替换、模拟 ACL 拒绝和 SSH 输入验证；通过。Windows 原生 icacls/Forms 未在 Linux 执行。 |
 | 语法/格式 | Python compileall、三 JS node --check、三个 Shell bash -n、Git whitespace 检查通过。 |
-| 固定真实内核 E2E | 本地缺少固定 Xray/Hysteria/mihomo/sing-box 二进制，未伪报本次通过。PR 的 `e2e` job 执行三协议 × 两客户端、私网/localhost/Host 伪装拒绝、空账户认证、统计、受控下载上传。以该 PR 提交对应 CI 结果为准。 |
-| 安装/系统 | 本地不模拟生产 root/systemd 安装。PR `install` job 在独立 Ubuntu runner 跑真实安装、初始化、服务/权限、升级、卸载保留数据及重装验收。 |
-| Shellcheck / Python 3.8 | 本地没有相应可执行工具；CI 保留 Shellcheck 和 Python 3.8/3.12 矩阵。旧 PR 的通过记录属于旧提交，不能替代这次 CI。 |
+| 固定真实内核 E2E | 本地已下载固定核心并验证配置，但执行器禁止 sing-box 所需 netlink socket（EPERM），完整网络测试不能在本地成立。PR 的 `e2e` job 执行三协议 × 两客户端、私网/localhost/Host 伪装拒绝、空账户认证、统计、受控下载上传。以该 PR 提交对应 CI 结果为准。 |
+| 安装/系统 | 首轮 PR CI 的 `install` 已通过。该 job 在独立 Ubuntu runner 跑真实安装、初始化、服务/权限、升级、卸载保留数据及重装验收。 |
+| Shellcheck / Python 3.8 | 首轮 PR CI 的 Python 3.8、3.12 两矩阵均通过；Shellcheck、JS 语法和 Node 测试也通过。旧 PR 的记录不代替当前提交验证。 |
 
 测试曾揭示并修正三个真实整合差异：Claude 网站 unknown 被 API ok 覆盖；Xray routeOnly 不能阻止 Host 路由伪装；恢复用户 ID 的夹具忘记同步 remap 流量引用，触发更严格验证器。最后一种修复的是夹具，未放松生产约束。部署测试使用真正的 urllib opener mock 和不可解析测试域，避免意外请求公共服务。
 
@@ -126,3 +126,13 @@ git diff --check
 - [Hysteria Traffic Stats API](https://v2.hysteria.network/docs/advanced/Traffic-Stats-API/) 与固定版本认证源码链接见历史后端报告。
 
 来源解释机制，实际结论以本仓库测试、明确的本次运行结果和 PR Diff 为依据。
+
+## PR CI 的专项修正记录
+
+首轮提交 `79303001605de2a09772167ab4e9b9a4cadf71c5` 的 [Actions run](https://github.com/xydadada/vps2vpn/actions/runs/44728704433) 已通过 Python 3.8、Python 3.12 与真实安装验收。剩余失败继续处理，不计作已通过：
+
+- PowerShell 夹具模拟 `icacls` 失败后留下 `LASTEXITCODE=5`，GitHub 的 `pwsh` 外层因此在测试成功后仍退出失败。夹具现在用 `finally` 恢复进入测试前的退出码；同样的外层命令在本地实际退出 0，未屏蔽生产 ACL 错误或测试异常。
+- Host 伪装用例原本发绝对 URL 加公网 Host；HTTP 代理可以按 Host 选择公网目标，并未请求受保护的私网夹具。现在先 CONNECT 到明确的私网地址，再在隧道内发送伪装 Host。真实本地代理回归同时验证拒绝代理通过、转发代理失败，且 `NO_PROXY=*` 无法绕过测试。
+- 首轮真实 E2E 另有两个 mihomo 公网 HTTP 502；受控 origin 下三协议均成功。增加每协议客户端和服务器日志，继续以重跑证据定位，未把这些失败忽略或改成成功。
+
+`tests.test_audit_tools` 在修正 CONNECT 夹具后 18 项全部通过。最终 head 的 CI 状态见 PR 描述；本段保留首轮失败原因，避免抹去验证历史。

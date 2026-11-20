@@ -285,8 +285,35 @@ class E2EHarness(unittest.TestCase):
     def test_private_probe_detects_forwarding_despite_no_proxy(self):
         requests = []
         forward = [False]
+        tunneled_hosts = []
 
         class Proxy(http.server.BaseHTTPRequestHandler):
+            def do_CONNECT(self):
+                requests.append('CONNECT ' + self.path)
+                if not forward[0]:
+                    self.send_response(403)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                target = urllib.parse.urlsplit('http://' + self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.flush()
+                method, path, _ = self.rfile.readline(4096).decode('ascii').split()
+                headers = http.client.parse_headers(self.rfile)
+                tunneled_hosts.append(headers.get('Host'))
+                connection = http.client.HTTPConnection(target.hostname, target.port, timeout=5)
+                try:
+                    connection.request(method, path, headers=dict(headers.items()))
+                    response = connection.getresponse()
+                    body = response.read()
+                    self.send_response(response.status)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                finally:
+                    connection.close()
+
             def do_GET(self):
                 requests.append(self.path)
                 if not forward[0]:
@@ -325,8 +352,11 @@ class E2EHarness(unittest.TestCase):
                 forward[0] = True
                 probe(proxy.server_address[1], client, 'forwarding proxy')
                 self.assertEqual(results, [False, False, False])
+            self.assertEqual(tunneled_hosts, ['www.cloudflare.com'])
             self.assertEqual(len(requests), 6)
-            self.assertTrue(all(url.startswith(('http://127.0.0.1:', 'http://localhost:')) for url in requests))
+            self.assertEqual(sum(url.startswith('CONNECT 127.0.0.1:') for url in requests), 2)
+            self.assertTrue(all(url.startswith(('http://127.0.0.1:', 'http://localhost:',
+                                               'CONNECT 127.0.0.1:')) for url in requests))
         finally:
             proxy.shutdown()
             proxy.server_close()

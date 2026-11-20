@@ -58,7 +58,7 @@ jobs:
       - name: Integration failure diagnostics
         if: failure()
         run: |
-          for log in /tmp/v2v-e2e-*/benchmark.*.log; do
+          for log in /tmp/v2v-e2e-*/benchmark.*.log /tmp/v2v-e2e-*/mihomo-*.log /tmp/v2v-e2e-*/xray.log /tmp/v2v-e2e-*/tuic.log; do
             [ -f "$log" ] || continue
             tail -n 40 "$log"
           done

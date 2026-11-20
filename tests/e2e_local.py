@@ -103,7 +103,7 @@ def tail(name, n=8):
 
 
 def check_private_targets(proxy_port, client, label):
-    """Send absolute-form HTTP to the proxy itself; urllib/no_proxy must never bypass it."""
+    """Connect to the proxy explicitly and keep the dial target distinct from a spoofed Host."""
     marker = ('v2v-private-' + os.urandom(12).hex()).encode()
     reached = set()
 
@@ -149,8 +149,14 @@ def check_private_targets(proxy_port, client, label):
             connection = http.client.HTTPConnection('127.0.0.1', proxy_port, timeout=10)
             refused, body = False, b''
             try:
-                connection.request('GET', 'http://%s:%d%s' % (host, target_port, path),
-                                   headers={'Host': host_header} if host_header else {})
+                if host_header:
+                    # HTTP proxies can choose the destination from Host rather
+                    # than the absolute URI. CONNECT fixes the private dial
+                    # authority before the HTTP Host reaches server sniffing.
+                    connection.set_tunnel(host, target_port)
+                    connection.request('GET', path, headers={'Host': host_header})
+                else:
+                    connection.request('GET', 'http://%s:%d%s' % (host, target_port, path))
                 response = connection.getresponse()
                 refused = response.status >= 400
                 body = response.read(4096)
