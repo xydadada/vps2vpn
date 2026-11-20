@@ -297,8 +297,76 @@ class Ops(Base):
         self.assertIn('[2001:db8::5]', subscription.share_link(n[3]))
         self.assertIn('IPv6', subscription.render('clash', db.settings(), u, 'https://x')[1])
 
+    def test_switches_from_json_mean_what_they_say(self):
+        for v, want in ((True, True), (False, False), (1, True), (0, False), ('false', False), ('0', False),
+                        ('off', False), ('true', True), ('on', True)):
+            self.assertIs(web.as_bool(v), want, v)
+        for v in ([], {}, 'maybe', 2, None):
+            with self.assertRaises(ValueError):
+                web.as_bool(v)
+        self.assertEqual(web.validate_settings({'block_ads': 'false'}, db.settings()), {'block_ads': False})
+        self.assertIsInstance(web.validate_settings({'block_ads': ['x']}, db.settings()), str)
+
+    def test_damaged_ai_result_reads_as_none(self):
+        from vps2vpn import aicheck
+        paths.ensure_dirs()
+        for bad in ('[]', '{"sites": []}', '{"sites": {"claude": {}}}'):
+            with open(aicheck.FILE, 'w', encoding='utf-8') as f:
+                f.write(bad)
+            self.assertIsNone(aicheck.latest(), bad)
+
     def test_notify_quiet_without_config(self):
         self.assertFalse(notify.send('hi'))
+
+    def test_notify_uses_the_telegram_target_of_now_not_a_stale_snapshot(self):
+        sent = []
+        orig = notify._call
+        notify._call = lambda token, method, params: sent.append((token, params.get('chat_id'))) or {'ok': True}
+        try:
+            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='111')
+            stale = db.settings()
+            db.set_settings(tg_token='', tg_chat='')            # owner switched alerts off meanwhile
+            self.assertFalse(notify.send('backup', s=stale))
+            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='222')   # ... or moved them to another chat
+            notify.send('backup', s=stale)
+            self.assertEqual(sent, [('1234567:' + 'a' * 35, '222')])
+        finally:
+            notify._call = orig
+
+    def test_telegram_binding_prefers_a_private_chat_over_a_group(self):
+        orig = notify._call
+        notify._call = lambda token, method, params: {'result': [
+            {'message': {'chat': {'id': 5, 'type': 'private', 'username': 'owner'}}},
+            {'message': {'chat': {'id': -9, 'type': 'group', 'title': 'friends'}}}]}
+        try:
+            self.assertEqual(notify.find_chat('t'), ('5', 'owner'))
+        finally:
+            notify._call = orig
+
+    def test_failed_apply_is_retried(self):
+        timers = []
+        orig_apply, orig_timer = cores.apply, web.threading.Timer
+
+        class FakeTimer:
+            def __init__(self, delay, fn, kwargs=None):
+                timers.append(delay)
+                self.daemon = True
+
+            def start(self):
+                pass
+        cores.apply = lambda force=False: (_ for _ in ()).throw(RuntimeError('systemctl failed'))
+        web.threading.Timer = FakeTimer
+        web._apply_retry[0] = 0
+        try:
+            web.apply_async()
+            for _ in range(100):
+                if timers:
+                    break
+                time.sleep(0.02)
+        finally:
+            cores.apply, web.threading.Timer = orig_apply, orig_timer
+            web._apply_retry[0] = 0
+        self.assertEqual(timers, [60])
 
 
 class Web(Base):
