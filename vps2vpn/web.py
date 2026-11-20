@@ -1143,8 +1143,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'POST only'}, 405)
         d = self.body_json()
         action = d.get('action')
+        raw_ids = d.get('ids', [])
+        if not isinstance(raw_ids, list):
+            return self.json({'error': 'ids must be an array'}, 400)
         try:
-            ids = [int(i) for i in d.get('ids') or []][:2000]
+            # A repeated account must not have its quota or expiry extended
+            # twice. Preserve the order of the first 2000 requested IDs.
+            ids = list(dict.fromkeys(int(i) for i in raw_ids[:2000]))
             value = float(d.get('value') or 0)
         except (TypeError, ValueError):
             return self.json({'error': 'invalid number'}, 400)
