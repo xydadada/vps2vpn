@@ -222,8 +222,8 @@ class CertificateTrust(tu.Base):
             f.write(b'private-key-placeholder')
         certs._trust_cache.clear()
         self.addCleanup(certs._trust_cache.clear)
-        with mock.patch.object(certs, 'acme_valid', return_value=True), \\
-             mock.patch.object(certs, 'acme_names', return_value=['vpn.example']), \\
+        with mock.patch.object(certs, 'acme_valid', return_value=True), \
+             mock.patch.object(certs, 'acme_names', return_value=['vpn.example']), \
              mock.patch.object(certs, '_openssl', side_effect=RuntimeError('untrusted chain')) as verify:
             self.assertFalse(certs.trusted('vpn.example'))
             self.assertFalse(certs.trusted('vpn.example'))  # cache must remember rejection
@@ -238,14 +238,14 @@ class CertificateTrust(tu.Base):
         def open_private(url, timeout=6, context=None):
             self.assertTrue(context.check_hostname)
             self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
-            return io.BytesIO(b'ip=127.0.0.1\\n')
+            return io.BytesIO(b'ip=127.0.0.1\n')
         with mock.patch.object(system.urllib.request, 'urlopen', side_effect=open_private):
             self.assertEqual(system.public_ip(), '')
         with mock.patch.object(system.urllib.request, 'urlopen',
-                               return_value=io.BytesIO(b'ip=8.8.8.8\\n')):
+                               return_value=io.BytesIO(b'ip=8.8.8.8\n')):
             self.assertEqual(system.public_ip(), '8.8.8.8')
         with mock.patch.object(system.urllib.request, 'urlopen',
-                               return_value=io.BytesIO(b'ip=2001:4860:4860::8888\\n')):
+                               return_value=io.BytesIO(b'ip=2001:4860:4860::8888\n')):
             self.assertEqual(system.public_ip(v6=True), '2001:4860:4860::8888')
 
 
