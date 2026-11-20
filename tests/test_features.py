@@ -269,6 +269,72 @@ class RuleMirrorDownloads(tu.Base):
         self.assertTrue(any('download failed' in line for line in logs))
 
 
+class CoreOnlineTelemetry(tu.Base):
+    """Malformed local core JSON must not break online users or traffic accounting."""
+
+    def test_tuic_owner_rejects_bad_tags_and_unhashable_connection_ids(self):
+        meter = cores.TuicMeter()
+        self.assertIsNone(meter.owner(None))
+        self.assertIsNone(meter.owner({'chains': [9, 'u' + '9' * 5000]}))
+        self.assertIsNone(meter.owner({'chains': ['u0', 'u４４']}))
+        self.assertEqual(meter.owner({'chains': ['not-an-account', 'u7']}), 7)
+        first = {
+            'uploadTotal': 0, 'downloadTotal': 0,
+            'connections': [
+                {'id': [], 'chains': ['u7'], 'upload': 4, 'download': 3},
+                {'id': {'bad': 'id'}, 'chains': ['u7']},
+                {'id': 'valid', 'chains': ['u7'], 'upload': 0, 'download': 0},
+                None,
+            ],
+        }
+        self.assertTrue(meter.sample({}, data=first, users={7}))
+        self.assertEqual(meter.conns, {'valid': (7, 0, 0)})
+        second = {
+            'uploadTotal': 20, 'downloadTotal': 10,
+            'connections': [
+                {'id': [], 'chains': ['u7'], 'upload': 3, 'download': 2},
+                {'id': 'valid', 'chains': ['u7'], 'upload': 10, 'download': 5},
+            ],
+        }
+        self.assertTrue(meter.sample({}, data=second, users={7}))
+        self.assertIn(7, meter.acc)
+
+    def test_online_detail_skips_bad_hysteria_and_tuic_rows(self):
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=True, tuic_enabled=True)
+        hy2 = {'u7': 2, 'u8': '1', 'u9': [], 'u10': True,
+               'u' + '9' * 5000: 4, 'u0': 1, 'u11': -3}
+        tuic = {
+            'connections': [
+                None, {'chains': ['u' + '9' * 5000]},
+                {'chains': ['u7'], 'metadata': {'sourceIP': ['not-a-string']}},
+                {'chains': ['u8'], 'metadata': {'sourceIP': '1.2.3.4'}},
+                {'chains': ['u9'], 'metadata': 'not-a-dict'},
+            ],
+        }
+        with mock.patch.object(cores.urllib.request, 'urlopen',
+                               return_value=io.BytesIO(json.dumps(hy2).encode())), \\
+             mock.patch.object(cores.TuicMeter, 'poll', return_value=tuic):
+            report = cores._online_detail(settings)
+        self.assertEqual(report[7]['hy2'] if 'hy2' in report[7] else report[7]['devices'], 2)
+        self.assertEqual(report[7]['conns'], 3)
+        self.assertEqual(report[8]['ips'], ['1.2.3.4'])
+        self.assertEqual(report[8]['devices'], 2)
+        self.assertEqual(report[9]['ips'], [])
+        self.assertNotIn(0, report)
+
+    def test_online_detail_keeps_valid_protocol_when_other_snapshot_is_invalid(self):
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=True, tuic_enabled=True)
+        valid_tuic = {'connections': [None, {'chains': ['u7'], 'metadata': {'sourceIP': '1.1.1.1'}}]}
+        with mock.patch.object(cores.urllib.request, 'urlopen',
+                               return_value=io.BytesIO(b'["invalid hy2 format"]')), \\
+             mock.patch.object(cores.TuicMeter, 'poll', return_value=valid_tuic):
+            report = cores._online_detail(settings)
+        self.assertEqual(report[7]['protocols'], ['tuic'])
+        self.assertEqual(report[7]['ips'], ['1.1.1.1'])
+        with mock.patch.object(cores.TuicMeter, 'poll', return_value=['invalid']):
+            self.assertIsNone(cores.TuicMeter().online(settings))
+
+
 class Shadowrocket(tu.Base):
     def test_config(self):
         db.set_settings(hy2_obfs='')
