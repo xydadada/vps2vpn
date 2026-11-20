@@ -173,10 +173,46 @@ class SyncError(RuntimeError):
     pass
 
 
+def _resolve_public_node_targets(host, port):
+    """Resolve once; reject every non-global answer before any TCP connection."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError) as e:
+        raise SyncError('cannot resolve node address: %s' % e)
+    if not infos:
+        raise SyncError('node address has no DNS answers')
+    targets = []
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0].split('%', 1)[0])
+        except (IndexError, TypeError, ValueError):
+            raise SyncError('node DNS returned an invalid address')
+        if not ip.is_global:
+            raise SyncError('node DNS returned a non-public address')
+        target = (str(ip), port)
+        if target not in targets:
+            targets.append(target)
+    return targets
+
+
+def _connect_node_targets(targets, timeout, source_address=None):
+    """Dial vetted numeric addresses, not the domain after a second DNS lookup."""
+    last_error = None
+    for target in targets:
+        try:
+            return socket.create_connection(target, timeout, source_address)
+        except OSError as e:
+            last_error = e
+    raise last_error or OSError('node has no reachable address')
+
+
 def _request(server, body, timeout=15):
     """POST to the node's sync endpoint over HTTPS with the pinned certificate. Returns (answer, pin)."""
     url = urllib.parse.urlsplit(server['url'])
     port = url.port or 443
+    # The join-time check is insufficient: DNS may change before periodic sync.
+    # In live mode, validate every answer and dial only those numeric IPs.
+    targets = _resolve_public_node_targets(url.hostname, port) if paths.LIVE else None
     pin = (server.get('pin') or '').strip().lower()
     payload = json.dumps(body).encode()
     attempts = ('pin', 'public') if pin else ('public',)
@@ -188,6 +224,11 @@ def _request(server, body, timeout=15):
         else:
             ctx = ssl.create_default_context()      # a certificate any browser would trust
         conn = http.client.HTTPSConnection(url.hostname, port, context=ctx, timeout=timeout)
+        if targets is not None:
+            # http.client retains the original host for TLS SNI and certificate
+            # hostname verification; only TCP destination resolution is pinned.
+            conn._create_connection = lambda _address, dial_timeout, source_address=None: (
+                _connect_node_targets(targets, dial_timeout, source_address))
         try:
             conn.connect()
             der = conn.sock.getpeercert(True)

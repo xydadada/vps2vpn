@@ -321,6 +321,31 @@ class Servers(tu.Base):
         self.assertEqual(subscription.nodes(dict(db.settings(), reality_enabled=False, hy2_enabled=False,
                                                  tuic_enabled=False, servers=[]), db.user(u['id'])), [])
 
+    def test_node_sync_rejects_mixed_public_and_private_dns(self):
+        # A host may be safe when joined but rebinding or split-horizon DNS
+        # must not redirect periodic sync traffic toward an internal address.
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443)),
+                   (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 443))]
+        with mock.patch.object(paths, 'LIVE', True), \
+             mock.patch.object(cluster.socket, 'getaddrinfo', return_value=answers), \
+             mock.patch.object(cluster.http.client, 'HTTPSConnection') as conn:
+            with self.assertRaisesRegex(cluster.SyncError, 'non-public'):
+                cluster._request({'url': 'https://node.example/admin', 'key': 'token', 'pin': ''},
+                                 {'users': []})
+            conn.assert_not_called()
+
+    def test_node_sync_dials_only_vetted_numeric_ips(self):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443)),
+                   (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443))]
+        with mock.patch.object(cluster.socket, 'getaddrinfo', return_value=answers):
+            targets = cluster._resolve_public_node_targets('node.example', 443)
+        self.assertEqual(targets, [('8.8.8.8', 443)])
+        sentinel_socket = object()
+        with mock.patch.object(cluster.socket, 'create_connection', return_value=sentinel_socket) as dial:
+            self.assertIs(cluster._connect_node_targets(targets, 4), sentinel_socket)
+            dial.assert_called_once_with(('8.8.8.8', 443), 4, None)
+
+
     def test_join_code(self):
         db.set_settings(panel_path='pp', node_name='Osaka')
         code = cluster.join_code(db.settings(), 'https://203.0.113.7:9443')
