@@ -5,6 +5,7 @@ IPv6 and times each step (DNS, TCP connect, TLS, first byte). ChatGPT's trace pa
 the site sees, which tells you whether it will let your users in. A small Cloudflare download measures
 the server's own bandwidth. The last 288 rounds (24 hours) are kept.
 """
+import http.client
 import ipaddress
 import json
 import os
@@ -97,26 +98,41 @@ def speed(timeout=20):
     host, path = SPEED_URL
     t0 = time.perf_counter()
     got = 0
-    sock = tls = None
+    sock = tls = response = None
     try:
         sock = socket.create_connection((host, 443), timeout=timeout)
         tls = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
         sock = None
-        tls.sendall(('GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: vps2vpn\r\nConnection: close\r\n\r\n'
+        tls.sendall(('GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: vps2vpn\r\n'
+                     'Accept-Encoding: identity\r\nConnection: close\r\n\r\n'
                      % (path % SPEED_BYTES, host)).encode())
-        t1 = None
-        while time.perf_counter() - t0 < timeout:
-            chunk = tls.recv(65536)
+        response = http.client.HTTPResponse(tls)
+        response.begin()
+        if response.status != 200:
+            raise ValueError('speed endpoint returned HTTP %d' % response.status)
+        if response.getheader('Content-Encoding', 'identity').strip().lower() != 'identity':
+            raise ValueError('compressed speed response is not a payload measurement')
+        if response.length is not None and response.length != SPEED_BYTES:
+            raise ValueError('speed response Content-Length does not match requested bytes')
+        first_byte_at = None
+        while got < SPEED_BYTES and time.perf_counter() - t0 < timeout:
+            chunk = response.read(min(65536, SPEED_BYTES - got))
             if not chunk:
                 break
-            if t1 is None:
-                t1 = time.perf_counter()
+            if first_byte_at is None:
+                first_byte_at = time.perf_counter()
             got += len(chunk)
-        dt = max(time.perf_counter() - (t1 or t0), 0.001)
-        return {'ok': got > SPEED_BYTES // 2, 'bytes': got, 'mbps': round(got * 8 / dt / 1e6, 1), 'at': int(time.time())}
-    except OSError as e:
+        if got != SPEED_BYTES:
+            raise ValueError('incomplete speed download (%d/%d bytes)' % (got, SPEED_BYTES))
+        if response.length is None and response.read(1):
+            raise ValueError('speed endpoint sent extra payload')
+        dt = max(time.perf_counter() - (first_byte_at or t0), 0.001)
+        return {'ok': True, 'bytes': got, 'mbps': round(got * 8 / dt / 1e6, 1), 'at': int(time.time())}
+    except (OSError, ValueError, http.client.HTTPException) as e:
         return {'ok': False, 'bytes': got, 'error': str(e)[:120], 'at': int(time.time())}
     finally:
+        if response is not None:
+            response.close()
         for s_obj in (tls, sock):
             if s_obj is not None:
                 try:
