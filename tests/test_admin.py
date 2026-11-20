@@ -109,7 +109,7 @@ class TelegramCommands(tu.Base):
         self.assertEqual(json.loads(data)['format'], 'vps2vpn-backup-1')
 
     def test_bot_answers_only_the_owner(self):
-        db.set_settings(tg_token='1:x', tg_chat='42', setup_done=True)
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_verified=True, setup_done=True)
         calls, sent = [], []
         stop = threading.Event()
         batches = [{'result': [{'update_id': 1, 'message': {'chat': {'id': 42}, 'text': '/old'}}]},   # before start
