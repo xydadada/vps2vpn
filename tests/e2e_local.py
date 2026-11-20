@@ -478,6 +478,31 @@ def main():
     for pr in clients:
         pr.terminate()
 
+    # --- a new user reaches the running Xray through its API: no restart, nobody else is disconnected
+    u2 = db.user(db.add_user('tester2'))
+    xc2 = json.loads(json.dumps(xc))
+    xc2['inbounds'][0]['settings']['clients'] = cores.xray_config(s, [u, u2])['inbounds'][0]['settings']['clients']
+    diff = cores.xray_user_diff(xc, xc2)
+    added = diff is not None and not diff[1] and cores._xray_hot_add(s, xc2, diff[0])
+    check('new user added to the running Xray (xray api adu)', added and xray_server.poll() is None,
+          'diff %s' % (None if diff is None else ([c['email'] for c in diff[0]], diff[1])))
+    o2 = next(x for x in subscription.singbox(s, u2, base)['outbounds'] if x['type'] == 'vless')
+    sport = free_port()
+    f = os.path.join(ROOT, 'sb-vless-new-user.json')
+    with open(f, 'w', encoding='utf-8') as fh:
+        json.dump({'log': {'level': 'warn'}, 'inbounds': [{'type': 'mixed', 'listen': '127.0.0.1', 'listen_port': sport}],
+                   'outbounds': [o2], 'route': {'final': o2['tag']}}, fh, ensure_ascii=False)
+    pr = start([SINGBOX, 'run', '-c', f], 'singbox-vless-new-user')
+    wait_port(sport)
+    try:
+        n, ms = fetch_via(sport)
+        check('the added user connects through the same Xray process', n > 100 and xray_server.poll() is None,
+              '%d bytes in %d ms' % (n, ms))
+    except Exception as e:
+        check('the added user connects through the same Xray process', False,
+              '%s | %s | %s' % (e, tail('singbox-vless-new-user', 3), tail('xray', 3)))
+    pr.terminate()
+
     # --- Shadowrocket: real rule list converted, config renders for this server
     try:
         lst = rules.fetch_converted('telegram-ip', 'shadowrocket').decode().splitlines()

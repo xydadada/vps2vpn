@@ -123,15 +123,11 @@ def enforce(now=None):
         return changed
 
 
+COLLECT_EVERY = 20     # seconds between traffic readings (cores.apply also reads right before a restart)
+
+
 def collect():
-    s = db.settings()
-    known = {u['id'] for u in db.users()}
-    deltas = [(uid, up, down) for uid, (up, down) in cores.collect_traffic(s).items()
-              if uid in known and (up or down)]
-    if deltas:
-        with db.transaction():
-            for uid, up, down in deltas:
-                db.add_traffic(uid, up, down)
+    cores.save_traffic(db.settings())
 
 
 def period_of(now, reset_day):
@@ -353,6 +349,7 @@ def watchdog(s):
     for unit, on in ((cores.XRAY_UNIT, s['reality_enabled']), (cores.HY2_UNIT, s['hy2_enabled']),
                      (cores.TUIC_UNIT, s['tuic_enabled'])):
         if on and system.unit_active(unit) is False:
+            # No traffic collection first: the core is not running, its counters are already gone.
             log('%s is down, restarting' % unit)
             system.systemctl('restart', unit)
             time.sleep(2)
@@ -611,17 +608,20 @@ class Scheduler:
         s = db.settings()
         if not s['setup_done']:
             return
-        if self.due('traffic', 60):
+        changed = False
+        if self.due('collect', COLLECT_EVERY):
+            # Often, and cheap (one counter read per core): less is lost if a core dies, and quotas cut in sooner.
             collect()
             changed = enforce()
+        if self.due('traffic', 60):
             if paths.LIVE and device_limits(s):
                 changed = True
-            if changed:
-                cores.apply()
-                cluster.sync_soon()
             health = system.health()
             server_month(s, health)
             HISTORY.sample(health)
+        if changed:
+            cores.apply()
+            cluster.sync_soon()
         if s['abuse_guard'] and self.due('abuse', 60) and paths.LIVE:
             abuse.check(s, log)
         if s['monitor_enabled'] and paths.LIVE and self.due('monitor', 300):
@@ -631,25 +631,7 @@ class Scheduler:
             except TypeError:
                 monitor.run_in_background(log)
         if paths.LIVE and self.due('cert', 3600) and time.monotonic() >= self.cert_backoff_until:
-            cert_host = s['domain'] or s['public_host']
-            before = certs.current(cert_host)
-            res = certs.renew_if_needed(s, log=log)
-            if res and res != 'ok':
-                self.cert_backoff_until = time.monotonic() + 6 * 3600    # stay well under Let's Encrypt's failure limits
-                db.set_settings(cert_status='failed: ' + res[:200])
-                if certs.trusted(cert_host) and not certs.acme_valid(36):
-                    notify.send('certificate renewal failing: %s / 证书续期失败' % res[:200], key='cert', every=12 * 3600)
-            elif res == 'ok':
-                db.set_settings(cert_status='ok')
-            if certs.current(cert_host) != before:
-                cores.apply()
-            elif res == 'ok':
-                # Same file, new certificate: the QUIC servers hold the old one in memory until restarted.
-                # (IP certificates are renewed every few days, so without this they would expire in use.)
-                for unit, on in ((cores.HY2_UNIT, s['hy2_enabled']), (cores.TUIC_UNIT, s['tuic_enabled'])):
-                    if on:
-                        system.systemctl('restart', unit)
-                log('certificate renewed, QUIC servers reloaded')
+            self.renew_cert(s)
         if self.due('rules', 86400) or (rules.mirror_age() is None and self.due('rules-missing', 600)):
             rules.refresh_in_background(log)
         if self.due('renew', 3600):
@@ -666,6 +648,31 @@ class Scheduler:
                 with open(name, 'rb') as f:
                     notify.send_file(os.path.basename(name), f.read(),
                                      'daily backup / 每日备份（含密钥，请妥善保存）', s=s)
+
+    def renew_cert(self, s):
+        """Renew the certificate when due and hand it to the cores."""
+        cert_host = s['domain'] or s['public_host']
+        before = certs.current(cert_host)
+        res = certs.renew_if_needed(s, log=log)
+        if res and res != 'ok':
+            self.cert_backoff_until = time.monotonic() + 6 * 3600    # stay well under Let's Encrypt's failure limits
+            db.set_settings(cert_status='failed: ' + res[:200])
+            if certs.trusted(cert_host) and not certs.acme_valid(36):
+                notify.send('certificate renewal failing: %s / 证书续期失败' % res[:200], key='cert', every=12 * 3600)
+        elif res == 'ok':
+            db.set_settings(cert_status='ok')
+        if certs.current(cert_host) != before:
+            cores.apply()            # other files: the configs change and the cores restart
+        elif res == 'ok':
+            # Same files, new certificate: both QUIC servers pick it up by themselves, no restart (which
+            # would drop every connection). Checked for the pinned versions:
+            # - Hysteria app/v2.14.0 serves through tls.Config.GetCertificate = LocalCertificateLoader, which
+            #   stats cert and key on every handshake and reloads them when a modification time changes
+            #   (app/cmd/server.go, app/internal/utils/certloader.go).
+            # - sing-box v1.14.4 watches certificate_path / key_path (fsnotify on the directory, so the
+            #   atomic rename in paths.write_atomic is seen) and swaps in a new tls.Config that
+            #   GetConfigForClient hands to each new handshake, QUIC included (common/tls/std_server.go).
+            log('certificate renewed; Hysteria and TUIC load it on their next handshakes')
 
     def run(self):
         while not self.stop.wait(10):
