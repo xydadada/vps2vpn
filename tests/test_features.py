@@ -13,7 +13,6 @@ import threading
 import time
 import unittest
 from unittest import mock
-from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
 from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, system, web
