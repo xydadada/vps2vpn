@@ -4,7 +4,7 @@ import getpass
 import json
 import os
 import random
-import socket
+import re
 import sys
 
 from . import VERSION, certs, cores, db, doctor, jobs, paths, rules, secure, system, web
@@ -15,12 +15,8 @@ def free_port():
         p = random.randint(20000, 60000)
         if 20000 <= p <= 40000:      # keep clear of the default hopping range
             continue
-        with socket.socket() as s:
-            try:
-                s.bind(('', p))
-                return p
-            except OSError:
-                continue
+        if system.port_free('tcp', p):      # checks IPv4 and IPv6, like the panel's dual-stack listener
+            return p
     return 54321
 
 
@@ -41,13 +37,13 @@ def cmd_init(a):
     s = db.ensure_secrets()
     if not s['panel_port']:
         db.set_settings(panel_port=a.port or free_port())
-    if not s['public_host']:
-        ip = system.public_ip()
-        if ip:
-            db.set_settings(public_host=ip)
     v6 = system.public_ip(v6=True)
     if v6:
         db.set_settings(public_ipv6=v6)
+    if not s['public_host']:
+        ip = system.public_ip() or v6          # IPv6-only servers get their IPv6 address
+        if ip:
+            db.set_settings(public_host=ip)
     s = db.settings()
     if not s['setup_done'] and not web.setup_token():
         paths.write_atomic(web.SETUP_TOKEN_FILE, secure.token(16), 0o600)
@@ -60,17 +56,19 @@ def cmd_init(a):
         warnings += pick_ports(db.settings())
     elif not os.path.exists(paths.TUIC_CONFIG):     # upgrade from a version without TUIC
         warnings += pick_ports(db.settings(), keys=(('tuic_port', 'udp'),))
-    if a.acme and s['cert_mode'] == 'auto' and cert_host and not certs.trusted(cert_host):
+    # open the host firewall (incl. TCP 80 for the http-01 challenge) before asking Let's Encrypt
+    system.tune_network(db.settings()['tune_network'])
+    system.open_firewall(db.settings())
+    s_cur = db.settings()
+    cert_host = s_cur['domain'] or s_cur['public_host']
+    if a.acme and s_cur['cert_mode'] == 'auto' and cert_host and not certs.trusted(cert_host):
         try:
-            certs.issue(cert_host, s['acme_email'])
+            certs.issue(cert_host, s_cur['acme_email'])
             db.set_settings(cert_status='ok')
         except Exception as e:      # never fail the install over a certificate
             db.set_settings(cert_status='failed: %s' % str(e)[:200])
             print('Let\'s Encrypt: %s (using a self-signed certificate for now)' % e)
-    system.tune_network(db.settings()['tune_network'])
-    system.open_firewall(db.settings())
-    s_cur = db.settings()
-    if not system.port_free('tcp', 80) and not certs.trusted(s_cur['domain'] or s_cur['public_host']):
+    if not system.port_free('tcp', 80) and not certs.trusted(cert_host):
         owner = system.port_owner('tcp', 80) or 'another program'
         warnings.append("TCP 80 is used by %s, so no free Let's Encrypt certificate yet (self-signed is used, "
                         "still encrypted). / 80 端口被 %s 占用，暂用自签名证书（照样加密）。" % (owner, owner))
@@ -111,7 +109,7 @@ def quick_setup(ai=None):
     db.set_settings(admin_user='admin', admin_hash=secure.hash_password(pw))
     if ai and db.settings()['node_name'] == 'vps2vpn':
         from . import aicheck
-        place = aicheck.place_name(ai)[:24]
+        place = re.sub(r'[\x00-\x1f\x7f#,=]', '', aicheck.place_name(ai) or '').strip()[:24]   # ends up in share links
         if place:
             db.set_settings(node_name=place)        # entries read "悉尼 Hysteria2" in the apps
     if not db.users():
@@ -133,7 +131,7 @@ def result_info(s):
     crt, _ = certs.current(s['domain'] or s['public_host'])
     try:
         pin = certs.fingerprint(crt)
-    except OSError:
+    except (OSError, ValueError):
         pin = ''
     info = {'panel': panel_url(s), 'pin': pin, 'join_code': cluster.join_code(s, base),
             'name': s['node_name'] or s['public_host'], 'host': s['public_host'], 'checks': port_checks(s)}
@@ -164,9 +162,12 @@ def pick_ports(s, keys=(('reality_port', 'tcp'), ('hy2_port', 'udp'), ('tuic_por
     for key, proto in keys:
         port = s[key]
         taken = {change.get('hy2_port', s['hy2_port'])} if key == 'tuic_port' else set()
+        if proto == 'tcp' and s['panel_port']:
+            taken.add(s['panel_port'])           # the panel is not running yet during init, so binding would succeed
         if port not in taken and system.port_free(proto, port):
             continue
-        owner = system.port_owner(proto, port) or 'another program'
+        owner = 'the vps2vpn panel' if proto == 'tcp' and port == s['panel_port'] else \
+            (system.port_owner(proto, port) or 'another program')
         for alt in (8443, 2053, 2083, 2087, 2096, 9443):
             if system.port_free(proto, alt) and alt != s['panel_port'] and alt not in taken:
                 change[key] = alt
@@ -211,9 +212,21 @@ def cmd_rules(a):
 
 def cmd_cert(a):
     s = db.settings()
-    certs.issue(s['domain'] or s['public_host'], s['acme_email'], staging=a.staging)
+    host = s['domain'] or s['public_host']
+    if not host:
+        sys.exit('no server address or domain configured')
+    try:
+        certs.issue(host, s['acme_email'], staging=a.staging)
+    except Exception as e:
+        if not a.staging:
+            db.set_settings(cert_status='failed: %s' % str(e)[:200])
+        sys.exit('Let\'s Encrypt%s: %s' % (' (staging)' if a.staging else '', e))
+    if a.staging:
+        # a staging certificate is untrusted and stored aside: do not mark the real one ok or hand it to the cores
+        print('staging certificate obtained (test only; nothing was changed)')
+        return
     db.set_settings(cert_status='ok')
-    cores.apply()
+    print('changed:', cores.apply(force=True) or 'nothing')     # force: same config text, new certificate files
 
 
 def cmd_doctor(a):
@@ -267,7 +280,7 @@ def main(argv=None):
     x = sub.add_parser('bench', help='measure this server\'s own speed to the internet')
     x.add_argument('--quick', action='store_true')
     x.set_defaults(fn=cmd_bench)
-    sub.add_parser('backup',help='write a backup to /var/lib/vps2vpn/backups now').set_defaults(fn=cmd_backup)
+    sub.add_parser('backup', help='write a backup to /var/lib/vps2vpn/backups now').set_defaults(fn=cmd_backup)
     sub.add_parser('sysctl', help='print the kernel tuning this machine would get').set_defaults(fn=cmd_sysctl)
     a = p.parse_args(argv)
     a.fn(a)

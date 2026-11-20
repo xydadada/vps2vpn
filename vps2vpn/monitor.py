@@ -5,6 +5,7 @@ IPv6 and times each step (DNS, TCP connect, TLS, first byte). ChatGPT's trace pa
 the site sees, which tells you whether it will let your users in. A small Cloudflare download measures
 the server's own bandwidth. The last 288 rounds (24 hours) are kept.
 """
+import ipaddress
 import json
 import os
 import socket
@@ -32,6 +33,7 @@ FILE = paths.VAR + '/monitor.json'
 BLOCKED_REGIONS = {'CN', 'HK', 'MO', 'RU', 'IR', 'KP', 'SY', 'CU', 'BY', 'VE'}
 
 _lock = threading.Lock()
+_run_lock = threading.Lock()
 _hist = None
 
 
@@ -58,8 +60,9 @@ def probe(host, path, family, timeout=8):
         sock = None
         r['tls'] = _ms(t2)
         t3 = time.perf_counter()
-        tls.sendall(('GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n'
-                     % (path, host)).encode())
+        method = 'HEAD' if path == '/' else 'GET'
+        tls.sendall(('%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n'
+                     % (method, path, host)).encode())
         first = tls.recv(4096)
         r['ttfb'] = _ms(t3)
         body = first
@@ -126,29 +129,38 @@ def has_ipv6():
     try:
         with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
             s.connect(('2606:4700:4700::1111', 53))
-            return not s.getsockname()[0].startswith('fe80')
-    except OSError:
+            ip = s.getsockname()[0].split('%', 1)[0]
+            return ipaddress.ip_address(ip).is_global
+    except (OSError, ValueError):
         return False
 
 
 def _recent_speed(now):
+    """The newest speed measurement if it succeeded and is younger than SPEED_EVERY, else None.
+    A failed measurement ({'ok': False}) is never reused, so one bad round does not stick for an hour."""
     with _lock:
         h = _load()
         for item in reversed(h):
-            sp = item.get('speed') or {}
+            sp = item.get('speed')
+            if not sp:
+                continue
             at = sp.get('at', item.get('at', 0))
-            if sp and now - at < SPEED_EVERY:
+            if sp.get('ok') and 0 <= now - at < SPEED_EVERY:
                 return sp
+            return None
     return None
 
 
 def run_once(force_speed=False):
     v6 = has_ipv6()
     results = {}
+    res_lock = threading.Lock()
     threads = []
 
     def go(tid, host, path, fam, key):
-        results[key] = probe(host, path, fam)
+        val = probe(host, path, fam)
+        with res_lock:
+            results[key] = val
 
     for tid, label, host, path in TARGETS:
         for fam, tag in ((socket.AF_INET, '4'), (socket.AF_INET6, '6')):
@@ -160,10 +172,13 @@ def run_once(force_speed=False):
     deadline = time.monotonic() + 20
     for th in threads:
         th.join(max(0.1, deadline - time.monotonic()))
+    # snapshot: a probe thread still running past the deadline must not mutate what we store/serialise
+    with res_lock:
+        snap = dict(results)
     now = int(time.time())
     sp = None if force_speed else _recent_speed(now)
-    entry = {'at': now, 'v6': v6, 'sites': results, 'speed': sp or speed()}
-    loc = (results.get('chatgpt/4') or {}).get('loc') or (results.get('chatgpt/6') or {}).get('loc')
+    entry = {'at': now, 'v6': v6, 'sites': snap, 'speed': sp or speed()}
+    loc = (snap.get('chatgpt/4') or {}).get('loc') or (snap.get('chatgpt/6') or {}).get('loc')
     if loc:
         entry['region'] = loc
         entry['chatgpt_region_ok'] = loc.upper() not in BLOCKED_REGIONS
@@ -223,6 +238,8 @@ def summary():
 
 def run_in_background(log=print):
     def go():
+        if not _run_lock.acquire(blocking=False):     # previous round still running: skip
+            return
         try:
             e = run_once()
             down = [k for k, v in e['sites'].items() if not v['ok'] and k.endswith('/4')]
@@ -230,6 +247,8 @@ def run_in_background(log=print):
                 log('monitor: cannot reach %s' % ', '.join(k.split('/')[0] for k in down))
         except Exception as ex:          # never take the scheduler down
             log('monitor error: %r' % ex)
+        finally:
+            _run_lock.release()
     threading.Thread(target=go, daemon=True, name='monitor').start()
 
 

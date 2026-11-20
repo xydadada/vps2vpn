@@ -17,7 +17,7 @@ os.environ['VPS2VPN_ROOT'] = ROOT
 os.environ['VPS2VPN_DEV'] = '1'
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from vps2vpn import certs, cores, db, doctor, jobs, notify, qr, rules, secure, subscription, system, web  # noqa: E402
+from vps2vpn import abuse, certs, cores, db, doctor, jobs, monitor, notify, paths, qr, rules, secure, subscription, system, web  # noqa: E402
 
 # Finishing the setup starts a real rule download in a thread; on Windows its half-written files then block
 # the next test from deleting the data folder. Tests never need the real rule files.
@@ -60,8 +60,13 @@ class QR(unittest.TestCase):
 class Base(unittest.TestCase):
     def setUp(self):
         db.close()
-        if os.path.exists(ROOT):
-            shutil.rmtree(ROOT)
+        for d in ([ROOT] + ([paths.ETC, paths.VAR] if paths._root else [])):
+            if os.path.exists(d):
+                shutil.rmtree(d)
+        web._fails.clear()
+        monitor._hist = None
+        abuse._last = {'at': 0, 'accounts': {}, 'coverage': []}
+        notify._recent.clear()
         db.ensure_secrets()
         db.set_settings(public_host='203.0.113.7', panel_port=54321)
         certs.ensure_self_signed('203.0.113.7')
@@ -212,7 +217,8 @@ class Ops(Base):
     def test_backup_rotation(self):
         os.makedirs(jobs.paths.BACKUPS, exist_ok=True)
         for i in range(20):
-            open(os.path.join(jobs.paths.BACKUPS, 'vps2vpn-200001%02d.json' % (i + 1)), 'w').close()
+            with open(os.path.join(jobs.paths.BACKUPS, 'vps2vpn-200001%02d.json' % (i + 1)), 'w'):
+                pass
         name = jobs.backup(keep=14)
         files = sorted(os.listdir(jobs.paths.BACKUPS))
         self.assertEqual(len(files), 14)
@@ -271,14 +277,18 @@ class Web(Base):
         self.httpd = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
         self.port = self.httpd.server_address[1]
         db.set_settings(panel_port=self.port)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self._thread.start()
         self.pp = '/' + db.settings()['panel_path']
         self.cookie = ''
-        web._fails.clear()
+        self._apply = web.apply_async
+        web.apply_async = lambda force=False: None
 
     def tearDown(self):
+        web.apply_async = self._apply
         self.httpd.shutdown()
         self.httpd.server_close()
+        self._thread.join(5)
 
     def req(self, method, path, body=None, tls=True, headers=None):
         ctx = ssl._create_unverified_context()
@@ -288,14 +298,16 @@ class Web(Base):
         if self.cookie:
             h['Cookie'] = self.cookie
         h.update(headers or {})
-        c.request(method, path, json.dumps(body) if body is not None else None, h)
-        r = c.getresponse()
-        data = r.read()
-        sc = r.getheader('Set-Cookie')
-        if sc:
-            self.cookie = sc.split(';')[0]
-        c.close()
-        return r.status, data, r
+        try:
+            c.request(method, path, json.dumps(body) if body is not None else None, h)
+            r = c.getresponse()
+            data = r.read()
+            sc = r.getheader('Set-Cookie')
+            if sc:
+                self.cookie = sc.split(';')[0]
+            return r.status, data, r
+        finally:
+            c.close()
 
     def test_full_flow(self):
         st, body, _ = self.req('GET', '/')
@@ -368,11 +380,13 @@ class Web(Base):
         db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
         c = http.client.HTTPSConnection('127.0.0.1', self.port, context=ssl._create_unverified_context(), timeout=10)
         body = iter([b'{"username": "admin", ', b'"password": "rightpassword"}'])
-        c.request('POST', self.pp + '/api/login', body, {'X-V2V': '1', 'Content-Type': 'application/json'},
-                  encode_chunked=True)
-        r = c.getresponse()
-        r.read()
-        c.close()
+        try:
+            c.request('POST', self.pp + '/api/login', body, {'X-V2V': '1', 'Content-Type': 'application/json'},
+                      encode_chunked=True)
+            r = c.getresponse()
+            r.read()
+        finally:
+            c.close()
         self.assertEqual(r.status, 200)
         self.assertIn('v2v=', r.getheader('Set-Cookie') or '')
 
@@ -380,20 +394,19 @@ class Web(Base):
         """A negative or garbage chunk size is a 400, not a crash."""
         import socket
         db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
-        raw = socket.create_connection(('127.0.0.1', self.port), timeout=10)
-        c = ssl._create_unverified_context().wrap_socket(raw)
-        c.sendall(('POST %s/api/login HTTP/1.1\r\nHost: x\r\nX-V2V: 1\r\nTransfer-Encoding: chunked\r\n'
-                   'Content-Type: application/json\r\n\r\n-5\r\nxx\r\n0\r\n\r\n' % self.pp).encode())
-        data = b''
-        try:
-            while not data.endswith(b'}') and len(data) < 65536:
-                d = c.recv(4096)
-                if not d:
-                    break
-                data += d
-        except socket.timeout:
-            pass
-        c.close()
+        with socket.create_connection(('127.0.0.1', self.port), timeout=10) as raw:
+            with ssl._create_unverified_context().wrap_socket(raw) as c:
+                c.sendall(('POST %s/api/login HTTP/1.1\r\nHost: x\r\nX-V2V: 1\r\nTransfer-Encoding: chunked\r\n'
+                           'Content-Type: application/json\r\n\r\n-5\r\nxx\r\n0\r\n\r\n' % self.pp).encode())
+                data = b''
+                try:
+                    while not data.endswith(b'}') and len(data) < 65536:
+                        d = c.recv(4096)
+                        if not d:
+                            break
+                        data += d
+                except socket.timeout:
+                    pass
         self.assertTrue(data.startswith(b'HTTP/1.1 400') or data.startswith(b'HTTP/1.0 400'), data[:40])
 
     def test_every_api_handler_is_routed(self):

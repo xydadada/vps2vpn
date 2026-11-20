@@ -1,4 +1,4 @@
-﻿<#
+<#
   vps2vpn one-click deployer for Windows 10/11. Needs nothing extra: PowerShell, tar.exe and ssh.exe ship with Windows.
   Double-click deploy-windows.bat. Fill in the server IP, drop the SSH key file (or the whole .ssh folder) on the
   window or type the root password, press the button. Everything else is automatic: the server creates the admin
@@ -22,8 +22,34 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
+function Restrict-Path([string]$p) {
+  # only this Windows account may read it (ssh refuses keys others can read; logins stay private)
+  $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  $grant = if (Test-Path -LiteralPath $p -PathType Container) { "*${sid}:(OI)(CI)F" } else { "*${sid}:F" }
+  & icacls.exe $p /inheritance:r /grant:r $grant | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "icacls.exe failed on $p (exit $LASTEXITCODE)" }
+}
+
+function Test-SafeUrl([string]$url, [string[]]$schemes) {
+  if ([string]::IsNullOrWhiteSpace($url)) { return $false }
+  if ($url.StartsWith('-') -or $url -match '[\x00-\x20\x7f]') { return $false }
+  $uri = $null
+  if (-not [Uri]::TryCreate($url, [UriKind]::Absolute, [ref]$uri)) { return $false }
+  $sc = $uri.Scheme.ToLowerInvariant()
+  if ($schemes -notcontains $sc) { return $false }
+  if (($sc -eq 'http' -or $sc -eq 'https') -and [string]::IsNullOrEmpty($uri.Host)) { return $false }
+  return $true
+}
+
+function Assert-Target([string]$h, [string]$u, [int]$p) {
+  if ($h -notmatch '^[A-Za-z0-9.:-]{3,255}$' -or $h.StartsWith('-')) { throw '先填服务器 IP（只能是 IP 或域名）。' }
+  if ($u -notmatch '^[a-z_][a-z0-9_.-]{0,31}$') { throw '用户名不对。' }
+  if ($p -lt 1 -or $p -gt 65535) { throw 'SSH 端口必须在 1 到 65535 之间。' }
+}
+
 $Work = Join-Path ([IO.Path]::GetTempPath()) ('v2v-deploy-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $Work | Out-Null
+Restrict-Path $Work
 $Records = if ($env:V2V_RECORDS) { $env:V2V_RECORDS } else { Join-Path $env:USERPROFILE 'vps2vpn' }
 $ClientDownload = 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest'
 # Windows' own tools (Git and other toolkits put different tar/ssh builds on PATH)
@@ -63,12 +89,6 @@ function Find-KeyFile([string]$p) {
   return $p
 }
 
-function Restrict-Path([string]$p) {
-  # only this Windows account may read it (ssh refuses keys others can read; logins stay private)
-  $grant = if (Test-Path -LiteralPath $p -PathType Container) { "$($env:USERNAME):(OI)(CI)F" } else { "$($env:USERNAME):F" }
-  & icacls.exe $p /inheritance:r /grant:r $grant | Out-Null
-}
-
 function Copy-Key([string]$src) {
   # Windows ssh refuses keys that other accounts can read, so use a private copy (deleted afterwards).
   $dst = Join-Path $Work 'key'
@@ -89,13 +109,14 @@ function Get-SshArgs([string]$keyPath, [bool]$usePassword) {
     $a += @('-o', 'PreferredAuthentications=password,keyboard-interactive', '-o', 'PubkeyAuthentication=no',
       '-o', 'NumberOfPasswordPrompts=1')
   }
-  return $a + @("$User@$Server")
+  return $a + @('--', "$User@$Server")
 }
 
 function Set-AskPass([string]$pw) {
   # ssh asks this helper for the password; the password itself only lives in an environment variable.
   $helper = Join-Path $Work 'askpass.cmd'
-  [IO.File]::WriteAllText($helper, "@powershell -NoProfile -NonInteractive -Command `"[Console]::Out.WriteLine(`$env:V2V_PW)`"`r`n")
+  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  [IO.File]::WriteAllText($helper, "@`"$psExe`" -NoProfile -NonInteractive -Command `"[Console]::Out.WriteLine(`$env:V2V_PW)`"`r`n")
   $env:V2V_PW = $pw
   $env:SSH_ASKPASS = $helper
   $env:SSH_ASKPASS_REQUIRE = 'force'
@@ -110,7 +131,7 @@ function Test-SshVersionForPassword {
   return $true
 }
 
-function Quote-Arg([string]$s) { '"' + ($s -replace '(\\*)"', '$1$1\"') + '"' }
+function Quote-Arg([string]$s) { '"' + (($s -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' }
 
 function Start-Ssh([string[]]$sshArgs, [string]$remote, [string]$stdinFile) {
   $out = Join-Path $Work ('out-' + [Guid]::NewGuid().ToString('N').Substring(0, 6) + '.txt')
@@ -147,7 +168,9 @@ function Get-ShowLines($job, [string]$t, [bool]$final) {
   # Complete lines to show in the log. The result line holds the new admin password, so it is never shown.
   $job.Pending += $t
   $parts = $job.Pending -split "`n"
-  if ($final) { $job.Pending = '' } else { $job.Pending = $parts[-1]; $parts = $parts[0..($parts.Count - 2)] }
+  if ($final) { $job.Pending = '' }
+  elseif ($parts.Count -le 1) { return '' }
+  else { $job.Pending = $parts[-1]; $parts = $parts[0..($parts.Count - 2)] }
   $keep = @($parts | Where-Object { $_ -notmatch '^V2V_RESULT:' })
   if ($keep.Count -eq 0) { return '' }
   return (($keep -join "`n") + $(if ($final) { '' } else { "`n" }))
@@ -156,8 +179,10 @@ function Get-ShowLines($job, [string]$t, [bool]$final) {
 function Get-Result([string]$text) {
   $m = [regex]::Match($text, '(?m)^V2V_RESULT:([A-Za-z0-9+/=]+)')
   if (-not $m.Success) { return $null }
-  $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($m.Groups[1].Value))
-  return ($json | ConvertFrom-Json)
+  try {
+    $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($m.Groups[1].Value))
+    return ($json | ConvertFrom-Json)
+  } catch { return $null }
 }
 
 function Explain([string]$msg) {
@@ -171,7 +196,7 @@ function Explain([string]$msg) {
 
 function Remove-Secrets {
   Remove-Item Env:V2V_PW, Env:SSH_ASKPASS, Env:SSH_ASKPASS_REQUIRE -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath (Join-Path $Work 'key') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $Work 'key'), (Join-Path $Work 'askpass.cmd') -Force -ErrorAction SilentlyContinue
   # the installer's output (it contains the result line) is not needed once read
   Get-ChildItem -LiteralPath $Work -Filter 'out-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }
@@ -180,8 +205,8 @@ $Sudo = { if ($User -eq 'root') { '' } else { 'sudo -n ' } }
 $ProbeCmd = { 'echo connected; uname -sm; ' + (& $Sudo) + 'id -u' }
 $InstallCmd = {
   $runAs = if ($User -eq 'root') { '' } else { 'sudo -n env ' }
-  'set -e; T=$(mktemp -d); base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; ' + $runAs +
-  'V2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install; rm -rf "$T"'
+  'set -e; T=$(mktemp -d); trap ''rm -rf "$T"'' EXIT; base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; ' + $runAs +
+  'V2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install'
 }
 
 function Check-Prereqs {
@@ -230,14 +255,23 @@ function Merge-Record($res, [string]$mainHost) {
 function Save-Record($rec) {
   if (-not (Test-Path -LiteralPath $Records)) { New-Item -ItemType Directory -Force $Records | Out-Null; Restrict-Path $Records }
   $p = Get-RecordPath $Server
-  [IO.File]::WriteAllText($p, (ConvertTo-Json -InputObject $rec -Depth 8), (New-Object Text.UTF8Encoding($false)))
-  Restrict-Path $p
+  $tmp = $p + '.' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.tmp'
+  try {
+    [IO.File]::WriteAllText($tmp, (ConvertTo-Json -InputObject $rec -Depth 8), (New-Object Text.UTF8Encoding($false)))
+    Restrict-Path $tmp
+    Move-Item -LiteralPath $tmp -Destination $p -Force
+    Restrict-Path $p
+  } catch {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    throw
+  }
   return $p
 }
 
 # ---------------------------------------------------------------- firewall check from the outside
 function Test-Tcp([string]$h, [int]$p) {
-  $c = New-Object Net.Sockets.TcpClient
+  $fam = if ($h -match ':') { [Net.Sockets.AddressFamily]::InterNetworkV6 } else { [Net.Sockets.AddressFamily]::InterNetwork }
+  $c = New-Object Net.Sockets.TcpClient($fam)
   try { $t = $c.ConnectAsync($h, $p); return ($t.Wait(5000) -and $c.Connected) } catch { return $false } finally { $c.Close() }
 }
 
@@ -256,7 +290,7 @@ function Test-Quic([string]$h, [int]$p) {
     for ($i = 0; $i -lt 2; $i++) {
       try {
         [void]$u.Send($pkt, $pkt.Length, $h, $p)
-        $ep = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
+        $ep = New-Object Net.IPEndPoint($(if ($h -match ':') { [Net.IPAddress]::IPv6Any } else { [Net.IPAddress]::Any }), 0)
         $d = $u.Receive([ref]$ep)
         if ($d.Length -ge 7 -and ($d[0] -band 0x80) -and $d[1] -eq 0 -and $d[2] -eq 0 -and $d[3] -eq 0 -and $d[4] -eq 0) { return $true }
       } catch {}
@@ -267,7 +301,15 @@ function Test-Quic([string]$h, [int]$p) {
 
 function Check-Ports($checks) {
   $out = @()
-  foreach ($c in @($checks)) { $out += [pscustomobject]@{ proto = "$($c[0])"; port = [int]$c[1]; name = "$($c[2])"; ok = $false } }
+  foreach ($c in @($checks)) {
+    if ($null -eq $c -or $c.Count -lt 3) { continue }
+    $proto = "$($c[0])".ToLowerInvariant()
+    if ($proto -notin 'tcp', 'udp') { continue }
+    $port = 0
+    if (-not [int]::TryParse("$($c[1])", [ref]$port) -or $port -lt 1 -or $port -gt 65535) { continue }
+    $out += [pscustomobject]@{ proto = $proto; port = $port; name = "$($c[2])"; ok = $false }
+  }
+  if ($out.Count -eq 0) { return $out }
   for ($round = 0; $round -lt 3; $round++) {     # the services were only just started
     foreach ($c in $out | Where-Object { -not $_.ok }) {
       $c.ok = if ($c.proto -eq 'tcp') { Test-Tcp $Server $c.port } else { Test-Quic $Server $c.port }
@@ -281,10 +323,11 @@ function Check-Ports($checks) {
 
 # ---------------------------------------------------------------- the VPN app on this computer
 function Find-Client {
-  # Which installed app opens clash:// (or hiddify:// / sing-box://) links. Only reads the registry.
-  $names = @(@('clash-verge', 'Clash Verge'), @('clash verge', 'Clash Verge'), @('flclash', 'FlClash'), @('mihomo', 'Mihomo Party'),
-    @('nyanpasu', 'Clash Nyanpasu'), @('clash for windows', 'Clash for Windows'), @('hiddify', 'Hiddify'), @('sing-box', 'sing-box'))
-  foreach ($s in @(@('clash', 'clash'), @('hiddify', 'hiddify'), @('sing-box', 'singbox'))) {
+  # Which installed app opens vps2vpn:// or clash:// (or hiddify:// / sing-box://) links. Only reads the registry.
+  $names = @(@('vps2vpn', 'vps2vpn'), @('clash-verge', 'Clash Verge'), @('clash verge', 'Clash Verge'), @('flclash', 'FlClash'),
+    @('mihomo', 'Mihomo Party'), @('nyanpasu', 'Clash Nyanpasu'), @('clash for windows', 'Clash for Windows'),
+    @('hiddify', 'Hiddify'), @('sing-box', 'sing-box'))
+  foreach ($s in @(@('vps2vpn', 'vps2vpn'), @('clash', 'clash'), @('hiddify', 'hiddify'), @('sing-box', 'singbox'))) {
     foreach ($root in 'HKCU:', 'HKLM:') {
       $k = "$root\Software\Classes\$($s[0])\shell\open\command"
       if (-not (Test-Path $k)) { continue }
@@ -308,13 +351,20 @@ using System.Security.Cryptography; using System.Security.Cryptography.X509Certi
 public static class V2VHttp {
   // POST to a panel. The certificate must be one any browser trusts, or the one saved at deploy time.
   public static string[] Post(string url, string body, string cookie, string pin) {
+    Uri u = new Uri(url);
+    if (!String.Equals(u.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) {
+      throw new ArgumentException("Only https:// panel URLs are allowed.");
+    }
     ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
-    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(u);
+    req.AllowAutoRedirect = false;
     req.ServerCertificateValidationCallback = delegate (object s, X509Certificate c, X509Chain ch, SslPolicyErrors e) {
       if (e == SslPolicyErrors.None) return true;
       if (String.IsNullOrEmpty(pin) || c == null) return false;
-      byte[] h = SHA256.Create().ComputeHash(c.GetRawCertData());
-      return BitConverter.ToString(h).Replace("-", "").ToLowerInvariant() == pin;
+      using (SHA256 sha = SHA256.Create()) {
+        byte[] h = sha.ComputeHash(c.GetRawCertData());
+        return BitConverter.ToString(h).Replace("-", "").ToLowerInvariant() == pin;
+      }
     };
     req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 30000;
     req.Headers["X-V2V"] = "1";
@@ -335,9 +385,14 @@ public static class V2VHttp {
 }
 
 function Invoke-Panel($rec, [string]$path, $body, [string]$cookie = '') {
-  $url = ([string]$rec.panel).TrimEnd('/') + '/api/' + $path
+  $base = [string]$rec.panel
+  if (-not (Test-SafeUrl $base @('https'))) { throw '主服务器的面板地址无效。' }
+  $url = $base.TrimEnd('/') + '/api/' + $path
   try { $r = [V2VHttp]::Post($url, (ConvertTo-Json -InputObject $body -Compress), $cookie, "$($rec.pin)") }
-  catch { throw ('连不上主服务器的面板，或者它的证书和部署时记下的不一样（' + $_.Exception.InnerException.Message + '）') }
+  catch {
+    $detail = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+    throw ('连不上主服务器的面板，或者它的证书和部署时记下的不一样（' + $detail + '）')
+  }
   $j = $null; try { $j = $r[1] | ConvertFrom-Json } catch {}
   return @{ Status = [int]$r[0]; Json = $j; Cookie = $r[2] }
 }
@@ -366,10 +421,14 @@ function Update-Checks($st) {
   # firewall check, then the VPN app import and the join to the main server (both need the panel port)
   $rec = $st.Rec
   $st.Ports = @(Check-Ports $rec['checks'])
-  $panelOk = -not ($st.Ports | Where-Object { $_.name -eq '管理面板' -and -not $_.ok })
+  $panelChecks = @($st.Ports | Where-Object { $_.name -eq '管理面板' })
+  $panelOk = ($panelChecks.Count -gt 0) -and -not ($panelChecks | Where-Object { -not $_.ok })
   if ($panelOk -and $st.Client -and -not $st.Imported -and -not $rec['main'] -and -not $st.NoImport -and $rec['links']) {
-    $link = $rec['links'].($st.Client.link)
-    if ($link) { try { Start-Process $link; $st.Imported = $true } catch {} }
+    $link = [string]$rec['links'].($st.Client.link)
+    if (-not $link -and $st.Client.link -eq 'vps2vpn') { $link = [string]$rec['links'].clash }
+    if (Test-SafeUrl $link @('vps2vpn', 'clash', 'hiddify', 'sing-box')) {
+      try { Start-Process $link; $st.Imported = $true } catch {}
+    }
   }
   if ($rec['main'] -and $st.Join -ne 'ok') {
     if (-not $panelOk) { $st.Join = 'wait'; $st.JoinMsg = '先放行防火墙，再点「再检查一次」，会自动加入。' }
@@ -389,6 +448,9 @@ if ($PackageOnly) {
 }
 if ($Headless) {
   try {
+    $Server = $Server.Trim().Trim('[', ']')
+    $User = $User.Trim()
+    Assert-Target $Server $User $Port
     Check-Prereqs
     if ($Main -and -not (Get-Record $Main).admin_password) { throw "no saved login for main server $Main" }
     $kp = $null
@@ -556,14 +618,20 @@ function Fill-Result($p, $st) {
       Add-Label "检测到你电脑上的 $($st.Client.name)。防火墙放行后会自动导入，也可以直接点下面的按钮。" $y 44 $null $p | Out-Null; $y += 48
     } else {
       Add-Label '没检测到电脑上的 VPN 软件。推荐装免费开源的 Clash Verge Rev（下载名字里带 setup 的 .exe），装好后回来点「导入到 Clash」。' $y 44 $red $p | Out-Null; $y += 48
-      $p.Controls.Add((New-Btn '打开 Clash Verge 下载页' 20 $y 220 { Start-Process $ClientDownload })); $y += 42
+      $p.Controls.Add((New-Btn '打开 Clash Verge 下载页' 20 $y 220 { if (Test-SafeUrl $ClientDownload @('https')) { Start-Process $ClientDownload } })); $y += 42
     }
     $label = if ($st.Client) { $(if ($st.Imported) { '再导入一次到 ' } else { '导入到 ' }) + $st.Client.name } else { '导入到 Clash' }
     $p.Controls.Add((New-Btn $label 20 $y 175 {
       $l = $script:st.Rec['links']; $k = if ($script:st.Client) { $script:st.Client.link } else { 'clash' }
-      try { Start-Process ($l.$k) } catch { [Windows.Forms.MessageBox]::Show('打不开。请先装好 Clash Verge 或 FlClash。') | Out-Null }
+      $target = [string]($l.$k)
+      if (-not $target -and $k -eq 'vps2vpn') { $target = [string]($l.clash) }
+      if (-not (Test-SafeUrl $target @('vps2vpn', 'clash', 'hiddify', 'sing-box'))) { [Windows.Forms.MessageBox]::Show('导入链接无效。') | Out-Null; return }
+      try { Start-Process $target } catch { [Windows.Forms.MessageBox]::Show('打不开。请先装好 Clash Verge 或 FlClash。') | Out-Null }
     } $true))
-    $p.Controls.Add((New-Btn '手机扫码（打开订阅页）' 203 $y 190 { Start-Process "$($script:st.Rec['sub_url'])" }))
+    $p.Controls.Add((New-Btn '手机扫码（打开订阅页）' 203 $y 190 {
+      $u = "$($script:st.Rec['sub_url'])"
+      if (Test-SafeUrl $u @('http', 'https')) { Start-Process $u }
+    }))
     $p.Controls.Add((New-Btn '复制订阅链接' 401 $y 145 { Copy-Text "$($script:st.Rec['sub_url'])" $this })); $y += 46
   }
   $t = Add-Label $(if ($rec['main']) { '防火墙检查（从你这台电脑测试）' } else { '② 防火墙检查（从你这台电脑测试）' }) $y 24 $null $p
@@ -587,7 +655,10 @@ function Fill-Result($p, $st) {
   Add-Label ('地址：' + $rec['panel']) $y 22 $null $p | Out-Null; $y += 24
   $pwText = if ($rec['admin_password']) { '用户名：' + $rec['admin_user'] + '      密码：已保存（点「复制密码」）' } else { '用户名和密码：用你自己设置的那个' }
   Add-Label $pwText $y 22 $null $p | Out-Null; $y += 28
-  $p.Controls.Add((New-Btn '打开面板' 20 $y 120 { Start-Process "$($script:st.Rec['panel'])" } $true))
+  $p.Controls.Add((New-Btn '打开面板' 20 $y 120 {
+    $u = "$($script:st.Rec['panel'])"
+    if (Test-SafeUrl $u @('https')) { Start-Process $u }
+  } $true))
   if ($rec['admin_password']) { $p.Controls.Add((New-Btn '复制密码' 148 $y 120 { Copy-Text "$($script:st.Rec['admin_password'])" $this })) }
   $p.Controls.Add((New-Btn '打开保存的文件夹' 276 $y 160 { Start-Process explorer.exe -ArgumentList "`"$Records`"" })); $y += 44
   Add-Label ('浏览器若提示「不安全」，点「高级 → 继续访问」即可（照样加密）。登录信息保存在：' + $st.File) $y 44 $gray $p | Out-Null
@@ -654,10 +725,11 @@ $btn.Add_Click({
   try {
     $script:Server = $tbHost.Text.Trim().Trim('[', ']')
     $script:User = $tbUser.Text.Trim()
-    $script:Port = [int]$tbPort.Text.Trim()
+    $p = 0
+    if (-not [int]::TryParse($tbPort.Text.Trim(), [ref]$p)) { throw 'SSH 端口必须是数字。' }
+    $script:Port = $p
     $script:main = $script:mainHosts[[Math]::Max(0, $cbMain.SelectedIndex)]
-    if ($script:Server -notmatch '^[A-Za-z0-9.:-]+$') { throw '先填服务器 IP（只能是 IP 或域名）。' }
-    if ($script:User -notmatch '^[a-z_][a-z0-9_.-]{0,31}$') { throw '用户名不对。' }
+    Assert-Target $script:Server $script:User $script:Port
     if ($script:main -and $script:main -eq $script:Server) { throw '不能把服务器加到它自己下面。请选「单独使用」。' }
     if (-not $script:keyFile -and -not $tbPw.Text) { throw '拖入密钥文件，或者填密码。' }
     Check-Prereqs

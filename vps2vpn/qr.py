@@ -3,6 +3,7 @@
 Enough for subscription links (up to ~1.2 KB of text). Standard library only, so the panel
 never has to load a script from a third-party CDN.
 """
+import re
 
 # (total codewords, ec codewords per block, blocks in group 1, data cw g1, blocks g2, data cw g2) for level M
 _M = {
@@ -229,13 +230,13 @@ def _penalty(m):
             if run >= 5:
                 score += run - 2
             s = ''.join('1' if v else '0' for v in row)
-            score += 40 * (s.count('10111010000') + s.count('00001011101'))
+            score += 40 * len(re.findall(r'(?=10111010000|00001011101)', s))
     for r in range(n - 1):
         for c in range(n - 1):
             if m[r][c] == m[r][c + 1] == m[r + 1][c] == m[r + 1][c + 1]:
                 score += 3
     dark = sum(v for row in m for v in row)
-    score += abs(dark * 20 // (n * n) - 10) * 10
+    score += int(abs(dark * 100 / (n * n) - 50)) // 5 * 10
     return score
 
 
@@ -251,6 +252,8 @@ def matrix(text, mask=None):
     base = _base(ver)
     reserved = _place(base, _codewords(data, ver), ver)
     if mask is not None:
+        if not isinstance(mask, int) or isinstance(mask, bool) or not 0 <= mask <= 7:
+            raise ValueError('mask must be an integer between 0 and 7')
         return _apply(base, reserved, mask, ver)
     return min((_apply(base, reserved, k, ver) for k in range(8)), key=_penalty)
 

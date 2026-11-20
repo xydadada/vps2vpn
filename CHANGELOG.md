@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.3
+
+Fixes from a third outside code review (on 0.2.2).
+
+**Security**
+- One-click deployers only open links of known kinds (vps2vpn://, clash://, hiddify://, sing-box://, shadowrocket://, http(s)). A hostile server can no longer make your computer open a file or script, and the deploy page no longer renders unchecked links.
+- The browser deployer remembers each server's SSH fingerprint (in your vps2vpn folder). If a server's identity changes it stops and explains what to do; after reinstalling a server's system, that is expected.
+- Windows deployer starts PowerShell by its full path.
+- Users cannot reach the server's own private addresses (cloud metadata, local services) through the proxy, even with a fake domain name.
+- When every account is disabled, nobody can still use the TUIC line, and Hysteria 2 no longer crash-loops.
+- Requests: conflicting or malformed length headers, endless trailers and huge passwords are refused early; at most 128 connections at once.
+- 2FA codes cannot be reused; failed attempts from one IPv6 network are counted together; CSV export is safe to open in spreadsheets.
+- Invites: paused accounts and multi-level invites can no longer be used to recycle quota; an unused invite code is no longer voided by the inviter spending their kept 1 GB.
+
+**Reliability**
+- Port-hopping firewall rules and BBR now survive a reboot (checked on a real server).
+- Certificates: IPv6 addresses and full-chain certificates are matched correctly.
+- sing-box subscriptions: port hopping no longer conflicts with the main port.
+- Cores start on servers without IPv6. Hysteria 2 always uses BBR (clients cannot demand a fixed send rate).
+- Online count, monitoring and config reloads no longer block each other; the scheduler is not confused by clock changes.
+- Database indexes; restored backups no longer keep old sessions or traffic history.
+- Installer: works with SELinux, XFS/Btrfs swap and RHEL's curl; a failed upgrade puts the previous version back.
+- Panel: fixed a chart that kept redrawing forever, date off-by-one, a crash when the session expired, and missing sign-out / theme on phones.
+- The member API also answers download requests over plain http with 426 (with an Upgrade header), and download links are https.
+
 ## 0.2.2
 
 Fixes from a second outside code review.

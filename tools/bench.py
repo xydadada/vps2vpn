@@ -16,36 +16,48 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from vps2vpn import bench  # noqa: E402
 
 
-def free_port():
-    with socket.socket() as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
+def load_clash_json(text):
+    # the Clash file is JSON (valid YAML) after a few '#' comment lines with the name and date
+    return json.loads(''.join(l for l in text.splitlines(True) if not l.lstrip().startswith('#')))
 
 
-def fetch_proxies(url):
+def free_port(used=()):
+    for _ in range(50):
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            p = s.getsockname()[1]
+        if p not in used:
+            return p
+    raise RuntimeError('could not allocate a unique local port')
+
+
+def fetch_proxies(url, insecure=False):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() not in ('http', 'https') or not parsed.hostname:
+        raise ValueError('subscription URL must use http:// or https://')
     sep = '&' if '?' in url else '?'
     req = urllib.request.Request(url + sep + 'format=clash', headers={'User-Agent': 'clash.meta'})
-    # a fresh server may still use its self-signed certificate; the subscription itself is not secret-bearing here
-    ctx = ssl._create_unverified_context()
+    ctx = ssl._create_unverified_context() if insecure else ssl.create_default_context()
     with urllib.request.urlopen(req, timeout=20, context=ctx) as r:
         text = r.read().decode('utf-8')
-    # the Clash file is JSON (valid YAML) after a few '#' comment lines with the name and date
-    conf = json.loads(''.join(l for l in text.splitlines(True) if not l.lstrip().startswith('#')))
-    return conf['proxies']
+    return load_clash_json(text)['proxies']
 
 
-def wait_port(port, timeout=15):
+def wait_port(port, proc=None, timeout=15):
     end = time.time() + timeout
     while time.time() < end:
+        if proc is not None and proc.poll() is not None:
+            return False
         try:
-            socket.create_connection(('127.0.0.1', port), timeout=1).close()
-            return True
+            with socket.create_connection(('127.0.0.1', port), timeout=1):
+                return True
         except OSError:
             time.sleep(0.2)
     return False
@@ -58,6 +70,7 @@ def main():
     ap.add_argument('--mihomo', default=shutil.which('mihomo') or shutil.which('mihomo.exe'))
     ap.add_argument('--quick', action='store_true', help='shorter tests')
     ap.add_argument('--no-direct', action='store_true', help='skip the direct (no proxy) baseline')
+    ap.add_argument('--insecure', action='store_true', help='skip TLS verification when fetching a self-signed subscription')
     ap.add_argument('--json', help='also write results to this file')
     a = ap.parse_args()
     if not (a.subscription or a.config):
@@ -66,22 +79,35 @@ def main():
         sys.exit('mihomo not found: download it from https://github.com/MetaCubeX/mihomo/releases and pass --mihomo')
     if a.config:
         with open(a.config, encoding='utf-8') as f:
-            proxies = json.load(f)['proxies']
+            proxies = load_clash_json(f.read())['proxies']
     else:
-        proxies = fetch_proxies(a.subscription)
+        proxies = fetch_proxies(a.subscription, insecure=a.insecure)
     work = tempfile.mkdtemp(prefix='v2v-bench-')
-    ports = {p['name']: free_port() for p in proxies}
+    used = set()
+    ports = {}
+    for p in proxies:
+        port = free_port(used)
+        used.add(port)
+        ports[p['name']] = port
     conf = {'mode': 'rule', 'log-level': 'warning', 'ipv6': True, 'allow-lan': False, 'proxies': proxies,
             'listeners': [{'name': 'in%d' % i, 'type': 'mixed', 'listen': '127.0.0.1', 'port': ports[p['name']],
                            'proxy': p['name']} for i, p in enumerate(proxies)],
             'rules': ['MATCH,DIRECT']}
     with open(os.path.join(work, 'config.yaml'), 'w', encoding='utf-8') as f:
         json.dump(conf, f)
-    proc = subprocess.Popen([a.mihomo, '-d', work], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    err_path = os.path.join(work, 'mihomo.err')
+    err_file = open(err_path, 'w+', encoding='utf-8', errors='replace')
+    proc = subprocess.Popen([a.mihomo, '-d', work], stdout=subprocess.DEVNULL, stderr=err_file)
     rows = []
     try:
-        if not all(wait_port(p) for p in ports.values()):
-            sys.exit('mihomo did not start; run it by hand with -d %s to see why' % work)
+        if not all(wait_port(p, proc=proc) for p in ports.values()):
+            err_file.flush()
+            err_file.seek(0)
+            tail = '\n'.join(err_file.read().splitlines()[-20:])
+            msg = 'mihomo did not start'
+            if tail:
+                msg += ':\n' + tail
+            sys.exit(msg)
         if not a.no_direct:
             print('direct (no proxy)')
             rows.append(('direct', bench.run(None, a.quick)))
@@ -94,6 +120,8 @@ def main():
             proc.wait(5)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait(5)
+        err_file.close()
         shutil.rmtree(work, ignore_errors=True)
     print()
     print(bench.table(rows))

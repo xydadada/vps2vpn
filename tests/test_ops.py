@@ -8,7 +8,7 @@ import time
 import unittest
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from tests.test_features import MemberWeb, mk
+from tests import test_features as tf
 from vps2vpn import aicheck, db, jobs, notify, paths
 
 
@@ -50,7 +50,7 @@ class LineReports(tu.Base):
         super().tearDown()
 
     def test_one_vote_per_account_and_expiry(self):
-        a, b = mk('a'), mk('b')
+        a, b = tf.mk('a'), tf.mk('b')
         now = time.time()
         jobs.report_line(a['id'], 'hy2', False, '1.2.3.4', now)
         jobs.report_line(a['id'], 'hy2', False, '1.2.3.4', now + 60)      # same account again: still one
@@ -66,7 +66,7 @@ class LineReports(tu.Base):
             jobs.report_line(a['id'], 'ssh', False)
 
     def test_change_port_moves_and_clears(self):
-        u = mk('c')
+        u = tf.mk('c')
         s = db.settings()
         jobs.report_line(u['id'], 'tuic', False)
         old = s['tuic_port']
@@ -81,7 +81,7 @@ class LineReports(tu.Base):
         self.assertNotIn('tuic', jobs.line_trouble(s))
 
     def test_hosts_recover_independently_and_count_distinct_accounts(self):
-        a, b = mk('multi-a'), mk('multi-b')
+        a, b = tf.mk('multi-a'), tf.mk('multi-b')
         now = time.time()
         jobs.report_line(a['id'], 'tuic', False, 'a.invalid', now)
         jobs.report_line(a['id'], 'tuic', False, 'b.invalid', now + 1)
@@ -98,7 +98,7 @@ class LineReports(tu.Base):
         self.assertEqual(jobs.line_trouble(db.settings(), now + 5), {})
 
     def test_legacy_entry_is_preserved_when_another_host_recovers(self):
-        u = mk('legacy')
+        u = tf.mk('legacy')
         now = time.time()
         db.set_settings(line_reports={'hy2': {str(u['id']): [now, 'a.invalid']}})
         jobs.report_line(u['id'], 'hy2', False, 'b.invalid', now + 1)
@@ -106,7 +106,7 @@ class LineReports(tu.Base):
         self.assertEqual(jobs.line_trouble(db.settings(), now + 2)['hy2']['hosts'], ['a.invalid'])
 
     def test_hostless_recovery_cannot_clear_multiple_hosts(self):
-        u = mk('no-host')
+        u = tf.mk('no-host')
         now = time.time()
         for host in ('a.invalid', 'b.invalid'):
             jobs.report_line(u['id'], 'hy2', False, host, now)
@@ -115,7 +115,7 @@ class LineReports(tu.Base):
         self.assertEqual(len(jobs.line_trouble(db.settings(), now + 1)['hy2']['hosts']), 2)
 
     def test_new_host_limit_does_not_block_recovery_or_expiry(self):
-        u = mk('bounded')
+        u = tf.mk('bounded')
         now = time.time()
         for i in range(jobs.MAX_REPORTED_HOSTS):
             jobs.report_line(u['id'], 'tuic', False, '%d.invalid' % i, now)
@@ -126,13 +126,13 @@ class LineReports(tu.Base):
         self.assertEqual(jobs.line_trouble(db.settings(), now + jobs.REPORT_TTL + 4), {})
 
 
-class OpsWeb(MemberWeb):
+class OpsWeb(tf.MemberWeb):
     def test_member_api_failure_contract(self):
         import http.client
         import ssl
         from unittest.mock import patch
         from vps2vpn import cores
-        u = mk('contract')
+        u = tf.mk('contract')
         context = ssl.create_default_context(cafile=paths.SELF_CRT)
 
         def request(path, tls=True):
@@ -159,7 +159,7 @@ class OpsWeb(MemberWeb):
             self.assertEqual(request('/s/' + 'x' * 24)[0], 404)
 
     def test_report_state_and_change_port(self):
-        u = mk('dan', 10)
+        u = tf.mk('dan', 10)
         base = '/s/%s/' % u['sub_token']
         st, body, _ = self.req('POST', base + 'api/report', {'line': 'hy2', 'ok': False, 'host': '127.0.0.1'})
         self.assertEqual(st, 200, body)
@@ -187,22 +187,26 @@ class OpsWeb(MemberWeb):
     def test_chunked_body(self):
         """The Dart / Go HTTP clients may send the body chunked instead of with a Content-Length."""
         import http.client, ssl
-        u = mk('gus', 10)
+        u = tf.mk('gus', 10)
         ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
         c = http.client.HTTPSConnection('127.0.0.1', self.port, context=ctx, timeout=10)
-        body = iter([b'{"line": "tu', b'ic", "ok": false, "host": ""}'])
-        c.request('POST', '/s/%s/api/report' % u['sub_token'], body=body, encode_chunked=True,
-                  headers={'Content-Type': 'application/json', 'X-V2V': '1', 'Transfer-Encoding': 'chunked'})
-        r = c.getresponse()
-        self.assertEqual(r.status, 200, r.read())
-        r.read()
-        c.request('GET', '/s/%s/api/me' % u['sub_token'])           # same connection still usable
-        self.assertEqual(c.getresponse().status, 200)
-        c.close()
+        try:
+            body = iter([b'{"line": "tu', b'ic", "ok": false, "host": ""}'])
+            c.request('POST', '/s/%s/api/report' % u['sub_token'], body=body, encode_chunked=True,
+                      headers={'Content-Type': 'application/json', 'X-V2V': '1', 'Transfer-Encoding': 'chunked'})
+            r = c.getresponse()
+            self.assertEqual(r.status, 200, r.read())
+            r.read()
+            c.request('GET', '/s/%s/api/me' % u['sub_token'])           # same connection still usable
+            r2 = c.getresponse()
+            self.assertEqual(r2.status, 200)
+            r2.read()
+        finally:
+            c.close()
         self.assertIn('tuic', jobs.line_trouble(db.settings()))
 
     def test_member_view_has_ai(self):
-        u = mk('eve', 10)
+        u = tf.mk('eve', 10)
         base = '/s/%s/' % u['sub_token']
         self.assertIsNone(json.loads(self.req('GET', base + 'api/me')[1])['ai'])
         res = {'at': 1, 'country': 'US', 'ip': {'city': 'Tokyo', 'country': 'JP'},
@@ -216,7 +220,7 @@ class OpsWeb(MemberWeb):
 
     def test_client_update(self):
         import os
-        u = mk('fay', 10)
+        u = tf.mk('fay', 10)
         base = '/s/%s/' % u['sub_token']
         self.assertIsNone(json.loads(self.req('GET', base + 'api/me')[1])['client'])
         os.makedirs(paths.CLIENT, exist_ok=True)

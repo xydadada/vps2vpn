@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: shellcheck -S warning install.sh deploy-mac.command tests/vps_acceptance.sh
-      - run: node --check vps2vpn/static/app.js
+      - run: node --check vps2vpn/static/app.js && node --check vps2vpn/static/kit.js && node --check vps2vpn/static/member.js
       - name: PowerShell deployer parses and builds its window
         shell: pwsh
         run: |
@@ -63,4 +63,4 @@ jobs:
           tar -czf /tmp/v.tgz --exclude=__pycache__ install.sh vps2vpn
           sudo V2V_SRC=/tmp/v.tgz bash install.sh install
       - name: Acceptance checks
-        run: sudo bash tests/vps_acceptance.sh --full
+        run: sudo V2V_SRC=/tmp/v.tgz bash tests/vps_acceptance.sh --full

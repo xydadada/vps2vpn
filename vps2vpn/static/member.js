@@ -28,7 +28,7 @@ const T = {
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心（忘了订阅链接也不怕）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
     notice: '管理员公告', paused_quota: '这个月的流量用完了，所以暂时停用。可以在下面「申请增加流量」，或者等到下次重置日自动恢复。',
-    paused_expired: '账号已到期，请联系管理员续期。', paused_other: '账号被暂停了，有问题请联系管理员。',
+    paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限，已自动暂停 10 分钟，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
     expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。',
     security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不小心发给了别人？换一个新的，旧链接立刻失效。换完后每台设备都要重新导入一次。',
     rotate_q: '更换后旧链接马上不能用了，所有设备都要重新导入。确定吗？', rotated: '已更换，请重新导入到 App'
@@ -58,7 +58,7 @@ const T = {
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can log in to the member centre by name (handy if you lose the link).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
     notice: 'Notice from the admin', paused_quota: 'This month\u2019s quota is used up, so the account is paused. Ask for more below, or wait for the next reset day.',
-    paused_expired: 'The account has expired; ask the admin to extend it.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
+    paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once; the account is paused for 10 minutes and will resume automatically.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
     expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.',
     security: 'Account security', rotate: 'New subscription link', rotate_tip: 'Shared your link by mistake? Get a new one; the old link stops working at once. Re-import it on every device.',
     rotate_q: 'The old link stops working immediately and every device must re-import. Continue?', rotated: 'Done. Import the new link into your apps.'
@@ -69,6 +69,7 @@ const t = k => (T[L] && T[L][k]) || T.en[k] || k;
 const GB = 1073741824;
 const M = {hello: null, me: null};
 function setLang(l) { L = l === 'en' ? 'en' : 'zh'; KT = L === 'en' ? KT_EN : KT_ZH; document.documentElement.lang = L === 'zh' ? 'zh-CN' : 'en'; }
+const localDay = ms => { const d = new Date(ms); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 
 async function api(path, body) {
   let r;
@@ -129,7 +130,7 @@ function renderLogin(code) {
     try {
       await api(reg ? 'register' : 'login', reg ? {code: f.code.value, name: f.name.value.trim(), password: f.pw.value} : {name: f.name.value.trim(), password: f.pw.value});
       history.replaceState(null, '', location.pathname); await renderHome(); window.scrollTo(0, 0);
-    } catch (er) { f.pw.value = ''; msg.textContent = er.message === 'wrong name or password' ? t('wrong') : errText(er.message); b.disabled = false; }
+    } catch (er) { f.pw.value = ''; f.pw2.value = ''; msg.textContent = er.message === 'wrong name or password' ? t('wrong') : errText(er.message); b.disabled = false; }
   };
   frame(form); (reg && !code ? f.code : f.name).focus();
 }
@@ -139,16 +140,21 @@ async function renderHome() {
   try { M.me = await api('me'); } catch (e) { if (e.message !== 'login') document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
   const me = M.me, used = me.used_up + me.used_down, q = (me.quota_eff || 0) * GB;
   const reason = {quota: 'r_quota', expired: 'r_expired', manual: 'r_manual', remote: 'r_remote', devices: 'r_devices'}[me.disabled_reason] || 'r_manual';
+  const logoutBtn = M.hello.mode === 'login' ? (() => {
+    const b = h('button', {class: 'btn ghost'}, icon('out'), t('logout'));
+    b.onclick = async () => { b.disabled = true; try { await api('logout', {}); renderLogin(); } catch (e) { err(e); b.disabled = false; } };
+    return b;
+  })() : null;
   const top = h('header', {class: 'm-top'}, brand(), h('div', {class: 'm-acts'},
     h('div', {class: 'seg', role: 'group'}, ['auto', 'light', 'dark'].map(v => h('button', {'data-theme-btn': v}, icon(v === 'auto' ? 'auto' : v === 'light' ? 'sun' : 'moon')))),
-    M.hello.mode === 'login' ? h('button', {class: 'btn ghost', onclick: async () => { try { await api('logout', {}); renderLogin(); } catch (e) { err(e); } }}, icon('out'), t('logout')) : null));
+    logoutBtn));
   const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
   const stat = (k, v) => h('div', null, h('small', null, k), h('b', null, v));
   const on = me.online;
   const dev = on ? (on.devices != null ? on.devices : on.ips.length) : 0;
   const hero = h('div', {class: 'panel m-hero'}, h('div', {class: 'panel-b'},
     h('div', {class: 'm-hello'}, h('div', null, h('div', {class: 'kicker'}, t('kicker')), h('h1', null, me.name)),
-      me.enabled ? chip('ok', t('ok')) : chip('bad', t(reason)),
+      me.enabled ? chip('ok', t('ok')) : chip(me.disabled_reason === 'devices' ? 'warn' : 'bad', t(reason)),
       on ? chip('info', t('online_now') + (dev ? ' · ' + dev + ' ' + t('devices') : '')) : chip('off', t('offline'))),
     h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats m-stats'},
       stat(t('used'), fmt.bytes(used)), stat(t('quota'), q ? fmt.bytes(q) : t('unlimited')),
@@ -174,9 +180,10 @@ async function renderHome() {
   if (M.hello.requests) blocks.push(requestsPanel());
   if (M.hello.invites) blocks.push(invitesPanel());
   blocks.push(passwordPanel());
+  const colon = L === 'zh' ? '：' : ': ';
   document.body.replaceChildren(h('div', {class: 'm-wrap'}, top,
     h('section', {class: 'page'},
-      M.hello.notice ? h('div', {class: 'alert info', style: 'white-space:pre-line'}, icon('bell'), h('div', null, h('b', null, t('notice') + '：'), M.hello.notice)) : null,
+      M.hello.notice ? h('div', {class: 'alert info', style: 'white-space:pre-line'}, icon('bell'), h('div', null, h('b', null, t('notice') + colon), M.hello.notice)) : null,
       ...statusAlerts(me, used, q),
       M.hello.mode === 'link' ? h('div', {class: 'alert'}, icon('lock'), t('link_mode')) : null,
       hero,
@@ -185,14 +192,14 @@ async function renderHome() {
       h('div', {class: 'grid g-2'}, ...blocks))));
   Theme.mount();
   new Ring(ringBox.firstChild).set(q ? used / q : 0, q && used / q > .9 ? 'danger' : 'down');
-  const dl = []; for (let i = 29; i >= 0; i--) dl.push(new Date(Date.now() - i * 864e5).toISOString().slice(0, 10));
+  const dl = []; for (let i = 29; i >= 0; i--) dl.push(localDay(Date.now() - i * 864e5));
   new DayBars(days).set(me.history.map(x => ({day: x.day, upload: x.up, download: x.down})), dl);
 }
 
 function statusAlerts(me, used, q) {
   const out = [], fill = (s, o) => s.replace(/\{(\w+)\}/g, (_, k) => o[k]);
-  if (!me.enabled) out.push(h('div', {class: 'alert bad'}, icon('alert'),
-    t(me.disabled_reason === 'quota' ? 'paused_quota' : me.disabled_reason === 'expired' ? 'paused_expired' : 'paused_other')));
+  if (!me.enabled) out.push(h('div', {class: 'alert ' + (me.disabled_reason === 'devices' ? 'warn' : 'bad')}, icon('alert'),
+    t(me.disabled_reason === 'quota' ? 'paused_quota' : me.disabled_reason === 'expired' ? 'paused_expired' : me.disabled_reason === 'devices' ? 'paused_devices' : 'paused_other')));
   else {
     const d = me.expire_at ? Math.ceil((me.expire_at * 1000 - Date.now()) / 864e5) : 0;
     if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: dateStr(me.expire_at)})));
@@ -205,7 +212,7 @@ function requestsPanel() {
   const me = M.me, f = {gb: h('input', {type: 'number', min: '1', step: '1', value: '50'}), why: h('input', {type: 'text', maxlength: '300'})};
   const pend = me.requests.some(r => r.status === 'pending');
   const b = h('button', {class: 'btn primary', disabled: pend}, icon('plus'), t('send'));
-  b.onclick = async () => { b.disabled = true; try { await api('request', {add_gb: Number(f.gb.value), reason: f.why.value}); toast(t('sent')); renderHome(); } catch (e) { err(e); b.disabled = false; } };
+  b.onclick = async () => { b.disabled = true; try { await api('request', {add_gb: Number(f.gb.value), reason: f.why.value}); toast(t('sent')); await renderHome(); } catch (e) { err(e); b.disabled = false; } };
   const list = me.requests.length ? h('div', {class: 'tl'}, me.requests.map(r => h('div', {class: 'tl-row'},
     h('b', {class: 'num'}, '+' + r.add_gb + ' GB'), h('span', {class: 'muted'}, fmt.time(r.created_at) + (r.reason ? ' · ' + r.reason : '') + (r.answer ? ' — ' + r.answer : '')),
     chip(r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn', t(r.status))))) : h('div', {class: 'muted m-tip'}, t('req_none'));
@@ -224,7 +231,7 @@ function invitesPanel() {
     b.disabled = true;
     try {
       const r = await api('invite', {quota_gb: Number(f.gb.value), max_uses: Number(f.uses.value), valid_days: Number(f.days.value), note: f.note.value});
-      await renderHome(); copyText(r.code, t('code'));
+      await copyText(r.code, t('code')); await renderHome();
     } catch (e) { err(e); b.disabled = false; }
   };
   return panel(t('invites'), null, chip('info plain', t('can_share') + ' ' + me.capacity + ' GB'), h('div', {class: 'stack'},
@@ -234,29 +241,43 @@ function invitesPanel() {
 }
 function invList() {
   const me = M.me;
-  const rows = me.invites.map(i => h('div', {class: 'tl-row'},
-    h('code', {class: 'code-chip'}, i.code),
-    h('span', {class: 'muted'}, i.quota_gb + ' GB · ' + i.uses + '/' + i.max_uses + (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + ' · ' + fmt.time(i.valid_until)),
-    h('span', {class: 'tl-acts'}, chip(i.status === 'unused' ? 'ok' : 'off', t('st_' + i.status)),
-      i.status === 'unused' && i.register_url ? h('button', {class: 'btn sm', onclick: () => copyText(i.register_url, t('send_link'))}, icon('link')) : null,
-      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async () => { if (await confirmBox(t('revoke'), i.code)) { try { await api('invite-revoke', {id: i.id}); toast(t('revoked')); renderHome(); } catch (e) { err(e); } } }}, t('revoke')) : null)));
-  const who = me.invitees.length ? h('div', {class: 'muted m-tip'}, t('invitees') + '：' + me.invitees.map(x => x.name + ' (' + x.quota_gb + ' GB' + (x.active ? '' : ', ' + t('paused')) + ')').join('，')) : null;
+  const rows = me.invites.map(i => {
+    const revBtn = i.status === 'unused' ? (() => {
+      const b = h('button', {class: 'btn sm'}, t('revoke'));
+      b.onclick = async () => {
+        if (!await confirmBox(t('revoke'), i.code)) return;
+        b.disabled = true;
+        try { await api('invite-revoke', {id: i.id}); toast(t('revoked')); await renderHome(); } catch (e) { err(e); b.disabled = false; }
+      };
+      return b;
+    })() : null;
+    return h('div', {class: 'tl-row'},
+      h('code', {class: 'code-chip'}, i.code),
+      h('span', {class: 'muted'}, i.quota_gb + ' GB · ' + i.uses + '/' + i.max_uses + (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + ' · ' + fmt.time(i.valid_until)),
+      h('span', {class: 'tl-acts'}, chip(i.status === 'unused' ? 'ok' : 'off', t('st_' + i.status)),
+        i.status === 'unused' && i.register_url ? h('button', {class: 'btn sm', onclick: () => copyText(i.register_url, t('send_link'))}, icon('link')) : null,
+        revBtn));
+  });
+  const sep = L === 'zh' ? '：' : ': ', joiner = L === 'zh' ? '，' : ', ';
+  const who = me.invitees.length ? h('div', {class: 'muted m-tip'}, t('invitees') + sep + me.invitees.map(x => x.name + ' (' + x.quota_gb + ' GB' + (x.active ? '' : ', ' + t('paused')) + ')').join(joiner)) : null;
   return h('div', {class: 'stack'}, rows.length ? h('div', {class: 'tl'}, rows) : h('div', {class: 'muted m-tip'}, t('inv_none')), who);
 }
 
 function passwordPanel() {
   const me = M.me, f = {old: h('input', {type: 'password', autocomplete: 'current-password'}), nw: h('input', {type: 'password', autocomplete: 'new-password'})};
   const b = h('button', {class: 'btn'}, icon('lock'), me.has_login ? t('pw_change') : t('pw_set'));
-  b.onclick = async () => { try { await api('password', {old: f.old.value, new: f.nw.value}); toast(t('saved')); renderHome(); } catch (e) { err(e); } };
+  b.onclick = async () => { b.disabled = true; try { await api('password', {old: f.old.value, new: f.nw.value}); toast(t('saved')); await renderHome(); } catch (e) { err(e); b.disabled = false; } };
   const rot = h('button', {class: 'btn'}, icon('refresh'), t('rotate'));
   rot.onclick = async () => {
     if (!await confirmBox(t('rotate'), t('rotate_q'))) return;
-    try { const r = await api('rotate', {}); toast(t('rotated')); if (r.base) { location.replace(r.base); return; } renderHome(); } catch (e) { err(e); }
+    rot.disabled = true;
+    try { const r = await api('rotate', {}); toast(t('rotated')); if (r.base) { location.replace(r.base); return; } await renderHome(); } catch (e) { err(e); rot.disabled = false; }
   };
+  const sep = L === 'zh' ? '：' : ': ';
   return panel(t('security'), null, null, h('div', {class: 'stack'}, h('p', {class: 'muted m-tip'}, t('pw_tip')),
     h('div', {class: 'form-grid'}, me.has_login ? field(t('pw_old'), f.old) : null, field(t('password_new'), f.nw)), h('div', null, b),
     h('p', {class: 'muted m-tip', style: 'margin-top:8px'}, t('rotate_tip')), h('div', null, rot),
-    M.hello.member_url ? h('div', {class: 'muted m-tip'}, t('member_link') + '：', h('a', {href: M.hello.member_url}, M.hello.member_url)) : null));
+    M.hello.member_url ? h('div', {class: 'muted m-tip'}, t('member_link') + sep, h('a', {href: M.hello.member_url}, M.hello.member_url)) : null));
 }
 
 async function boot() {

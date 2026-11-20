@@ -36,6 +36,11 @@ def _req(url, method='GET', data=None, headers=None, timeout=12):
             body = e.read(65536)
         except OSError:
             body = b''
+        finally:
+            try:
+                e.close()
+            except OSError:
+                pass
         return e.code, e.headers, body, e.geturl() or url
     except Exception as e:          # DNS, TLS, timeout...
         return 0, {}, str(e).encode()[:300], url
@@ -58,7 +63,9 @@ def _hdr(h, name):
 
 def check_claude(cc):
     st, h, body, final = _req('https://claude.ai/')
-    if 'unavailable-in-region' in final or b'unavailable-in-region' in body[:4096]:
+    if st == 0:
+        return {'status': 'unreachable', 'note': '连不上 claude.ai'}
+    if 'unavailable-in-region' in final or b'unavailable-in-region' in body:
         return {'status': 'blocked', 'note': 'Claude 说这个地区用不了'}
     if cc in UNSUPPORTED:
         return {'status': 'blocked', 'note': '这个地区 Claude 不提供服务'}
@@ -67,8 +74,6 @@ def check_claude(cc):
     if st == 403 and _hdr(h, 'cf-mitigated') == 'challenge':
         # Data-centre addresses get a human check first; a real browser normally passes it by itself.
         return {'status': 'ok', 'note': '网页会先做一次人机验证（机房 IP 常见，浏览器里一般自动通过）'}
-    if st == 0:
-        return {'status': 'unreachable', 'note': '连不上 claude.ai'}
     return {'status': 'unknown', 'note': '网页返回 %d' % st}
 
 
@@ -88,14 +93,14 @@ def check_claude_api():
 def check_chatgpt(cc):
     st, _, body, _ = _req('https://api.openai.com/compliance/cookie_requirements',
                           headers={'authorization': 'Bearer null'})
+    if st == 0:
+        return {'status': 'unreachable', 'note': '连不上 OpenAI'}
     if b'unsupported_country' in body:
         return {'status': 'blocked', 'note': 'ChatGPT 说这个地区用不了'}
     if cc in UNSUPPORTED:
         return {'status': 'blocked', 'note': '这个地区 ChatGPT 不提供服务'}
     if st == 200:
         return {'status': 'ok', 'note': ''}
-    if st == 0:
-        return {'status': 'unreachable', 'note': '连不上 OpenAI'}
     return {'status': 'unknown', 'note': 'OpenAI 返回 %d' % st}
 
 
@@ -117,8 +122,9 @@ def ip_info():
     if st == 200:
         try:
             j = json.loads(body)
-            info.update(country=j.get('country', ''), city=j.get('city', ''), region=j.get('region', ''),
-                        org=j.get('org', ''), timezone=j.get('timezone', ''))
+            if isinstance(j, dict):
+                info.update(country=j.get('country', ''), city=j.get('city', ''), region=j.get('region', ''),
+                            org=j.get('org', ''), timezone=j.get('timezone', ''))
         except ValueError:
             pass
     # ip-api.com's free tier is plain http; it only learns the server's own address.
@@ -126,8 +132,9 @@ def ip_info():
     if st == 200:
         try:
             j = json.loads(body)
-            if j.get('status') == 'success':
-                info.setdefault('country', j.get('countryCode', ''))
+            if isinstance(j, dict) and j.get('status') == 'success':
+                if not info.get('country'):
+                    info['country'] = j.get('countryCode', '')
                 info.update(isp=j.get('isp', ''), hosting=bool(j.get('hosting')), proxy=bool(j.get('proxy')),
                             mobile=bool(j.get('mobile')))
         except ValueError:
@@ -172,22 +179,24 @@ def run():
         try:
             out[key] = fn()
         except Exception as e:                 # never let one check break the rest
-            out[key] = {'status': 'unknown', 'note': str(e)[:120]}
-    t = [threading.Thread(target=job, args=('ip', ip_info)), threading.Thread(target=job, args=('trace', lambda: trace('claude.ai')))]
+            out[key] = {} if key in ('ip', 'trace') else {'status': 'unknown', 'note': str(e)[:120]}
+    t = [threading.Thread(target=job, args=('ip', ip_info), daemon=True),
+         threading.Thread(target=job, args=('trace', lambda: trace('claude.ai')), daemon=True)]
     for x in t:
         x.start()
     for x in t:
-        x.join()
-    ip = out.get('ip') or {}
+        x.join(timeout=20)
+    ip = out.get('ip') if isinstance(out.get('ip'), dict) else {}
     cc = ((out.get('trace') or {}).get('loc') or ip.get('country') or '').upper()
     checks = {'claude': lambda: check_claude(cc), 'claude_api': check_claude_api,
               'chatgpt': lambda: check_chatgpt(cc), 'gemini': lambda: check_gemini(cc)}
-    t = [threading.Thread(target=job, args=(k, fn)) for k, fn in checks.items()]
+    t = [threading.Thread(target=job, args=(k, fn), daemon=True) for k, fn in checks.items()]
     for x in t:
         x.start()
     for x in t:
-        x.join()
-    res = {'at': int(time.time()), 'country': cc, 'ip': ip, 'sites': {k: out[k] for k in SITES}}
+        x.join(timeout=20)
+    res = {'at': int(time.time()), 'country': cc, 'ip': ip,
+           'sites': {k: out.get(k) or {'status': 'unreachable', 'note': 'timeout'} for k in SITES}}
     res['advice'] = advice(res)
     try:
         paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o644)
@@ -209,14 +218,21 @@ def summary(res):
     if not res:
         return ''
     s = res['sites']
-    claude = 'ok' if s['claude']['status'] == 'ok' and s['claude_api']['status'] == 'ok' else \
-        ('blocked' if 'blocked' in (s['claude']['status'], s['claude_api']['status']) else s['claude_api']['status'])
+    c_web, c_api = s['claude']['status'], s['claude_api']['status']
+    if c_web == 'ok' and c_api == 'ok':
+        claude = 'ok'
+    elif 'blocked' in (c_web, c_api):
+        claude = 'blocked'
+    elif 'unreachable' in (c_web, c_api):
+        claude = 'unreachable'
+    else:
+        claude = 'unknown'
     parts = [('Claude', claude), ('ChatGPT', s['chatgpt']['status']), ('Gemini', s['gemini']['status'])]
     return '  '.join('%s %s' % (n, MARK.get(st, '?')) for n, st in parts)
 
 
 def score(res):
-    """0-3: how many of Claude / ChatGPT / Gemini look usable (Claude counted twice as heavy for ties)."""
+    """0-4: how many of Claude / ChatGPT / Gemini look usable (Claude counted twice as heavy for ties)."""
     if not res:
         return -1
     s = res['sites']

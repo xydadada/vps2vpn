@@ -5,6 +5,7 @@ press "Find my chat" - the panel reads the chat id from the bot's updates.
 """
 import json
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -13,7 +14,7 @@ import urllib.request
 from . import db
 
 API = 'https://api.telegram.org/bot%s/%s'
-_recent = {}          # key -> last time sent, so one problem does not flood the chat
+_recent = {}          # key -> (monotonic time sent, every), so one problem does not flood the chat
 _recent_lock = threading.Lock()
 MAX_TEXT = 4000
 
@@ -30,20 +31,21 @@ def send(text, key=None, every=6 * 3600, s=None):
     s = s or db.settings()
     if not (s.get('tg_token') and s.get('tg_chat')):
         return False
-    now = time.time()
-    with _recent_lock:
-        if key and now - _recent.get(key, 0) < every:
-            return False
+    now = time.monotonic()            # wall-clock jumps (NTP, manual set) must not mute or unmute alerts
+    if key:
+        with _recent_lock:
+            prev = _recent.get(key)
+            if prev is not None and now - prev[0] < every:
+                return False
     msg = ('[%s] %s' % (s['node_name'], text))[:MAX_TEXT]
     try:
         _call(s['tg_token'], 'sendMessage', {'chat_id': s['tg_chat'], 'text': msg,
                                              'disable_web_page_preview': 'true'})
         if key:
             with _recent_lock:
-                _recent[key] = now
+                _recent[key] = (now, every)
                 if len(_recent) > 1000:
-                    cutoff = now - 7 * 86400
-                    for k in [k for k, v in _recent.items() if v < cutoff]:
+                    for k in [k for k, v in _recent.items() if now - v[0] >= max(v[1], 86400)]:
                         _recent.pop(k, None)
         return True
     except (OSError, ValueError):
@@ -66,6 +68,9 @@ def send_file(name, data, caption='', s=None):
     s = s or db.settings()
     if not (s.get('tg_token') and s.get('tg_chat')):
         return False
+    if isinstance(data, str):
+        data = data.encode()
+    safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', str(name or 'file'))[:120] or 'file'   # no header injection
     boundary = 'v2v' + os.urandom(12).hex()
     nl = b'\r\n'
     parts = []
@@ -73,7 +78,7 @@ def send_file(name, data, caption='', s=None):
         parts += [b'--' + boundary.encode(), ('Content-Disposition: form-data; name="%s"' % k).encode(), b'',
                   str(v).encode()]
     parts += [b'--' + boundary.encode(),
-              ('Content-Disposition: form-data; name="document"; filename="%s"' % name).encode(),
+              ('Content-Disposition: form-data; name="document"; filename="%s"' % safe_name).encode(),
               b'Content-Type: application/octet-stream', b'', data, b'--' + boundary.encode() + b'--', b'']
     req = urllib.request.Request(API % (s['tg_token'], 'sendDocument'), data=nl.join(parts),
                                  headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
@@ -114,9 +119,14 @@ def bot_loop(stop, handle, log):
         except (OSError, ValueError):
             stop.wait(30)
             continue
+        if not isinstance(res, dict) or not res.get('ok', True):
+            stop.wait(30)              # e.g. 401 revoked token / 409 another poller: back off, do not spin
+            continue
+        batch = res.get('result') or []
         first = not primed
-        primed = True
-        for upd in res.get('result', []):
+        # drain the backlog completely (getUpdates returns at most 100 per call) before acting on anything
+        primed = primed or len(batch) < 100
+        for upd in batch:
             offset = upd['update_id'] + 1
             if first:
                 continue              # old messages from before the panel started: do not act on them

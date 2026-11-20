@@ -14,7 +14,7 @@ from . import XRAY_VERSION, certs, cores, db, paths, rules, system
 
 
 def _check(cid, ok, detail='', fix=''):
-    return {'id': cid, 'ok': ok, 'detail': detail, 'fix': fix if ok is False else ''}
+    return {'id': cid, 'ok': ok, 'detail': detail, 'fix': fix if ok is not True else ''}
 
 
 def services(s):
@@ -34,13 +34,13 @@ def reality_handshake(s):
         return []
     if system.unit_active(cores.XRAY_UNIT) is False:
         return [_check('reality_camouflage', None, 'skipped: Xray is not running (see above)')]
-    t0 = time.time()
+    t0 = time.monotonic()
     try:
         ctx = ssl.create_default_context()
         with socket.create_connection(('127.0.0.1', s['reality_port']), timeout=8) as raw:
             with ctx.wrap_socket(raw, server_hostname=s['reality_target']) as tls:
                 ok = tls.version() == 'TLSv1.3'
-                return [_check('reality_camouflage', ok, '%s, %d ms' % (tls.version(), (time.time() - t0) * 1000),
+                return [_check('reality_camouflage', ok, '%s, %d ms' % (tls.version(), (time.monotonic() - t0) * 1000),
                                'pick another camouflage site in Settings')]
     except ssl.SSLCertVerificationError as e:
         return [_check('reality_camouflage', False, 'certificate mismatch: %s' % e,
@@ -60,9 +60,11 @@ def hysteria_api(s):
                                      headers={'Authorization': s['stats_secret']})
         with urllib.request.urlopen(req, timeout=2) as resp:
             data = json.loads(resp.read())
-        n = sum(1 for v in data.values() if int(v or 0) > 0)
+        if not isinstance(data, dict):
+            raise ValueError('unexpected /online reply: %s' % type(data).__name__)
+        n = sum(1 for v in data.values() if isinstance(v, (int, float, str)) and int(v or 0) > 0)
         return [_check('hysteria_api', True, 'online: %d' % n)]
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, TypeError) as e:
         return [_check('hysteria_api', False, str(e)[:120], 'systemctl restart %s' % cores.HY2_UNIT)]
 
 
@@ -70,12 +72,16 @@ def udp_listening(s):
     if not paths.LIVE:
         return []
     out = []
-    for on, cid, port, prog, name in ((s['hy2_enabled'], 'hysteria_port', s['hy2_port'], 'hysteria', 'Hysteria'),
-                                      (s['tuic_enabled'], 'tuic_port', s['tuic_port'], 'sing-box', 'TUIC')):
+    for on, cid, port, prog, name, unit in (
+        (s['hy2_enabled'], 'hysteria_port', s['hy2_port'], 'hysteria', 'Hysteria', cores.HY2_UNIT),
+        (s['tuic_enabled'], 'tuic_port', s['tuic_port'], 'sing-box', 'TUIC', cores.TUIC_UNIT),
+    ):
         if on:
-            owner = system.port_owner('udp', port)
-            out.append(_check(cid, prog in owner, 'UDP %d: %s' % (port, owner or 'nobody'),
-                              'another program holds UDP %d; change the %s port in Settings' % (port, name)))
+            owner = system.port_owner('udp', port) or ''
+            fix = ('%s is not listening on UDP %d; check: journalctl -u %s -n 50' % (name, port, unit)
+                   if not owner else
+                   'another program (%s) holds UDP %d; change the %s port in Settings' % (owner, port, name))
+            out.append(_check(cid, prog in owner, 'UDP %d: %s' % (port, owner or 'nobody'), fix))
     return out
 
 
@@ -120,28 +126,37 @@ def clock():
 
 
 def public_address(s):
-    host = s['domain'] or s['public_host']
+    host = (s.get('domain') or s.get('public_host') or '').strip()
+    if not host:
+        return [_check('address', False, 'server address is not configured', 'set the server address in Settings')]
     if not certs.is_ip(host):
         try:
-            ips = {a[4][0] for a in socket.getaddrinfo(host, None)}
+            ips = {certs._norm_host(a[4][0].split('%', 1)[0]) for a in socket.getaddrinfo(host, None)}
         except OSError as e:
             return [_check('address', False, '%s does not resolve: %s' % (host, e), 'check the domain\'s DNS records')]
-        now = system.public_ip()
-        return [_check('address', (not now) or now in ips, '%s -> %s (this server: %s)' % (host, ', '.join(sorted(ips)), now or '?'),
-                       'point the domain\'s A record at %s' % now)]
-    now = system.public_ip()
+        mine = [ip for ip in (system.public_ip(),) if ip]
+        if not any(certs._norm_host(ip) in ips for ip in mine):
+            mine += [ip for ip in (system.public_ip(v6=True),) if ip]     # IPv6-only / AAAA-only setups
+        if not mine:
+            return [_check('address', None, '%s -> %s (could not look up this server\'s public IP)' % (
+                host, ', '.join(sorted(ips))))]
+        ok = any(certs._norm_host(ip) in ips for ip in mine)
+        return [_check('address', ok, '%s -> %s (this server: %s)' % (host, ', '.join(sorted(ips)), ', '.join(mine)),
+                       'point the domain\'s %s record at %s' % ('AAAA' if ':' in mine[0] else 'A', mine[0]))]
+    v6 = ':' in host                     # an IPv6-only server must be compared with its IPv6 egress address
+    now = system.public_ip(v6=v6)
     if not now:
         return [_check('address', None, 'could not look up this server\'s public IP')]
-    return [_check('address', now == host, 'configured %s, actual %s' % (host, now),
+    return [_check('address', certs._norm_host(now) == certs._norm_host(host), 'configured %s, actual %s' % (host, now),
                    'the server\'s IP changed: Settings > server address = %s (vps2vpn does this by itself within a day)' % now)]
 
 
 def outbound():
-    t0 = time.time()
+    t0 = time.monotonic()
     try:
         with urllib.request.urlopen('https://www.gstatic.com/generate_204', timeout=8) as r:
             r.read()
-        return [_check('internet', True, '%d ms' % ((time.time() - t0) * 1000))]
+        return [_check('internet', True, '%d ms' % ((time.monotonic() - t0) * 1000))]
     except OSError as e:
         return [_check('internet', False, str(e)[:160], 'this server cannot reach the internet; check its network / DNS')]
 

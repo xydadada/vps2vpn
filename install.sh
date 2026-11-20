@@ -23,6 +23,27 @@ c_ok=$'\e[32m'; c_bad=$'\e[31m'; c_dim=$'\e[2m'; c_b=$'\e[1m'; c_0=$'\e[0m'
 say()  { echo "${c_b}==>${c_0} $*"; }
 die()  { echo "${c_bad}error:${c_0} $*" >&2; exit 1; }
 
+_TMPDIRS=()
+_cleanup() { if [ "${#_TMPDIRS[@]}" -gt 0 ]; then rm -rf -- "${_TMPDIRS[@]}"; fi; }
+trap _cleanup EXIT                 # die() exits from inside functions: never leave downloads in /tmp
+
+selinux_on() { command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; }
+
+# Best effort: give files the SELinux type systemd may execute / swapon may use. Never fails the install.
+selinux_label() {  # type path...
+  local t="$1"; shift
+  selinux_on || return 0
+  if command -v semanage >/dev/null 2>&1; then
+    local f
+    for f in "$@"; do
+      semanage fcontext -a -t "$t" "$f" 2>/dev/null || semanage fcontext -m -t "$t" "$f" 2>/dev/null || true
+    done
+  fi
+  if command -v restorecon >/dev/null 2>&1; then restorecon -F "$@" 2>/dev/null || true; fi
+  # without a persistent rule restorecon may have put the default type back: set it directly
+  if command -v chcon >/dev/null 2>&1; then chcon -t "$t" "$@" 2>/dev/null || true; fi
+}
+
 need_root() {
   [ "$(id -u)" = 0 ] || die "please run as root, e.g.:  sudo bash install.sh"
   [ "$(uname -s)" = Linux ] || die "Linux only"
@@ -38,17 +59,21 @@ detect_arch() {
 }
 
 install_packages() {
-  local pkgs="python3 openssl curl unzip nftables ca-certificates"
+  local pkgs=(python3 openssl tar unzip nftables ca-certificates)
+  command -v curl >/dev/null 2>&1 || pkgs+=(curl)     # RHEL ships curl-minimal, which conflicts with "curl"
   say "installing system packages"
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq || true
-    apt-get install -y -qq $pkgs >/dev/null
-  elif command -v dnf >/dev/null; then dnf install -y -q $pkgs >/dev/null
-  elif command -v yum >/dev/null; then yum install -y -q $pkgs >/dev/null
-  elif command -v zypper >/dev/null; then zypper -nq install $pkgs >/dev/null
-  elif command -v pacman >/dev/null; then pacman -Sy --noconfirm --needed python openssl curl unzip nftables ca-certificates >/dev/null
-  else die "unknown package manager; install: $pkgs"; fi
+    apt-get install -y -qq "${pkgs[@]}" >/dev/null
+  elif command -v dnf >/dev/null; then dnf install -y -q "${pkgs[@]}" >/dev/null
+  elif command -v yum >/dev/null; then yum install -y -q "${pkgs[@]}" >/dev/null
+  elif command -v zypper >/dev/null; then zypper -nq install "${pkgs[@]}" >/dev/null
+  elif command -v pacman >/dev/null; then
+    local pac=(python openssl tar unzip nftables ca-certificates)
+    command -v curl >/dev/null 2>&1 || pac+=(curl)
+    pacman -Sy --noconfirm --needed "${pac[@]}" >/dev/null
+  else die "unknown package manager; install: ${pkgs[*]}"; fi
   python3 -c 'import sys; assert sys.version_info >= (3, 8)' || die "python 3.8 or newer is required"
 }
 
@@ -58,6 +83,7 @@ fetch() {  # url dest
 
 install_cores() {
   local tmp; tmp=$(mktemp -d)
+  _TMPDIRS+=("$tmp")
   mkdir -p "$LIB"
   local have_x="" have_h="" have_s=""
   [ -f "$LIB/.xray-version" ] && have_x=$(cat "$LIB/.xray-version")
@@ -97,35 +123,40 @@ install_cores() {
     say "downloading sing-box $SINGBOX_VERSION (TUIC)"
     local v=${SINGBOX_VERSION#v} want got
     fetch "https://github.com/SagerNet/sing-box/releases/download/$SINGBOX_VERSION/sing-box-$v-linux-$SB_ARCH.tar.gz" "$tmp/sb.tgz"
-    want=$(eval echo "\$SINGBOX_SHA256_$SB_ARCH")
+    case "$SB_ARCH" in amd64) want="$SINGBOX_SHA256_amd64" ;; arm64) want="$SINGBOX_SHA256_arm64" ;; *) want="" ;; esac
     got=$(sha256sum "$tmp/sb.tgz" | awk '{print $1}')
-    [ "$want" = "$got" ] || die "sing-box checksum mismatch (expected $want, got $got)"
-    mkdir -p "$tmp/sb" && tar -xzf "$tmp/sb.tgz" -C "$tmp/sb" --strip-components=1
+    [ -n "$want" ] && [ "$want" = "$got" ] || die "sing-box checksum mismatch (expected $want, got $got)"
+    mkdir -p "$tmp/sb" && tar --no-same-owner --no-same-permissions -xzf "$tmp/sb.tgz" -C "$tmp/sb" --strip-components=1
     install -m 0755 "$tmp/sb/sing-box" "$LIB/sing-box.new" && mv -f "$LIB/sing-box.new" "$LIB/sing-box"
     echo "$SINGBOX_VERSION" > "$LIB/.sing-box-version"
   fi
   rm -rf "$tmp"
+  selinux_label bin_t "$LIB/xray" "$LIB/hysteria" "$LIB/sing-box"
 }
 
 install_app() {
   local here; here=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)
   local tmp; tmp=$(mktemp -d)
+  _TMPDIRS+=("$tmp")
   if [ -n "${V2V_SRC:-}" ] && [ -f "$V2V_SRC" ]; then
     say "using panel code from $V2V_SRC"
-    tar -xzf "$V2V_SRC" -C "$tmp"
+    tar --no-same-owner --no-same-permissions -xzf "$V2V_SRC" -C "$tmp"
   elif [ -f "$here/vps2vpn/__init__.py" ]; then
     say "using panel code next to this script"
     cp -r "$here/vps2vpn" "$tmp/"
   else
     say "downloading panel code from github.com/$REPO"
     fetch "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz" "$tmp/src.tgz"
-    tar -xzf "$tmp/src.tgz" -C "$tmp" --strip-components=1
+    tar --no-same-owner --no-same-permissions -xzf "$tmp/src.tgz" -C "$tmp" --strip-components=1
   fi
   [ -f "$tmp/vps2vpn/__init__.py" ] || die "panel code not found in the download"
   python3 -m compileall -q "$tmp/vps2vpn" >/dev/null || die "panel code does not compile with $(python3 --version)"
   mkdir -p "$LIB/app"
   rm -rf "$LIB/app/vps2vpn.new"
   cp -r "$tmp/vps2vpn" "$LIB/app/vps2vpn.new"
+  # code run as root must not be writable by whoever owned the checkout / tarball
+  chown -R root:root "$LIB/app/vps2vpn.new"
+  find "$LIB/app/vps2vpn.new" \( -type d -exec chmod 0755 {} + \) -o \( -type f -exec chmod 0644 {} + \)
   rm -rf "$LIB/app/vps2vpn.old"
   [ -d "$LIB/app/vps2vpn" ] && mv "$LIB/app/vps2vpn" "$LIB/app/vps2vpn.old"
   mv "$LIB/app/vps2vpn.new" "$LIB/app/vps2vpn"
@@ -135,6 +166,7 @@ install_app() {
 PYTHONPATH=$LIB/app exec python3 -m vps2vpn "\$@"
 EOF
   chmod 0755 /usr/local/bin/vps2vpn
+  selinux_label bin_t /usr/local/bin/vps2vpn
 }
 
 install_units() {
@@ -154,8 +186,15 @@ Environment=PYTHONPATH=$LIB/app PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/env python3 -m vps2vpn serve
 Restart=always
 RestartSec=3
+TimeoutStopSec=15
+LimitNOFILE=65536
 PrivateTmp=yes
 ProtectHome=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
@@ -178,9 +217,23 @@ NoNewPrivileges=yes
 LimitNOFILE=1048576
 Restart=always
 RestartSec=2
+TimeoutStopSec=15
+UMask=0077
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
@@ -203,9 +256,23 @@ NoNewPrivileges=yes
 LimitNOFILE=1048576
 Restart=always
 RestartSec=2
+TimeoutStopSec=15
+UMask=0077
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
@@ -227,9 +294,23 @@ NoNewPrivileges=yes
 LimitNOFILE=1048576
 Restart=always
 RestartSec=2
+TimeoutStopSec=15
+UMask=0077
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
@@ -285,6 +366,20 @@ for w in json.load(sys.stdin).get("warnings", []): print("  ! " + w)'
   echo
 }
 
+make_swapfile() {  # fallocate|dd -> 0 if /swapfile is active swap
+  rm -f /swapfile
+  (umask 077 && : > /swapfile) || return 1
+  chattr +C /swapfile 2>/dev/null || true          # Btrfs: swap files must be NOCOW (no-op elsewhere)
+  if [ "$1" = fallocate ]; then
+    fallocate -l 1G /swapfile 2>/dev/null || return 1
+  else
+    dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none 2>/dev/null || return 1
+  fi
+  chmod 600 /swapfile || return 1
+  selinux_label swapfile_t /swapfile
+  mkswap /swapfile >/dev/null 2>&1 && swapon /swapfile 2>/dev/null
+}
+
 prepare_system() {
   # Small VPSes (512 MB) run out of memory during upgrades without swap.
   local mem_mb swap_kb free_mb
@@ -293,12 +388,13 @@ prepare_system() {
   free_mb=$(df -Pm / | awk 'NR==2 {print $4}')
   if [ "$mem_mb" -lt 1000 ] && [ "$swap_kb" -eq 0 ] && [ "$free_mb" -gt 3000 ] && [ ! -e /swapfile ]; then
     say "only ${mem_mb} MB of memory: adding a 1 GB swap file"
-    if fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none; then
-      if chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; then
-        grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-      else
-        rm -f /swapfile
-      fi
+    # fallocate is fast, but swapon rejects preallocated (unwritten) extents on some XFS/Btrfs setups:
+    # if that happens, write the file out with dd and try once more.
+    if make_swapfile fallocate || make_swapfile dd; then
+      grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    else
+      rm -f /swapfile
+      say "could not enable swap (continuing without it)"
     fi
   fi
   # Certificates and TLS need a correct clock.
@@ -307,13 +403,20 @@ prepare_system() {
 
 do_install() {
   need_root; detect_arch; install_packages; prepare_system; install_cores; install_app; install_units
-  local first=1; [ -f "$VAR/vps2vpn.db" ] && first=0
-  local json
+  local json setup_done
   local auto=""; [ "${V2V_AUTO:-}" = 1 ] && auto="--auto"
-  json=$(PYTHONPATH="$LIB/app" python3 -m vps2vpn init --acme $auto | tail -1)
+  if ! json=$(PYTHONPATH="$LIB/app" python3 -m vps2vpn init --acme $auto | tail -1) || [ -z "$json" ]; then
+    if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade failed during init: put the previous version back
+      rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
+      systemctl restart vps2vpn 2>/dev/null || true
+      die "the new version failed to initialize, so the previous version was restored"
+    fi
+    die "vps2vpn init failed"
+  fi
   systemctl enable vps2vpn >/dev/null 2>&1
   systemctl restart vps2vpn
-  if [ "$first" = 0 ] || [ -n "$auto" ]; then
+  setup_done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)' 2>/dev/null || echo 0)
+  if [ "$setup_done" = 1 ]; then          # configured (upgrade or --auto): write configs for the new version
     PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force >/dev/null 2>&1 || true
   fi
   sleep 1
@@ -332,8 +435,9 @@ do_install() {
 do_uninstall() {
   need_root
   say "removing vps2vpn"
-  systemctl disable --now vps2vpn vps2vpn-xray vps2vpn-hysteria vps2vpn-tuic 2>/dev/null || true
-  rm -f /etc/systemd/system/vps2vpn*.service /usr/local/bin/vps2vpn /etc/sysctl.d/99-vps2vpn.conf
+  systemctl disable --now vps2vpn vps2vpn-xray vps2vpn-hysteria vps2vpn-tuic vps2vpn-nft 2>/dev/null || true
+  rm -f /etc/systemd/system/vps2vpn*.service /usr/local/bin/vps2vpn /etc/sysctl.d/99-vps2vpn.conf \
+    /etc/modules-load.d/vps2vpn.conf "$ETC/nft-hop.nft"
   command -v nft >/dev/null && nft delete table inet vps2vpn 2>/dev/null || true
   systemctl daemon-reload
   rm -rf "$LIB"

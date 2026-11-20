@@ -3,9 +3,13 @@ traffic and who is online."""
 import json
 import os
 import re
+import secrets
+import socket
 import subprocess
 import threading
+import time
 import urllib.request
+import uuid
 
 from . import certs, db, paths, system
 
@@ -14,7 +18,24 @@ HY2_UNIT = 'vps2vpn-hysteria'
 TUIC_UNIT = 'vps2vpn-tuic'
 
 _apply_lock = threading.Lock()
-_online_lock = threading.Lock()
+_online_lock = threading.Lock()        # guards _online_cache only; never held while asking the cores
+_online_refresh_lock = threading.Lock()  # single-flight: one thread refreshes, the others serve the cache
+
+
+def _listen_addr():
+    """'::' when this machine has IPv6 (dual-stack sockets), else '0.0.0.0' so the cores still start."""
+    try:
+        sk = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    except OSError:
+        return '0.0.0.0'
+    try:
+        sk.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        sk.bind(('::', 0))
+        return '::'
+    except OSError:
+        return '0.0.0.0'
+    finally:
+        sk.close()
 
 
 def active_users():
@@ -28,7 +49,14 @@ def email(u):
 
 def xray_config(s, users):
     clients = [{'id': u['uuid'], 'flow': 'xtls-rprx-vision', 'email': email(u)} for u in users]
+    # Private destinations are blocked by IP and by name. Sniffing is not routeOnly, so a sniffed (possibly
+    # spoofed) SNI/Host replaces the destination and is resolved here (IPIfNonMatch) before geoip:private
+    # is checked: a client cannot reach 127.0.0.1 / LAN addresses by sending a fake domain.
     rules = [{'ip': ['geoip:private'], 'outboundTag': 'block'}]
+    # geosite.dat ships with Xray and install.sh puts it next to the binary; without it Xray would refuse the
+    # whole config, so the name rule is only added when the file is there (IPIfNonMatch still covers names).
+    if not paths.LIVE or os.path.exists(os.path.join(os.path.dirname(paths.XRAY_BIN), 'geosite.dat')):
+        rules.append({'domain': ['geosite:private'], 'outboundTag': 'block'})
     if s['block_bt']:
         rules.append({'protocol': ['bittorrent'], 'outboundTag': 'block'})
     return {
@@ -42,7 +70,7 @@ def xray_config(s, users):
         'dns': {'servers': ['https+local://%s/dns-query' % ip for ip, _ in system.doh_servers()[:2]] + ['localhost'],
                 'queryStrategy': 'UseIP'},
         'inbounds': [{
-            'tag': 'reality', 'listen': '::', 'port': s['reality_port'], 'protocol': 'vless',
+            'tag': 'reality', 'listen': _listen_addr(), 'port': s['reality_port'], 'protocol': 'vless',
             'settings': {'clients': clients, 'decryption': 'none'},
             'streamSettings': {
                 'network': 'raw', 'security': 'reality',
@@ -50,7 +78,7 @@ def xray_config(s, users):
                     'show': False, 'target': '%s:443' % s['reality_target'], 'xver': 0,
                     'serverNames': [s['reality_target']],
                     'privateKey': s['reality_private_key'], 'shortIds': [s['reality_short_id']]}},
-            'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'routeOnly': True},
+            'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic']},
         }],
         'outbounds': [
             {'protocol': 'freedom', 'tag': 'direct', 'streamSettings': {'sockopt': {'domainStrategy': 'UseIP'}}},
@@ -74,18 +102,21 @@ def _quic_windows(mem_mb=None):
 def hysteria_config(s, users):
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
     stream_win, conn_win = _quic_windows()
+    # With no enabled user the core must still start, but nobody may log in: one random placeholder account.
+    userpass = {email(u): u['hy2_pass'] for u in users} or {'u0': secrets.token_hex(16)}
     conf = {
         'listen': ':%d' % s['hy2_port'],
         'tls': {'cert': cert, 'key': key},
-        'auth': {'type': 'userpass', 'userpass': {email(u): u['hy2_pass'] for u in users}},
+        'auth': {'type': 'userpass', 'userpass': userpass},
         'trafficStats': {'listen': '127.0.0.1:%d' % s['hy2_stats_port'], 'secret': s['stats_secret']},
         # Bigger receive windows than the defaults help on long, fast routes (e.g. China <-> US, ~200-300 ms).
-        'quic': {'initStreamReceiveWindow': stream_win, 'maxStreamReceiveWindow': stream_win,
-                 'initConnReceiveWindow': conn_win, 'maxConnReceiveWindow': conn_win,
+        # Windows start at half their ceiling and grow (init < max), so idle connections stay cheap.
+        'quic': {'initStreamReceiveWindow': stream_win // 2, 'maxStreamReceiveWindow': stream_win,
+                 'initConnReceiveWindow': conn_win // 2, 'maxConnReceiveWindow': conn_win,
                  'maxIdleTimeout': '60s', 'disablePathMTUDiscovery': False},
-        # No fixed bandwidth: clients that send none get BBR, which adapts by itself.
-        'ignoreClientBandwidth': False,
-        'speedTest': True,
+        # Always BBR: a client must not be able to demand an arbitrary Brutal send rate and flood the VPS.
+        'ignoreClientBandwidth': True,
+        'speedTest': False,
         'acl': {'inline': ['reject(geoip:private)', 'direct(all)'],
                 'geoip': '/usr/local/lib/vps2vpn/geoip.dat'},
         'masquerade': {'type': 'proxy', 'proxy': {'url': s['hy2_masquerade'], 'rewriteHost': True}},
@@ -103,18 +134,22 @@ def tuic_config(s, users):
     """sing-box serving TUIC v5. Each user leaves through an outbound tagged with their stats key, so the
     Clash API's connection list tells whose traffic is whose (official builds have no per-user counters)."""
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
+    # With no enabled user sing-box still needs one user to start: a random placeholder nobody knows.
+    tuic_users = ([{'name': email(u), 'uuid': u['uuid'], 'password': u['hy2_pass']} for u in users]
+                  or [{'name': 'u0', 'uuid': str(uuid.uuid4()), 'password': secrets.token_hex(16)}])
     conf = {
         'log': {'level': 'warn'},
         'experimental': {'clash_api': {'external_controller': '127.0.0.1:%d' % s['tuic_api_port'],
                                        'secret': s['stats_secret']}},
         'inbounds': [{
-            'type': 'tuic', 'tag': 'tuic', 'listen': '::', 'listen_port': s['tuic_port'],
-            'users': [{'name': email(u), 'uuid': u['uuid'], 'password': u['hy2_pass']} for u in users],
+            'type': 'tuic', 'tag': 'tuic', 'listen': _listen_addr(), 'listen_port': s['tuic_port'],
+            'users': tuic_users,
             'congestion_control': 'bbr', 'auth_timeout': '3s', 'zero_rtt_handshake': False, 'heartbeat': '10s',
             'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': cert, 'key_path': key}}],
         'outbounds': [{'type': 'direct', 'tag': 'direct'}] + [{'type': 'direct', 'tag': email(u)} for u in users],
         'route': {'rules': ([{'action': 'sniff'}, {'protocol': 'bittorrent', 'action': 'reject'}] if s['block_bt'] else [])
-                  + [{'ip_is_private': True, 'action': 'reject'}]
+                  # resolve domains first so ip_is_private also catches names pointing at private addresses
+                  + [{'action': 'resolve'}, {'ip_is_private': True, 'action': 'reject'}]
                   + [{'auth_user': [email(u)], 'outbound': email(u)} for u in users],
                   'final': 'direct'},
     }
@@ -270,51 +305,63 @@ class TuicMeter:
         a, b = self.acc.get(uid, (0, 0))
         self.acc[uid] = (a + up, b + down)
 
-    def sample(self, s, data=None, users=None):
-        """Take one reading. `users` (ids) lets a lone user receive traffic nobody else could have made."""
+    def _sample_locked(self, s, data=None, users=None):
         try:
             d = data if data is not None else self.poll(s)
         except (OSError, ValueError):
-            with self.lock:
-                self.total, self.conns = None, {}      # down or restarting: count afresh from the next reading
+            self.total, self.conns = None, {}      # down or restarting: count afresh from the next reading
             return False
-        with self.lock:
-            seen, conns = {}, {}
+        total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
+        if self.total is None:
+            # First reading (or the first after an error/restart): only record a baseline. Bytes that open
+            # connections carried before we started watching are not credited to anyone a second time.
+            conns = {}
             for c in d.get('connections') or []:
                 uid = self.owner(c)
-                if uid is None:
-                    continue
-                up, down = int(c.get('upload', 0)), int(c.get('download', 0))
-                _, up0, down0 = self.conns.get(c.get('id'), (uid, 0, 0))
-                conns[c.get('id')] = (uid, up, down)
-                a, b = seen.get(uid, (0, 0))
-                seen[uid] = (a + max(0, up - up0), b + max(0, down - down0))
-            for uid, (a, b) in seen.items():
-                self._add(uid, a, b)
-            for uid in set(self.share) | set(seen):
-                val = self.share.get(uid, 0.0) * 0.9 + sum(seen.get(uid, (0, 0)))
-                if val < 1.0:
-                    self.share.pop(uid, None)
-                else:
-                    self.share[uid] = val
-            total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
-            if self.total is not None and total[0] >= self.total[0] and total[1] >= self.total[1]:
-                self.pending[0] += max(0, total[0] - self.total[0] - sum(v[0] for v in seen.values()))
-                self.pending[1] += max(0, total[1] - self.total[1] - sum(v[1] for v in seen.values()))
+                if uid is not None:
+                    conns[c.get('id')] = (uid, int(c.get('upload', 0)), int(c.get('download', 0)))
             self.total, self.conns = total, conns
-            weights = {k: v for k, v in self.share.items() if v > 0}
-            if not weights and users is not None and len(users) == 1:
-                weights = {next(iter(users)): 1}
-            if any(self.pending) and weights:
-                w = float(sum(weights.values()))
-                for uid, v in weights.items():
-                    self._add(uid, int(self.pending[0] * v / w), int(self.pending[1] * v / w))
-                self.pending = [0, 0]
             return True
+        seen, conns = {}, {}
+        for c in d.get('connections') or []:
+            uid = self.owner(c)
+            if uid is None:
+                continue
+            up, down = int(c.get('upload', 0)), int(c.get('download', 0))
+            _, up0, down0 = self.conns.get(c.get('id'), (uid, 0, 0))
+            conns[c.get('id')] = (uid, up, down)
+            a, b = seen.get(uid, (0, 0))
+            seen[uid] = (a + max(0, up - up0), b + max(0, down - down0))
+        for uid, (a, b) in seen.items():
+            self._add(uid, a, b)
+        for uid in set(self.share) | set(seen):
+            val = self.share.get(uid, 0.0) * 0.9 + sum(seen.get(uid, (0, 0)))
+            if val < 1.0:
+                self.share.pop(uid, None)
+            else:
+                self.share[uid] = val
+        if total[0] >= self.total[0] and total[1] >= self.total[1]:
+            self.pending[0] += max(0, total[0] - self.total[0] - sum(v[0] for v in seen.values()))
+            self.pending[1] += max(0, total[1] - self.total[1] - sum(v[1] for v in seen.values()))
+        self.total, self.conns = total, conns
+        weights = {k: v for k, v in self.share.items() if v > 0 and (users is None or k in users)}
+        if not weights and users is not None and len(users) == 1:
+            weights = {next(iter(users)): 1}
+        if any(self.pending) and weights:
+            w = float(sum(weights.values()))
+            for uid, v in weights.items():
+                self._add(uid, int(self.pending[0] * v / w), int(self.pending[1] * v / w))
+            self.pending = [0, 0]
+        return True
+
+    def sample(self, s, data=None, users=None):
+        """Take one reading. `users` (ids) lets a lone user receive traffic nobody else could have made."""
+        with self.lock:
+            return self._sample_locked(s, data=data, users=users)
 
     def collect(self, s, users=None):
-        self.sample(s, users=users)
         with self.lock:
+            self._sample_locked(s, users=users)
             out, self.acc = self.acc, {}
         return out
 
@@ -338,20 +385,41 @@ def _xray_api(s, *args, timeout=4):
     return r.stdout if r.returncode == 0 else ''
 
 
-_online_cache = {'at': 0, 'value': None}
+_online_cache = {'at': None, 'value': None}
 
 
 def online_detail(s=None, max_age=4):
     """Who is connected right now: {uid: {'protocols': [...], 'ips': [...], 'conns': n}}, or None if no core
     could be asked. Xray and TUIC also report the client addresses (= devices); Hysteria reports a count.
     Cached for a few seconds: the panel asks on every refresh."""
-    import time
-    with _online_lock:
-        if max_age and time.time() - _online_cache['at'] < max_age:
-            return _online_cache['value']
-        value = _online_detail(s or db.settings())
-        _online_cache.update(at=time.time(), value=value)
+    def fresh():
+        with _online_lock:
+            at = _online_cache['at']
+            if max_age and at is not None and time.monotonic() - at < max_age:
+                return True, _online_cache['value']
+            return False, (_online_cache['value'] if at is not None else None)
+
+    ok, value = fresh()
+    if ok:
         return value
+    # Asking the cores can block for seconds; never do it while holding _online_lock. Only one thread
+    # refreshes at a time; while it does, others get the last snapshot (or wait if there is none yet).
+    if not _online_refresh_lock.acquire(blocking=False):
+        if max_age:
+            with _online_lock:
+                if _online_cache['at'] is not None:
+                    return _online_cache['value']
+        _online_refresh_lock.acquire()
+    try:
+        ok, value = fresh()          # someone else may have refreshed while we waited
+        if ok:
+            return value
+        value = _online_detail(s or db.settings())
+        with _online_lock:
+            _online_cache.update(at=time.monotonic(), value=value)
+        return value
+    finally:
+        _online_refresh_lock.release()
 
 
 def _online_detail(s):

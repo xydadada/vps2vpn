@@ -42,8 +42,9 @@ CN_DIRECT_SUFFIX = ['steamcontent.com', 'steamserver.net', 'dl.steam.clngaa.com'
 # the "AI" group, which stays on one server (see subscription.ai_servers).
 AI_SUFFIX = ['anthropic.com', 'claude.ai', 'claude.com', 'claudeusercontent.com', 'clau.de', 'openai.com',
              'chatgpt.com', 'oaistatic.com', 'oaiusercontent.com', 'sora.com', 'gemini.google.com',
-             'aistudio.google.com', 'generativelanguage.googleapis.com', 'notebooklm.google.com', 'x.ai', 'grok.com',
-             'perplexity.ai']
+             'aistudio.google.com', 'generativelanguage.googleapis.com', 'notebooklm.google.com',
+             'alkalimakersuite-pa.clients6.google.com', 'proactivebackend-pa.googleapis.com',
+             'ai.google.dev', 'deepmind.google', 'x.ai', 'grok.com', 'perplexity.ai']
 
 
 def route_plan(s):
@@ -60,16 +61,24 @@ def route_plan(s):
             if d not in seen:
                 seen.add(d)
                 plan.append(('suffix', d, to))
-    for d in AD_EXCEPTIONS_PROXY:
-        plan.append(('suffix', d, 'proxy'))
+    if s.get('block_ads', True):          # exceptions only matter when the ad list is in use
+        for d in AD_EXCEPTIONS_PROXY:
+            if d not in seen:
+                seen.add(d)
+                plan.append(('suffix', d, 'proxy'))
     if s.get('ai_group', True):
-        plan += [('suffix', d, 'ai') for d in AI_SUFFIX if d not in seen]
+        for d in AI_SUFFIX:
+            if d not in seen:
+                seen.add(d)
+                plan.append(('suffix', d, 'ai'))
     if s.get('block_ads', True):
         plan.append(('set', 'ads', 'reject'))
     if s.get('ai_group', True):
         plan.append(('set', 'ai', 'ai'))
     for d in CN_DIRECT_SUFFIX:
-        plan.append(('suffix', d, 'cn'))
+        if d not in seen:                 # the owner's own lists win over the built-in direct list
+            seen.add(d)
+            plan.append(('suffix', d, 'cn'))
     plan += [('set', 'cn-download', 'cn'), ('set', 'steam-cn', 'cn'), ('set', 'apple-cn', 'cn'),
              ('set', 'microsoft-cn', 'cn'), ('set', 'telegram', 'proxy'), ('set', 'telegram-ip', 'proxy'),
              ('set', 'proxy', 'proxy'), ('set', 'cn', 'cn'), ('set', 'cn-ip', 'cn'), ('final', None, 'final')]
@@ -165,11 +174,15 @@ def refresh(log=print):
 def mirror_age():
     try:
         files = [f for f in os.listdir(paths.RULES) if not f.startswith('.') and not f.endswith('.tmp')]
-        if not files:
-            return None
-        return int(time.time() - min(os.path.getmtime(os.path.join(paths.RULES, f)) for f in files))
-    except (OSError, ValueError):
+    except OSError:
         return None
+    mtimes = []
+    for f in files:
+        try:                              # a file can vanish between listdir and stat (refresh running)
+            mtimes.append(os.path.getmtime(os.path.join(paths.RULES, f)))
+        except OSError:
+            continue
+    return int(time.time() - min(mtimes)) if mtimes else None
 
 
 _refresh_lock = threading.Lock()

@@ -22,6 +22,7 @@ MAIL_PORTS = {25, 465, 587}
 
 _last = {'at': 0, 'accounts': {}, 'coverage': []}
 _last_lock = threading.Lock()
+_check_lock = threading.Lock()     # two overlapping rounds must not both log/announce the same flag
 
 
 def _hy2_streams(s):
@@ -37,7 +38,7 @@ def aggregate(flows, online=None):
     for uid, host, port in flows:
         a = acc.setdefault(uid, {'streams': 0, 'targets': set(), 'ports': set(), 'mail': 0})
         a['streams'] += 1
-        a['targets'].add(host.lower())
+        a['targets'].add((host or '').lower())
         a['ports'].add(port)
         if port in MAIL_PORTS:
             a['mail'] += 1
@@ -61,10 +62,17 @@ def aggregate(flows, online=None):
 
 
 def split_addr(addr):
-    host, sep, port = (addr or '').rpartition(':')
-    if not sep or not port.isdigit():
+    """'host:port' or '[v6]:port' -> (host, port); anything else (bare v6, no/invalid port) -> None."""
+    addr = str(addr or '').strip()
+    if addr.startswith('['):
+        host, sep, port = addr[1:].partition(']:')
+    else:
+        if addr.count(':') != 1:
+            return None
+        host, sep, port = addr.partition(':')
+    if not sep or not host or not port.isdigit() or not 1 <= int(port) <= 65535:
         return None
-    return host.strip('[]'), int(port)
+    return host, int(port)
 
 
 def scan(s=None):
@@ -85,7 +93,7 @@ def scan(s=None):
                 uid, m = cores.TuicMeter.owner(c), c.get('metadata') or {}
                 port = str(m.get('destinationPort', ''))
                 if uid is not None and port.isdigit():
-                    flows.append((uid, m.get('host') or m.get('destinationIP', ''), int(port)))
+                    flows.append((uid, m.get('host') or m.get('destinationIP') or '', int(port)))
             coverage.append('tuic')
         except (OSError, ValueError):
             pass
@@ -100,27 +108,28 @@ def scan(s=None):
 
 def check(s=None, log=print):
     """One round: scan, and record/announce newly flagged accounts (once a day per account and kind)."""
-    s = s or db.settings()
-    if not s.get('abuse_guard', True):
-        return {}
-    rep = scan(s)
-    names = {u['id']: u['name'] for u in db.users()}
-    words = {'fanout': ('connects to hundreds of targets on many ports (scanner or relay?)', '短时间连了几百个目标和端口（像扫描或被当跳板）'),
-             'shared': ('used from many addresses at once (link shared?)', '同时有很多个 IP 在用（链接可能被转发了）'),
-             'mail': ('sends lots of mail traffic (spam?)', '大量发邮件端口连接（可能在发垃圾邮件）')}
-    day = time.strftime('%Y-%m-%d')
-    for uid, r in rep.items():
-        for f in r['flags']:
-            key = 'abuse-%s-%d-%s' % (f, uid, day)
-            if db.q('SELECT 1 FROM events WHERE kind=? AND detail LIKE ?', ('abuse', key + '%')):
-                continue
-            name = names.get(uid, '#%d' % uid)
-            db.add_event('abuse', uid, '%s | %s: %s | streams %d, targets %d, ports %d, devices %d' % (
-                key, name, words[f][0], r['streams'], r['targets'], r['ports'], r['devices']))
-            log('abuse guard: %s %s' % (name, words[f][0]))
-            notify.send('%s: %s / %s：%s（不会自动停用，请到面板查看）' % (name, words[f][0], name, words[f][1]),
-                        key=key, every=86400)
-    return rep
+    with _check_lock:
+        s = s or db.settings()
+        if not s.get('abuse_guard', True):
+            return {}
+        rep = scan(s)
+        names = {u['id']: u['name'] for u in db.users()}
+        words = {'fanout': ('connects to hundreds of targets on many ports (scanner or relay?)', '短时间连了几百个目标和端口（像扫描或被当跳板）'),
+                 'shared': ('used from many addresses at once (link shared?)', '同时有很多个 IP 在用（链接可能被转发了）'),
+                 'mail': ('sends lots of mail traffic (spam?)', '大量发邮件端口连接（可能在发垃圾邮件）')}
+        day = time.strftime('%Y-%m-%d')
+        for uid, r in rep.items():
+            for f in r['flags']:
+                key = 'abuse-%s-%d-%s' % (f, uid, day)
+                if db.q('SELECT 1 FROM events WHERE kind=? AND detail LIKE ?', ('abuse', key + '%')):
+                    continue
+                name = names.get(uid, '#%d' % uid)
+                db.add_event('abuse', uid, '%s | %s: %s | streams %d, targets %d, ports %d, devices %d' % (
+                    key, name, words[f][0], r['streams'], r['targets'], r['ports'], r['devices']))
+                log('abuse guard: %s %s' % (name, words[f][0]))
+                notify.send('%s: %s / %s：%s（不会自动停用，请到面板查看）' % (name, words[f][0], name, words[f][1]),
+                            key=key, every=86400)
+        return rep
 
 
 def latest():

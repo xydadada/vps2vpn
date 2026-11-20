@@ -6,12 +6,14 @@ Hysteria 2 use a trusted certificate even when the owner has no domain name.
 The client below uses only the standard library plus the `openssl` command.
 """
 import base64
+import errno
 import hashlib
 import http.server
 import ipaddress
 import json
 import os
 import re
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -24,6 +26,8 @@ from . import paths, secure
 
 LE_DIRECTORY = 'https://acme-v02.api.letsencrypt.org/directory'
 LE_STAGING = 'https://acme-staging-v02.api.letsencrypt.org/directory'
+
+_FIRST_CERT_RE = re.compile(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', re.S)
 
 
 def _openssl(*args, data=None):
@@ -39,35 +43,61 @@ def _pem(path):
         return f.read().replace(b'\r', b'')
 
 
-def is_ip(host):
+def _norm_host(host):
+    """Normalize an IPv4/IPv6 literal or DNS name for consistent SAN and cache matching."""
+    h = (host or '').strip()
+    if not h:
+        return ''
+    unbracketed = h.strip('[]')
     try:
-        ipaddress.ip_address(host)
+        return str(ipaddress.ip_address(unbracketed))
+    except ValueError:
+        return h.lower().rstrip('.')
+
+
+def is_ip(host):
+    h = _norm_host(host)
+    if not h:
+        return False
+    try:
+        ipaddress.ip_address(h)
         return True
     except ValueError:
         return False
 
 
 def _san(host):
-    return ('IP:' if is_ip(host) else 'DNS:') + host
+    h = _norm_host(host)
+    return ('IP:' if is_ip(h) else 'DNS:') + h
 
 
 # --- self-signed ----------------------------------------------------------------
 def ensure_self_signed(host):
     """Create (or recreate for a new host) a 10-year self-signed ECDSA certificate."""
     paths.ensure_dirs()
+    raw = (host or '').strip()
+    if not raw or any(c in raw for c in '/\n\r,\x00'):
+        raise ValueError('invalid host for self-signed certificate: %r' % (host,))
+    h = _norm_host(raw)
+    if not h or any(c in h for c in '/\n\r,\x00'):
+        raise ValueError('invalid host for self-signed certificate: %r' % (host,))
     marker = paths.SELF_CRT + '.host'
     if os.path.exists(paths.SELF_CRT) and os.path.exists(marker):
-        with open(marker, encoding='utf-8') as f:
-            if f.read() == host:
-                return
+        try:
+            with open(marker, encoding='utf-8') as f:
+                if f.read() == h:
+                    return
+        except OSError:
+            pass
+    subj = '/CN=' + h if len(h) <= 64 else '/O=vps2vpn'
     with tempfile.TemporaryDirectory() as d:
         key, crt = os.path.join(d, 'k'), os.path.join(d, 'c')
         _openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
-                 '-keyout', key, '-out', crt, '-days', '3650', '-subj', '/CN=' + host,
-                 '-addext', 'subjectAltName=' + _san(host))
+                 '-keyout', key, '-out', crt, '-days', '3650', '-subj', subj,
+                 '-addext', 'subjectAltName=' + _san(h))
         paths.write_atomic(paths.SELF_KEY, _pem(key), 0o640, 'vps2vpn')
         paths.write_atomic(paths.SELF_CRT, _pem(crt), 0o644, 'vps2vpn')
-    paths.write_atomic(marker, host, 0o644)
+    paths.write_atomic(marker, h, 0o644)
 
 
 def acme_valid(min_hours=24):
@@ -84,33 +114,34 @@ def acme_valid(min_hours=24):
 def acme_names():
     try:
         out = _openssl('x509', '-in', paths.ACME_CRT, '-noout', '-ext', 'subjectAltName').decode()
-        return re.findall(r'(?:DNS:|IP Address:)([^,\s]+)', out)
+        return [_norm_host(n) for n in re.findall(r'(?:DNS:|IP Address:)([^,\s]+)', out)]
     except (RuntimeError, FileNotFoundError):
         return []
 
 
-_trust_cache = {}
 _trust_lock = threading.Lock()
+_trust_cache = {}
 
 
 def trusted(host):
     """A publicly trusted certificate for `host` is in place. Cached per file version and per minute."""
-    if not host:
+    h = _norm_host(host)
+    if not h:
         return False
     try:
         stamp = os.path.getmtime(paths.ACME_CRT)
     except OSError:
         return False
-    key = (host.lower(), stamp, int(time.time() // 60))
+    key = (h, stamp, int(time.monotonic() // 60))
     with _trust_lock:
-        if key in _trust_cache:
-            return _trust_cache[key]
-    ok = acme_valid(1) and host.lower() in [n.lower() for n in acme_names()]
-    with _trust_lock:
-        if len(_trust_cache) > 16:
-            _trust_cache.clear()
-        _trust_cache[key] = ok
-    return ok
+        val = _trust_cache.get(key)
+    if val is None:
+        val = acme_valid(1) and h in acme_names()
+        with _trust_lock:
+            if len(_trust_cache) > 16:
+                _trust_cache.clear()
+            _trust_cache[key] = val
+    return val
 
 
 def current(host=None):
@@ -124,14 +155,11 @@ def current(host=None):
     return paths.SELF_CRT, paths.SELF_KEY
 
 
-_CERT_BLOCK_RE = re.compile(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', re.S)
-
-
 def fingerprint(cert_path):
     """SHA-256 of the leaf certificate (hex), what clients pin for a self-signed cert."""
     with open(cert_path, encoding='utf-8') as f:
         pem = f.read()
-    m = _CERT_BLOCK_RE.search(pem)
+    m = _FIRST_CERT_RE.search(pem)
     leaf = m.group(0) if m else pem
     der = ssl.PEM_cert_to_DER_cert(leaf)
     return hashlib.sha256(der).hexdigest()
@@ -192,13 +220,16 @@ class _Acme:
             raise AcmeError('%s -> HTTP %d: %s' % (url, e.code, err[:400]))
 
     def poll(self, url, done=('valid',), timeout=120):
-        end = time.time() + timeout
-        while time.time() < end:
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
             _, obj = self.post(url, None)
-            if obj['status'] in done:
+            if not isinstance(obj, dict):
+                raise AcmeError('unexpected ACME response: %r' % (obj,))
+            st = obj.get('status')
+            if st in done:
                 return obj
-            if obj['status'] == 'invalid':
-                raise AcmeError('validation failed: ' + json.dumps(obj)[:600])
+            if st in ('invalid', 'deactivated', 'expired', 'revoked'):
+                raise AcmeError('validation %s: %s' % (st, json.dumps(obj)[:600]))
             time.sleep(2)
         raise AcmeError('timed out waiting for ' + url)
 
@@ -209,13 +240,14 @@ class _ChallengeServer:
     def __init__(self):
         self.tokens = {}
         tokens = self.tokens
+        prefix = '/.well-known/acme-challenge/'
 
         class H(http.server.BaseHTTPRequestHandler):
             timeout = 10
 
             def do_GET(self):
-                t = self.path.rsplit('/', 1)[-1]
-                if self.path.startswith('/.well-known/acme-challenge/') and t in tokens:
+                t = self.path[len(prefix):] if self.path.startswith(prefix) else ''
+                if t and self.path == prefix + t and t in tokens:
                     body = tokens[t].encode()
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/octet-stream')
@@ -229,20 +261,24 @@ class _ChallengeServer:
                 pass
 
         class S6(http.server.ThreadingHTTPServer):
-            address_family = __import__('socket').AF_INET6
+            address_family = socket.AF_INET6
             daemon_threads = True
 
             def server_bind(self):
-                import socket
                 self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
                 super().server_bind()
 
         class S4(http.server.ThreadingHTTPServer):
+            address_family = socket.AF_INET
             daemon_threads = True
 
         try:
             self.httpd = S6(('::', 80), H)
-        except OSError:
+        except OSError as e6:
+            # Only fall back to IPv4 when IPv6 itself is unavailable. A busy port (EADDRINUSE) or a
+            # permission problem must be reported, not hidden behind a second bind attempt.
+            if e6.errno not in (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL):
+                raise AcmeError('port 80 is busy or blocked (%s); Let\'s Encrypt needs it for a few seconds' % e6)
             try:
                 self.httpd = S4(('0.0.0.0', 80), H)
             except OSError as e:
@@ -254,70 +290,103 @@ class _ChallengeServer:
         self.httpd.server_close()
 
 
+_issue_lock = threading.Lock()
+
+
+def _ensure_acme_account():
+    if os.path.exists(paths.ACME_ACCOUNT) and os.path.getsize(paths.ACME_ACCOUNT) > 0:
+        try:
+            _openssl('rsa', '-in', paths.ACME_ACCOUNT, '-noout', '-modulus')
+            return
+        except RuntimeError:
+            pass
+    pem = _openssl('genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048')
+    paths.write_atomic(paths.ACME_ACCOUNT, pem.replace(b'\r', b''), 0o600)
+
+
 def issue(host, email='', staging=False, log=print):
     """Get a Let's Encrypt certificate for a domain or an IP address. Raises AcmeError on failure."""
-    paths.ensure_dirs()
-    if not os.path.exists(paths.ACME_ACCOUNT):
-        pem = _openssl('genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048')
-        paths.write_atomic(paths.ACME_ACCOUNT, pem.replace(b'\r', b''), 0o600)
-    ac = _Acme(LE_STAGING if staging else LE_DIRECTORY, paths.ACME_ACCOUNT)
-    reg = {'termsOfServiceAgreed': True}
-    if email:
-        reg['contact'] = ['mailto:' + email]
-    r, _ = ac.post(ac.dir['newAccount'], reg)
-    ac.kid = r.headers['Location']
-    ident = {'type': 'ip' if is_ip(host) else 'dns', 'value': host}
-    order_req = {'identifiers': [ident]}
-    profiles = ac.dir.get('meta', {}).get('profiles', {})
-    if ident['type'] == 'ip':
-        if 'shortlived' not in profiles:
-            raise AcmeError('this ACME server does not offer IP certificates')
-        order_req['profile'] = 'shortlived'
-    log('ACME: ordering a certificate for %s' % host)
-    r, order = ac.post(ac.dir['newOrder'], order_req)
-    order_url = r.headers['Location']
-    srv = _ChallengeServer()
-    try:
-        for auth_url in order['authorizations']:
-            _, auth = ac.post(auth_url, None)
-            if auth['status'] == 'valid':
-                continue
-            ch = next((c for c in auth['challenges'] if c['type'] == 'http-01'), None)
-            if not ch:
-                raise AcmeError('no http-01 challenge offered')
-            srv.tokens[ch['token']] = ch['token'] + '.' + ac.thumbprint
-            ac.post(ch['url'], {})
-            ac.poll(auth_url)
-    finally:
-        srv.close()
-    with tempfile.TemporaryDirectory() as d:
-        key = os.path.join(d, 'k')
-        _openssl('genpkey', '-algorithm', 'EC', '-pkeyopt', 'ec_paramgen_curve:P-256', '-out', key)
-        cfg = os.path.join(d, 'c')
-        with open(cfg, 'w') as f:
-            f.write('[req]\ndistinguished_name=dn\nreq_extensions=ext\nprompt=no\n[dn]\nO=vps2vpn\n'
-                    '[ext]\nsubjectAltName=%s\n' % _san(host))
-        csr = _openssl('req', '-new', '-key', key, '-config', cfg, '-outform', 'DER')
-        ac.poll(order_url, done=('ready', 'valid'))
-        _, order = ac.post(order['finalize'], {'csr': secure.b64url(csr)})
-        order = ac.poll(order_url)
-        _, chain = ac.post(order['certificate'], None)
-        if isinstance(chain, bytes):
-            chain = chain.decode()
-        if '-----BEGIN CERTIFICATE-----' not in chain:
-            raise AcmeError('unexpected certificate response')
-        paths.write_atomic(paths.ACME_KEY, _pem(key), 0o640, 'vps2vpn')
-        paths.write_atomic(paths.ACME_CRT, chain.replace('\r', ''), 0o644, 'vps2vpn')
-    log('ACME: certificate installed for %s' % host)
-    return True
+    raw = (host or '').strip()
+    if not raw or any(c in raw for c in '/\\\n\r,[]=\x00 \t'):
+        # Bracketed IPv6 literals are valid input before normalization; reject brackets only if not an IP.
+        if not (raw.startswith('[') and raw.endswith(']') and is_ip(raw)):
+            raise AcmeError('invalid host for ACME certificate: %r' % (host,))
+    h = _norm_host(raw)
+    if not h or any(c in h for c in '/\\\n\r,[]=\x00 \t'):
+        raise AcmeError('invalid host for ACME certificate: %r' % (host,))
+    with _issue_lock:
+        paths.ensure_dirs()
+        _ensure_acme_account()
+        ac = _Acme(LE_STAGING if staging else LE_DIRECTORY, paths.ACME_ACCOUNT)
+        reg = {'termsOfServiceAgreed': True}
+        if email:
+            reg['contact'] = ['mailto:' + email]
+        r, _ = ac.post(ac.dir['newAccount'], reg)
+        ac.kid = r.headers['Location']
+        ident = {'type': 'ip' if is_ip(h) else 'dns', 'value': h}
+        order_req = {'identifiers': [ident]}
+        profiles = ac.dir.get('meta', {}).get('profiles', {})
+        if ident['type'] == 'ip':
+            if 'shortlived' not in profiles:
+                raise AcmeError('this ACME server does not offer IP certificates')
+            order_req['profile'] = 'shortlived'
+        log('ACME: ordering a certificate for %s' % h)
+        r, order = ac.post(ac.dir['newOrder'], order_req)
+        order_url = r.headers['Location']
+        srv = None
+        try:
+            for auth_url in order['authorizations']:
+                _, auth = ac.post(auth_url, None)
+                if not isinstance(auth, dict):
+                    raise AcmeError('unexpected authorization response')
+                if auth.get('status') == 'valid':
+                    continue
+                ch = next((c for c in auth.get('challenges', []) if c.get('type') == 'http-01'), None)
+                if not ch:
+                    raise AcmeError('no http-01 challenge offered')
+                if srv is None:
+                    srv = _ChallengeServer()
+                srv.tokens[ch['token']] = ch['token'] + '.' + ac.thumbprint
+                ac.post(ch['url'], {})
+                ac.poll(auth_url)
+        finally:
+            if srv is not None:
+                srv.close()
+        with tempfile.TemporaryDirectory() as d:
+            key = os.path.join(d, 'k')
+            _openssl('genpkey', '-algorithm', 'EC', '-pkeyopt', 'ec_paramgen_curve:P-256', '-out', key)
+            cfg = os.path.join(d, 'c')
+            with open(cfg, 'w') as f:
+                f.write('[req]\ndistinguished_name=dn\nreq_extensions=ext\nprompt=no\n[dn]\nO=vps2vpn\n'
+                        '[ext]\nsubjectAltName=%s\n' % _san(h))
+            csr = _openssl('req', '-new', '-key', key, '-config', cfg, '-outform', 'DER')
+            order = ac.poll(order_url, done=('ready', 'valid'))
+            if order.get('status') == 'ready':
+                _, order = ac.post(order['finalize'], {'csr': secure.b64url(csr)})
+                order = ac.poll(order_url)
+            _, chain = ac.post(order['certificate'], None)
+            if isinstance(chain, bytes):
+                chain = chain.decode()
+            if '-----BEGIN CERTIFICATE-----' not in chain:
+                raise AcmeError('unexpected certificate response')
+            key_dst = paths.ACME_KEY + '.staging' if staging else paths.ACME_KEY
+            crt_dst = paths.ACME_CRT + '.staging' if staging else paths.ACME_CRT
+            paths.write_atomic(key_dst, _pem(key), 0o640, 'vps2vpn')
+            paths.write_atomic(crt_dst, chain.replace('\r', ''), 0o644, 'vps2vpn')
+            if not staging:
+                with _trust_lock:
+                    _trust_cache.clear()
+        log('ACME: certificate installed for %s%s' % (h, ' (staging)' if staging else ''))
+        return True
 
 
 def renew_if_needed(s, log=print):
-    """Called periodically. IP certificates live ~6 days, so renew when under 3 days are left."""
+    """Called periodically. IP certificates live ~6 days (~3 days left); domain certs live 90 days (30 days left)."""
     host = s['domain'] or s['public_host']
     if s['cert_mode'] != 'auto' or not host:
         return None
-    if trusted(host) and acme_valid(72):
+    min_hours = 72 if is_ip(host) else 30 * 24
+    if trusted(host) and acme_valid(min_hours):
         return None
     try:
         issue(host, s['acme_email'], log=log)

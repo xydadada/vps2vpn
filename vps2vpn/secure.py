@@ -7,6 +7,7 @@ import secrets
 import uuid
 
 PBKDF2_ROUNDS = 240_000
+MAX_PBKDF2_ROUNDS = 5_000_000
 
 
 def token(nbytes=24):
@@ -33,10 +34,15 @@ def hash_password(password):
 
 def check_password(password, stored):
     try:
+        if not isinstance(password, str) or not isinstance(stored, str):
+            return False
         algo, rounds, salt, digest = stored.split('$')
         if algo != 'pbkdf2_sha256':
             return False
-        calc = hashlib.pbkdf2_hmac('sha256', password.encode(), b64url_decode(salt), int(rounds))
+        n = int(rounds)
+        if not 1 <= n <= MAX_PBKDF2_ROUNDS:
+            return False
+        calc = hashlib.pbkdf2_hmac('sha256', password.encode(), b64url_decode(salt), n)
         return hmac.compare_digest(calc, b64url_decode(digest))
     except (ValueError, AttributeError):
         return False
@@ -56,6 +62,8 @@ def _clamp(k):
 
 
 def x25519(scalar, u_point):
+    if len(scalar) != 32 or len(u_point) != 32:
+        raise ValueError('X25519 inputs must be 32 bytes')
     k = int.from_bytes(_clamp(scalar), 'little')
     u = bytearray(u_point)
     u[31] &= 127
@@ -100,8 +108,10 @@ def short_id():
 
 
 def hmac_eq(a, b):
-    """Constant-time string compare; an empty expected value never matches."""
-    return bool(b) and hmac.compare_digest(str(a).encode(), str(b).encode())
+    """Constant-time string compare; non-strings or an empty expected value never match."""
+    if not isinstance(a, str) or not isinstance(b, str) or not b:
+        return False
+    return hmac.compare_digest(a.encode(), b.encode())
 
 
 # --- TOTP (RFC 6238) for the admin's optional second factor ---------------------
@@ -123,10 +133,10 @@ def totp_check(secret, code, at=None, window=1):
     """Accept the current code and one step either side (clock drift)."""
     import time
     code = ''.join(c for c in str(code or '') if c.isdigit())
-    if not secret or len(code) != 6:
+    if not isinstance(secret, str) or not secret or len(code) != 6:
         return False
     now = time.time() if at is None else at
     try:
         return any(hmac.compare_digest(totp(secret, now + k * 30), code) for k in range(-window, window + 1))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return False

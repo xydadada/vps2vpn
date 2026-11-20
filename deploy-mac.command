@@ -13,14 +13,25 @@ if command -v python3 >/dev/null 2>&1 && { [ "$(uname)" != Darwin ] || xcode-sel
 fi
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+safe_url() {
+  local u="$1" re="$2"
+  [ -n "$u" ] || return 1
+  [[ "$u" != -* ]] || return 1
+  [[ "$u" != *[[:space:][:cntrl:]]* ]] || return 1
+  [[ "$u" =~ $re ]]
+}
+
 say "vps2vpn 一键部署 / one-click deploy"
 read -r -p "服务器 IP / server IP: " HOST
 HOST=$(printf '%s' "$HOST" | tr -d '[] ')
+if ! [[ "$HOST" =~ ^[A-Za-z0-9.:-]{3,255}$ ]] || [[ "$HOST" == -* ]]; then
+  echo "IP 地址格式不对 / invalid server IP: $HOST"; exit 1
+fi
 echo
 echo "把 SSH 密钥文件（.pem / id_ed25519）拖进这个窗口然后按回车；没有密钥就直接按回车，稍后输入密码。"
 echo "Drag your SSH key file into this window and press Enter; no key? just press Enter and type the password later."
 read -r -p "> " KEY
-KEY=$(printf '%s' "$KEY" | sed -e "s/^ *//" -e "s/ *$//" -e "s/^'//" -e "s/'$//" -e 's/\ / /g')
+KEY=$(printf '%s' "$KEY" | sed -e "s/^ *//" -e "s/ *$//" -e "s/^'//" -e "s/'$//" -e 's/\\ / /g')
 if [ -n "$KEY" ] && [ -d "$KEY" ]; then
   for n in id_ed25519 id_ecdsa id_rsa; do [ -f "$KEY/$n" ] && KEY="$KEY/$n" && break; done
 fi
@@ -28,8 +39,14 @@ USER_DEF=root
 case "$KEY" in *[Ll]ightsail*|*.pem) USER_DEF=ubuntu ;; esac
 read -r -p "登录用户名 / login user [$USER_DEF]: " LUSER
 LUSER=${LUSER:-$USER_DEF}
+if ! [[ "$LUSER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]]; then
+  echo "用户名格式不对 / invalid user: $LUSER"; exit 1
+fi
 read -r -p "SSH 端口 / port [22]: " PORT
 PORT=${PORT:-22}
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  echo "SSH 端口不对 / invalid port: $PORT"; exit 1
+fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$WORK/known_hosts"
@@ -43,11 +60,11 @@ RUNAS=""; [ "$LUSER" = root ] || RUNAS="sudo -n env "
 say "打包并上传，然后在服务器上安装（1-3 分钟）/ uploading and installing (1-3 minutes)"
 tar -czf "$WORK/v.tgz" --exclude=__pycache__ --exclude='*.pyc' install.sh vps2vpn || exit 1
 base64 < "$WORK/v.tgz" | tr -d '\n' > "$WORK/v.b64"; echo >> "$WORK/v.b64"
-REMOTE='set -e; T=$(mktemp -d); base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; '"$RUNAS"'V2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install; rm -rf "$T"'
+REMOTE='set -e; T=$(mktemp -d); trap '\''rm -rf "$T"'\'' EXIT; base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; '"$RUNAS"'V2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install'
 # the result line holds the new admin password: keep it out of the window
-ssh "${OPTS[@]}" "$LUSER@$HOST" "$REMOTE" < "$WORK/v.b64" | tee "$WORK/log" | grep -v '^V2V_RESULT:'
+ssh "${OPTS[@]}" -- "$LUSER@$HOST" "$REMOTE" < "$WORK/v.b64" | tee "$WORK/log" | grep -v '^V2V_RESULT:'
 rc=${PIPESTATUS[0]}
-B64=$(grep '^V2V_RESULT:' "$WORK/log" | tail -1 | cut -d: -f2)
+B64=$(grep '^V2V_RESULT:' "$WORK/log" | tail -1 | cut -d: -f2 | tr -d '\r\n ')
 rm -f "$WORK/log"
 if [ "$rc" -ne 0 ] || [ -z "$B64" ]; then
   say "出错了 / something went wrong (exit $rc)."
@@ -62,19 +79,32 @@ REC_DIR="$HOME/vps2vpn"; mkdir -p "$REC_DIR"; chmod 700 "$REC_DIR"
 REC="$REC_DIR/$(printf '%s' "$HOST" | tr -c 'A-Za-z0-9._-' '_').json"
 JSON=$(printf '%s' "$B64" | base64 -d 2>/dev/null || printf '%s' "$B64" | base64 -D)
 OLD="{}"; [ -f "$REC" ] && OLD=$(cat "$REC")
-# osascript's JavaScript reads JSON on every Mac without extra software
-read_json() { osascript -l JavaScript -e 'function run(a){var r=JSON.parse(a[0]);var v=eval("r"+a[1]);return v===undefined||v===null?"":(typeof v==="object"?JSON.stringify(v):String(v))}' "$1" "$2" 2>/dev/null; }
-MERGED=$(osascript -l JavaScript -e 'function run(a){var o=JSON.parse(a[0]),r=JSON.parse(a[1]),x=r.auto||{};
- ["panel","pin","join_code","name","user","sub_url","qr_url","links","checks","ai"].forEach(function(k){if(x[k]!=null)o[k]=x[k]});
- if(x.admin_password){o.admin_user=x.admin_user;o.admin_password=x.admin_password}
- o.host=a[2];o.ssh_user=a[3];o.ssh_port=+a[4];o.cloud=r.cloud||"";o.cloud_firewall=r.cloud_firewall||"";
- o.updated=new Date().toISOString().slice(0,16).replace("T"," ");o["说明"]="vps2vpn 一键部署工具保存的登录信息。只在你自己的电脑上，不要发给别人。";
- return JSON.stringify(o,null,2)}' "$OLD" "$JSON" "$HOST" "$LUSER" "$PORT" 2>/dev/null)
+# osascript's JavaScript reads JSON on every Mac without extra software; pass data via env vars (never argv)
+read_json() {
+  V2V_JSON="$1" V2V_EXPR="$2" osascript -l JavaScript -e '
+    ObjC.import("Foundation");
+    function env(k){var v=$.NSProcessInfo.processInfo.environment.objectForKey(k);return v?ObjC.unwrap(v):""}
+    function run(){var r=JSON.parse(env("V2V_JSON"));var v=eval("r"+env("V2V_EXPR"));return v===undefined||v===null?"":(typeof v==="object"?JSON.stringify(v):String(v))}
+  ' 2>/dev/null
+}
+MERGED=$(V2V_OLD="$OLD" V2V_JSON="$JSON" V2V_HOST="$HOST" V2V_USER="$LUSER" V2V_PORT="$PORT" osascript -l JavaScript -e '
+  ObjC.import("Foundation");
+  function env(k){var v=$.NSProcessInfo.processInfo.environment.objectForKey(k);return v?ObjC.unwrap(v):""}
+  function run(){
+    var o=JSON.parse(env("V2V_OLD")),r=JSON.parse(env("V2V_JSON")),x=r.auto||{};
+    ["panel","pin","join_code","name","user","sub_url","qr_url","links","checks","ai"].forEach(function(k){if(x[k]!=null)o[k]=x[k]});
+    if(x.admin_password){o.admin_user=x.admin_user;o.admin_password=x.admin_password}
+    o.host=env("V2V_HOST");o.ssh_user=env("V2V_USER");o.ssh_port=+env("V2V_PORT");o.cloud=r.cloud||"";o.cloud_firewall=r.cloud_firewall||"";
+    o.updated=new Date().toISOString().slice(0,16).replace("T"," ");o["说明"]="vps2vpn 一键部署工具保存的登录信息。只在你自己的电脑上，不要发给别人。";
+    return JSON.stringify(o,null,2)
+  }
+' 2>/dev/null)
 if [ -n "$MERGED" ]; then (umask 077; printf '%s\n' "$MERGED" > "$REC")
 else (umask 077; printf '%s\n' "$JSON" > "$REC"); echo "登录信息保存在 $REC"; MERGED="$OLD"; fi
 
 PANEL=$(read_json "$MERGED" .panel)
 SUB=$(read_json "$MERGED" .sub_url)
+V2V_LINK=$(read_json "$MERGED" .links.vps2vpn)
 CLASH=$(read_json "$MERGED" .links.clash)
 PW=$(read_json "$MERGED" .admin_password)
 say "部署成功 / Done!"
@@ -89,29 +119,35 @@ fi
 echo
 echo "防火墙检查（从这台电脑测试 TCP 端口）："
 BAD=0
-for p in $(read_json "$MERGED" '.checks.filter(function(c){return c[0]=="tcp"}).map(function(c){return c[1]}).join(" ")'); do
+CHECKED=0
+while IFS= read -r p; do
+  if ! [[ "$p" =~ ^[0-9]+$ ]] || [ "$p" -lt 1 ] || [ "$p" -gt 65535 ]; then continue; fi
+  CHECKED=1
   if nc -z -G 5 "$HOST" "$p" >/dev/null 2>&1 || nc -z -w 5 "$HOST" "$p" >/dev/null 2>&1; then echo "  ✓ TCP $p 通了"; else echo "  ✗ TCP $p 不通"; BAD=1; fi
-done
+done < <(read_json "$MERGED" '.checks.filter(function(c){return c[0]=="tcp"}).map(function(c){return c[1]}).join(String.fromCharCode(10))')
+[ "$CHECKED" = 1 ] || BAD=1
 if [ "$BAD" = 1 ]; then
   echo "  有端口被云服务商的防火墙挡住了。$(read_json "$MERGED" .cloud_firewall)"
   echo "  请到云服务商控制台的「防火墙 / 安全组」放行：协议选「全部」，来源 0.0.0.0/0。"
 fi
 
 APP=""
-for a in "Clash Verge" FlClash "Mihomo Party" "Clash Nyanpasu" "ClashX Meta" ClashX Stash; do
+for a in vps2vpn "Clash Verge" FlClash "Mihomo Party" "Clash Nyanpasu" "ClashX Meta" ClashX Stash; do
   [ -d "/Applications/$a.app" ] || [ -d "$HOME/Applications/$a.app" ] && { APP="$a"; break; }
 done
+IMPORT_URL="$CLASH"
+if [ "$APP" = "vps2vpn" ] && [ -n "$V2V_LINK" ]; then IMPORT_URL="$V2V_LINK"; fi
 echo
-if [ -n "$APP" ] && [ -n "$CLASH" ] && [ "$BAD" = 0 ]; then
+if [ -n "$APP" ] && safe_url "$IMPORT_URL" '^(vps2vpn|clash|hiddify|sing-box)://' && [ "$BAD" = 0 ]; then
   echo "检测到你电脑上的 $APP，已经自动打开它导入。在它弹出的窗口点「确定/导入」，再打开「系统代理」开关就能用了。"
   echo "分流规则（国内网站直连、国外走代理）已经写好，不用自己设置。"
-  open "$CLASH" 2>/dev/null
-elif [ -n "$SUB" ]; then
+  open -- "$IMPORT_URL" 2>/dev/null
+elif safe_url "$SUB" '^https?://[^/]+'; then
   echo "没检测到 VPN 软件（或者防火墙还没放行）。推荐装免费开源的 Clash Verge Rev："
   echo "  https://github.com/clash-verge-rev/clash-verge-rev/releases/latest"
   echo "装好后把下面的订阅链接粘贴到软件的「新建订阅」里。浏览器里会打开订阅页，手机可以扫上面的二维码导入。"
   echo "  $SUB"
-  command -v open >/dev/null && open "$SUB" || { command -v xdg-open >/dev/null && xdg-open "$SUB" >/dev/null 2>&1; }
+  command -v open >/dev/null && open -- "$SUB" || { command -v xdg-open >/dev/null && xdg-open -- "$SUB" >/dev/null 2>&1; }
 fi
 echo
 echo "管理面板（加用户、看流量）：$PANEL"

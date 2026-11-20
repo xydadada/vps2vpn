@@ -48,12 +48,13 @@ const fmt={
 };
 
 /* ---------- theme ---------- */
-const Theme={key:'v2v-theme',get(){try{return localStorage.getItem(this.key)||'auto'}catch{return 'auto'}},
+const Theme={key:'v2v-theme',_mqlBound:false,get(){try{return localStorage.getItem(this.key)||'auto'}catch{return 'auto'}},
  set(v){try{localStorage.setItem(this.key,v)}catch{}this.apply(v);},
  apply(v){if(v==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',v);Palette.refresh();for(const b of document.querySelectorAll('[data-theme-btn]'))b.setAttribute('aria-pressed',String(b.dataset.themeBtn===v));},
- mount(){for(const b of document.querySelectorAll('[data-theme-btn]'))b.addEventListener('click',()=>this.set(b.dataset.themeBtn));this.apply(this.get());matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>Palette.refresh());}};
+ mount(){for(const b of document.querySelectorAll('[data-theme-btn]')){if(!b.dataset.themeBound){b.dataset.themeBound='1';b.addEventListener('click',()=>this.set(b.dataset.themeBtn));}}this.apply(this.get());if(!this._mqlBound){this._mqlBound=true;matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>Palette.refresh());}}};
 const Palette={v:{},mono:'monospace',refresh(){const cs=getComputedStyle(document.documentElement);this.mono=cs.getPropertyValue('--mono').trim()||'monospace';for(const k of ['text','text-2','muted','line','line-2','panel','panel-2','panel-3','down','up','sg','us','accent','ok','warn','danger'])this.v[k]=cs.getPropertyValue('--'+k).trim();Ticker.dirtyAll();}};
 function alpha(color,a){const c=color.trim();if(c.startsWith('#')){let x=c.slice(1);if(x.length===3)x=[...x].map(ch=>ch+ch).join('');const n=parseInt(x,16);return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;}return c;}
+function placeTip(tip,x,y,w){tip.classList.remove('hide');const hw=Math.min(w/2,(tip.offsetWidth||120)/2+6);tip.style.left=Math.max(hw,Math.min(w-hw,x))+'px';tip.style.top=y+'px';}
 
 /* ---------- toast + modal ---------- */
 /* Server messages are English; show them in Chinese when the page is. Unknown ones pass through unchanged. */
@@ -71,6 +72,10 @@ const ERR_ZH=[
  [/^name required/,'请填写名字'],[/^password: (\d+) to 128/,(m,a)=>'密码 '+a+'–128 位'],[/^password must be at least 8/,'密码至少 8 位'],
  [/^invite code is wrong, used up or expired/,'邀请码不对、已用完或已过期'],[/^the person who invited you can no longer invite/,'邀请你的人现在不能再邀请了，这个邀请码作废'],
  [/^the inviter's quota has run short/,'邀请人的额度不够了，这个邀请码作废'],[/^no such account/,'账号不存在'],[/^no such user/,'没有这个使用者'],
+ [/^no such server/,'没有这台服务器'],[/^unknown line/,'不支持的线路'],[/^already set up/,'已经完成初始化了'],[/^bad setup link/,'设置链接无效或已过期'],
+ [/^date must look like/,'日期格式不对，请填类似 2026-12-31'],[/^version must look like/,'版本号格式不对，请填类似 1.2.3'],
+ [/^download link must start with/,'下载链接必须以 http:// 或 https:// 开头'],[/^masquerade must be/,'伪装地址必须是公开的 https:// 链接'],
+ [/^cannot reach api\.telegram\.org/,'连不上 api.telegram.org，请检查服务器网络'],
  [/^you already have a request waiting/,'你已经有一个申请在等批准了，请等管理员处理'],[/^no pending request/,'这条申请已经处理过了'],
  [/^the account no longer exists/,'这个账号已经不存在'],[/^current password is wrong/,'当前密码不对'],
  [/^wrong (user)?name or password/,'用户名或密码错误'],[/^too many attempts/,'尝试太多次了，请 10 分钟后再试'],
@@ -89,20 +94,20 @@ const ERR_ZH=[
  [/^internal error/,'服务器内部出错，请看日志'],[/^unknown endpoint/,'这个功能不可用（可能被管理员关掉了）'],[/^login required/,'请先登录']];
 function errText(m){if(typeof KT==='undefined'||KT!==KT_ZH||!m)return m;for(const [re,f] of ERR_ZH){const x=String(m).match(re);if(x)return typeof f==='string'?f:f(...x);}return m;}
 function toast(text,kind){if(kind==='err')text=errText(text);let box=$('toasts');if(!box){box=h('div',{id:'toasts','aria-live':'polite'});document.body.append(box);}const t=h('div',{class:'toast'+(kind==='err'?' err':''),role:'status'},text);const close=()=>{t.classList.add('out');setTimeout(()=>t.remove(),200);};t.onclick=close;box.append(t);setTimeout(close,kind==='err'?8000:4500);while(box.children.length>4)box.firstChild.remove();}
-function modal({title,text,input,value,type,confirm,danger,cancel,placeholder,multiline}){return new Promise(res=>{const d=h('dialog',{class:'modal'});const f=h('form',{method:'dialog'});let field=null;if(input){field=multiline?h('textarea',{maxlength:'300',placeholder:placeholder||''}):h('input',{type:type||'text',placeholder:placeholder||'',autocomplete:'off'});field.value=value??'';if(type==='number'){field.step='any';field.min='0.001';}}
+function modal({title,text,input,value,type,confirm,danger,cancel,placeholder,multiline,maxlength}){return new Promise(res=>{const d=h('dialog',{class:'modal'});const f=h('form',{method:'dialog'});let field=null;if(input){const a={placeholder:placeholder||''};if(maxlength>0)a.maxlength=String(maxlength);field=multiline?h('textarea',a):h('input',Object.assign({type:type||'text',autocomplete:'off'},a));field.value=value??'';if(type==='number'){field.step='any';field.min='0.001';}}
  const ok=h('button',{class:'btn '+(danger?'danger':'primary'),type:'submit'},confirm||KT.ok);const no=h('button',{class:'btn ghost',type:'button'},cancel||KT.cancel);
  f.append(...[h('h3',{text:title||KT.confirm}),text?h('p',{text}):null,field,h('div',{class:'acts'},no,ok)].filter(Boolean));d.append(f);document.body.append(d);
  let done=false;const finish=v=>{if(done)return;done=true;d.close();d.remove();res(v);};
  no.onclick=()=>finish(null);d.addEventListener('cancel',e=>{e.preventDefault();finish(null)});f.onsubmit=e=>{e.preventDefault();finish(field?field.value:true)};d.showModal();(field||ok).focus();if(field&&field.select)field.select();});}
 const confirmBox=(title,text,o)=>modal(Object.assign({title,text},o||{})).then(v=>v===true);
-async function copyText(text,label){try{await navigator.clipboard.writeText(text);toast(KT.copied.replace(/ · $/,'')+(label?' · '+label:''));}catch{await modal({title:KT.manual,text:KT.manual_tip,input:true,value:text,confirm:KT.ok});}}
+async function copyText(text,label){const s=String(text??'');try{await navigator.clipboard.writeText(s);toast(KT.copied.replace(/ · $/,'')+(label?' · '+label:''));}catch{await modal({title:KT.manual,text:KT.manual_tip,input:true,value:s,multiline:s.includes('\n'),confirm:KT.ok});}}
 
 /* ---------- animation loop ---------- */
 const Ticker={items:new Set(),running:false,
  add(o){this.items.add(o);this.start();return o;},remove(o){this.items.delete(o);},
  dirtyAll(){for(const o of this.items)o.dirty=true;this.start();},
  start(){if(this.running)return;this.running=true;requestAnimationFrame(t=>this.frame(t));},
- frame(t){if(document.hidden){this.running=false;return;}let again=false;for(const o of this.items){if(o.el&&!o.el.isConnected){this.items.delete(o);continue;}if(o.el&&o.el.offsetParent===null&&o.el.getClientRects().length===0)continue;if(o.tick(t))again=true;}
+ frame(t){if(document.hidden){this.running=false;return;}let again=false;for(const o of this.items){if(o.el&&!o.el.isConnected){if(o.destroy)o.destroy();this.items.delete(o);continue;}if(o.el&&o.el.offsetParent===null&&o.el.getClientRects().length===0)continue;if(o.tick(t))again=true;}
   if(again)requestAnimationFrame(x=>this.frame(x));else this.running=false;}};
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)Ticker.dirtyAll();});
 
@@ -120,7 +125,7 @@ function traceMonotone(ctx,p,move){const n=p.length;if(!n)return;if(move)ctx.mov
  for(let i=0;i<n-1;i++){const hx=(p[i+1][0]-p[i][0])/3;ctx.bezierCurveTo(p[i][0]+hx,p[i][1]+hx*m[i],p[i+1][0]-hx,p[i+1][1]-hx*m[i+1],p[i+1][0],p[i+1][1]);}}
 
 /* Server clock estimate so the live window lines up with sample timestamps. */
-const Clock={offset:null,seen(serverT){const o=serverT-Date.now()/1000;if(this.offset==null||o>this.offset)this.offset=o;},now(){return Date.now()/1000+(this.offset||0);}};
+const Clock={offset:null,seen(serverT){const o=serverT-Date.now()/1000;if(this.offset==null||Math.abs(o-this.offset)>5)this.offset=o;else this.offset+=0.25*(o-this.offset);},now(){return Date.now()/1000+(this.offset||0);}};
 
 /* Streaming chart: the time axis glides continuously; rendering trails real time by
    ~1.5 sample intervals so the newest segment is always already known (no jumps). */
@@ -128,7 +133,8 @@ class LiveChart{
  constructor(el,o){this.el=el;this.o=Object.assign({span:180,delay:7.5,axis:true,series:[{key:'down',color:'down',fill:true},{key:'up',color:'up',fill:false}],min:0.2,pad:[10,8,18,8],head:true},o||{});
   this.cv=h('canvas');el.append(this.cv);this.pts=[];this.ymax=null;this.last=0;this.dirty=true;
   if(this.o.tooltip!==false&&this.o.axis){this.tip=h('div',{class:'tip hide'});el.append(this.tip);el.addEventListener('pointermove',e=>{this.hover=e.offsetX;this.dirty=true;Ticker.start();});el.addEventListener('pointerleave',()=>{this.hover=null;this.tip.classList.add('hide');});}
-  new ResizeObserver(()=>{this.dirty=true;Ticker.start();}).observe(el);Ticker.add(this);}
+  this.ro=new ResizeObserver(()=>{this.dirty=true;Ticker.start();});this.ro.observe(el);Ticker.add(this);}
+ destroy(){if(this.ro){this.ro.disconnect();this.ro=null;}Ticker.remove(this);}
  push(points){let changed=false;for(const p of points){const t=+p.t;if(!isFinite(t))continue;const i=this.pts.findIndex(q=>Math.abs(q.t-t)<1);if(i>=0){this.pts[i]=p;}else{this.pts.push(p);changed=true;}}if(changed)this.pts.sort((a,b)=>a.t-b.t);const cut=Clock.now()-this.o.span-this.o.delay-30;while(this.pts.length>2&&this.pts[1].t<cut)this.pts.shift();this.dirty=true;Ticker.start();}
  reset(){this.pts=[];this.ymax=null;this.dirty=true;}
  tick(t){const live=this.pts.length>1;if(!live&&!this.dirty)return false;this.dirty=false;this.draw(t);return live;}
@@ -146,7 +152,7 @@ class LiveChart{
   ctx.restore();
   if(this.o.head&&vis.length>1){const s=this.o.series[0],col=P[s.color]||s.color;const last=vis[vis.length-1],prev=vis[vis.length-2];let hx,hy;if(last.t>right){const k=(right-prev.t)/((last.t-prev.t)||1);hx=X(right);hy=Y((prev[s.key]||0)+((last[s.key]||0)-(prev[s.key]||0))*k);}else{hx=X(last.t);hy=Y(last[s.key]||0);}
    const pulse=(Math.sin(t/300)+1)/2;ctx.fillStyle=alpha(col,.18+.12*pulse);ctx.beginPath();ctx.arc(hx,hy,6+3*pulse,0,7);ctx.fill();ctx.fillStyle=col;ctx.beginPath();ctx.arc(hx,hy,3,0,7);ctx.fill();}
-  if(this.tip){if(this.hover!=null&&vis.length){const tt=left+(this.hover-pl)/(w-pl-pr)*(right-left);let best=null;for(const p of vis)if(!best||Math.abs(p.t-tt)<Math.abs(best.t-tt))best=p;if(best&&best.t>=left&&best.t<=right){const x=X(best.t);ctx.strokeStyle=alpha(P.text,.35);ctx.beginPath();ctx.moveTo(x+.5,pt);ctx.lineTo(x+.5,h-pb);ctx.stroke();this.tip.classList.remove('hide');this.tip.style.left=x+'px';this.tip.style.top=Math.max(40,Y(best.down||0))+'px';this.tip.textContent=new Date((best.t-(Clock.offset||0))*1000).toLocaleTimeString(KT.locale,{hour12:false})+'　↓ '+fmt.mbps(best.down||0)+'  ↑ '+fmt.mbps(best.up||0)+' Mbps';}else this.tip.classList.add('hide');}}}}
+  if(this.tip){if(this.hover!=null&&vis.length){const tt=left+(this.hover-pl)/(w-pl-pr)*(right-left);let best=null;for(const p of vis)if(!best||Math.abs(p.t-tt)<Math.abs(best.t-tt))best=p;if(best&&best.t>=left&&best.t<=right){const x=X(best.t);ctx.strokeStyle=alpha(P.text,.35);ctx.beginPath();ctx.moveTo(x+.5,pt);ctx.lineTo(x+.5,h-pb);ctx.stroke();this.tip.textContent=new Date((best.t-(Clock.offset||0))*1000).toLocaleTimeString(KT.locale,{hour12:false})+(KT===KT_ZH?'　':'  ')+'↓ '+fmt.mbps(best.down||0)+'  ↑ '+fmt.mbps(best.up||0)+' Mbps';placeTip(this.tip,x,Math.max(40,Y(best.down||0)),w);}else this.tip.classList.add('hide');}}}}
 
 /* history entries from the API -> chart points in Mbps */
 const toPoints=hist=>(hist||[]).map(x=>({t:x.at,down:x.download_bps*8/1e6,up:x.upload_bps*8/1e6}));
@@ -155,7 +161,8 @@ const toPoints=hist=>(hist||[]).map(x=>({t:x.at,down:x.download_bps*8/1e6,up:x.u
 class DayBars{
  constructor(el,o){this.el=el;this.o=Object.assign({pad:[12,6,22,6],days:null},o||{});this.cv=h('canvas');this.tip=h('div',{class:'tip hide'});el.append(this.cv,this.tip);this.data=[];this.hover=null;this.grow=0;this.dirty=true;
   el.addEventListener('pointermove',e=>{this.hover=e.offsetX;this.dirty=true;Ticker.start();});el.addEventListener('pointerleave',()=>{this.hover=null;this.tip.classList.add('hide');this.dirty=true;Ticker.start();});
-  new ResizeObserver(()=>{this.dirty=true;Ticker.start();}).observe(el);Ticker.add(this);}
+  this.ro=new ResizeObserver(()=>{this.dirty=true;Ticker.start();});this.ro.observe(el);Ticker.add(this);}
+ destroy(){if(this.ro){this.ro.disconnect();this.ro=null;}Ticker.remove(this);}
  set(rows,days){this.data=rows||[];this.days=days||null;this.t0=performance.now();this.dirty=true;Ticker.start();}
  tick(t){const k=this.t0?Math.min(1,(t-this.t0)/700):1;if(!this.dirty&&k>=1)return false;this.dirty=false;this.draw(1-Math.pow(1-k,3));return k<1;}
  draw(k){const P=Palette.v,{ctx,w,h}=setupCanvas(this.cv),[pt,pr,pb,pl]=this.o.pad;ctx.clearRect(0,0,w,h);const rows=this.days?this.days.map(d=>this.data.find(r=>r.day===d)||{day:d,upload:0,download:0}):this.data;
@@ -166,11 +173,12 @@ class DayBars{
   rows.forEach((r,i)=>{const x=pl+slot*i+(slot-bw)/2,H=h-pt-pb,dh=H*r.download/max*k,uh=H*r.upload/max*k,y0=h-pb;const dim=hi>=0&&hi!==i;
    ctx.globalAlpha=dim?.4:1;ctx.fillStyle=P.down;rr(ctx,x,y0-dh,bw,dh,uh>1?0:3);ctx.fillStyle=P.up;rr(ctx,x,y0-dh-uh,bw,uh,3);ctx.globalAlpha=1;});
   ctx.fillStyle=P.muted;ctx.font='10.5px '+Palette.mono;ctx.textBaseline='top';const every=Math.ceil(n/(w/52));rows.forEach((r,i)=>{if(i%every&&i!==n-1)return;ctx.textAlign='center';ctx.fillText(r.day.slice(5).replace('-','/'),pl+slot*(i+.5),h-pb+5);});ctx.textAlign='left';
-  if(hi>=0){const r=rows[hi];this.tip.classList.remove('hide');this.tip.style.left=(pl+slot*(hi+.5))+'px';this.tip.style.top=Math.max(44,(h-pb-(h-pt-pb)*(r.upload+r.download)/max))+'px';this.tip.textContent=r.day+'　'+KT.total+' '+fmt.bytes(r.upload+r.download)+'\n↓ '+fmt.bytes(r.download)+'  ↑ '+fmt.bytes(r.upload);}}}
+  if(hi>=0){const r=rows[hi];this.tip.textContent=r.day+(KT===KT_ZH?'　':' · ')+KT.total+' '+fmt.bytes(r.upload+r.download)+'\n↓ '+fmt.bytes(r.download)+'  ↑ '+fmt.bytes(r.upload);placeTip(this.tip,pl+slot*(hi+.5),Math.max(44,(h-pb-(h-pt-pb)*(r.upload+r.download)/max)),w);}}}
 function rr(ctx,x,y,w,h,r){if(h<=0)return;r=Math.min(r,h,w/2);ctx.beginPath();ctx.moveTo(x,y+h);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h);ctx.closePath();ctx.fill();}
 
 /* Progress ring (canvas), animates between values. */
-class Ring{constructor(el,o){this.el=el;this.o=Object.assign({width:12},o||{});this.cv=h('canvas');el.append(this.cv);this.v=0;this.to=0;this.from=0;this.t0=0;this.color='down';this.dirty=true;new ResizeObserver(()=>{this.dirty=true;Ticker.start();}).observe(el);Ticker.add(this);}
+class Ring{constructor(el,o){this.el=el;this.o=Object.assign({width:12},o||{});this.cv=h('canvas');el.append(this.cv);this.v=0;this.to=0;this.from=0;this.t0=0;this.color='down';this.dirty=true;this.ro=new ResizeObserver(()=>{this.dirty=true;Ticker.start();});this.ro.observe(el);Ticker.add(this);}
+ destroy(){if(this.ro){this.ro.disconnect();this.ro=null;}Ticker.remove(this);}
  set(v,color){this.from=this.v;this.to=Math.max(0,Math.min(1,v));this.color=color||'down';this.t0=performance.now();this.dirty=true;Ticker.start();}
  tick(t){const k=Math.min(1,(t-this.t0)/900);if(!this.dirty&&k>=1)return false;this.dirty=false;this.v=this.from+(this.to-this.from)*(1-Math.pow(1-k,3));const P=Palette.v,{ctx,w,h}=setupCanvas(this.cv),r=Math.min(w,h)/2-this.o.width/2-2,cx=w/2,cy=h/2;ctx.clearRect(0,0,w,h);ctx.lineCap='round';ctx.lineWidth=this.o.width;ctx.strokeStyle=P['panel-3'];ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.stroke();
   if(this.v>0.001){const col=P[this.color]||this.color;const g=ctx.createConicGradient?ctx.createConicGradient(-Math.PI/2,cx,cy):null;if(g){g.addColorStop(0,alpha(col,.55));g.addColorStop(Math.max(.01,this.v),col);g.addColorStop(Math.min(1,this.v+.001),col);ctx.strokeStyle=g;}else ctx.strokeStyle=col;ctx.beginPath();ctx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+Math.PI*2*this.v);ctx.stroke();}return k<1;}}

@@ -17,6 +17,8 @@ CLIENT = VAR + '/client'               # vps2vpn app installers offered to membe
 XRAY_CONFIG = ETC + '/xray.json'
 HY2_CONFIG = ETC + '/hysteria.json'
 TUIC_CONFIG = ETC + '/tuic.json'
+NFT_FILE = ETC + '/nft-hop.nft'        # port-hopping rules, re-loaded at boot by NFT_UNIT
+NFT_UNIT = _root + '/etc/systemd/system/vps2vpn-nft.service'
 CERT_DIR = ETC + '/cert'
 SELF_CRT = CERT_DIR + '/self.crt'
 SELF_KEY = CERT_DIR + '/self.key'
@@ -24,6 +26,7 @@ ACME_CRT = CERT_DIR + '/acme.crt'
 ACME_KEY = CERT_DIR + '/acme.key'
 ACME_ACCOUNT = CERT_DIR + '/acme-account.key'
 SYSCTL_FILE = _root + '/etc/sysctl.d/99-vps2vpn.conf'
+MODULES_FILE = _root + '/etc/modules-load.d/vps2vpn.conf'
 
 XRAY_BIN = os.environ.get('VPS2VPN_XRAY', '/usr/local/lib/vps2vpn/xray')
 HY2_BIN = os.environ.get('VPS2VPN_HYSTERIA', '/usr/local/lib/vps2vpn/hysteria')
@@ -54,14 +57,18 @@ def write_atomic(path, data, mode=0o600, group=None):
     """Write a file so readers never see a half-written version."""
     if isinstance(data, str):
         data = data.encode()
-    parent = os.path.dirname(path) or '.'
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(path) + '.', suffix='.tmp', dir=parent)
     try:
+        try:
+            os.fchmod(fd, mode)
+        except AttributeError:
+            os.chmod(tmp, mode)
         with os.fdopen(fd, 'wb') as f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.chmod(tmp, mode)
         if group and LIVE:
             import grp
             try:

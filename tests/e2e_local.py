@@ -46,26 +46,39 @@ results = []
 
 
 def free_port(udp=False):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM if udp else socket.SOCK_STREAM)
-    s.bind(('127.0.0.1', 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM if udp else socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
 
 
 def start(cmd, name, env=None):
-    log = open(os.path.join(ROOT, name + '.log'), 'w')
-    p = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, **(env or {})), cwd=ROOT)
+    with open(os.path.join(ROOT, name + '.log'), 'w') as log:
+        p = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, **(env or {})), cwd=ROOT)
     procs.append(p)
     return p
+
+
+def stop(p):
+    if p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait(5)
+
+
+def last_line(text, limit=160):
+    lines = text.strip().splitlines()
+    return lines[-1][:limit] if lines else ''
 
 
 def wait_port(port, timeout=15):
     end = time.time() + timeout
     while time.time() < end:
         try:
-            socket.create_connection(('127.0.0.1', port), timeout=1).close()
-            return True
+            with socket.create_connection(('127.0.0.1', port), timeout=1):
+                return True
         except OSError:
             time.sleep(0.2)
     return False
@@ -75,18 +88,21 @@ def fetch_via(port):
     proxy = urllib.request.ProxyHandler({'http': 'http://127.0.0.1:%d' % port, 'https': 'http://127.0.0.1:%d' % port})
     opener = urllib.request.build_opener(proxy)
     t0 = time.time()
-    body = opener.open(TARGET, timeout=20).read()
+    with opener.open(TARGET, timeout=20) as resp:
+        body = resp.read()
     return len(body), int((time.time() - t0) * 1000)
 
 
 def check(name, ok, detail=''):
+    detail = str(detail) if detail else ''
     results.append((name, ok, detail))
     print(('PASS ' if ok else 'FAIL ') + name + ('  ' + detail if detail else ''), flush=True)
 
 
 def tail(name, n=8):
     try:
-        return ' | '.join(open(os.path.join(ROOT, name + '.log'), errors='replace').read().strip().splitlines()[-n:])
+        with open(os.path.join(ROOT, name + '.log'), errors='replace') as f:
+            return ' | '.join(f.read().strip().splitlines()[-n:])
     except OSError:
         return ''
 
@@ -95,7 +111,7 @@ def main():
     db.ensure_secrets()
     port = free_port()
     db.set_settings(public_host='127.0.0.1', reality_port=port, hy2_port=port, hy2_hop=False, reality_target=os.environ.get('V2V_E2E_TARGET', 'www.taobao.com'),  # must be reachable from this machine
-                   
+
                     traffic_api_port=free_port(), hy2_stats_port=free_port(), panel_port=free_port(), setup_done=True,
                     tuic_port=free_port(udp=True), tuic_api_port=free_port())
     certs.ensure_self_signed('127.0.0.1')
@@ -118,13 +134,13 @@ def main():
     check('sing-box accepts the TUIC server config', r.returncode == 0, (r.stdout + r.stderr).strip()[-160:])
     env = {'XRAY_LOCATION_ASSET': ASSETS}
     r = subprocess.run([XRAY, 'run', '-test', '-c', paths.XRAY_CONFIG], capture_output=True, text=True, env=dict(os.environ, **env))
-    check('xray accepts the server config', r.returncode == 0, (r.stdout + r.stderr).strip().splitlines()[-1][:160])
+    check('xray accepts the server config', r.returncode == 0, last_line(r.stdout + r.stderr, 160))
     # the scratch file the panel validates before replacing a live config (its name must stay readable by Xray)
     test = cores.check_path(paths.XRAY_CONFIG)
     shutil.copy(paths.XRAY_CONFIG, test)
     r = subprocess.run([XRAY, 'run', '-test', '-c', test], capture_output=True, text=True, env=dict(os.environ, **env))
     os.unlink(test)
-    check('xray accepts the pre-apply check file', r.returncode == 0, (r.stdout + r.stderr).strip().splitlines()[-1][:160])
+    check('xray accepts the pre-apply check file', r.returncode == 0, last_line(r.stdout + r.stderr, 160))
     test = cores.check_path(paths.TUIC_CONFIG)
     shutil.copy(paths.TUIC_CONFIG, test)
     r = subprocess.run([SINGBOX, 'check', '-c', test], capture_output=True, text=True)
@@ -150,12 +166,12 @@ def main():
     with open(os.path.join(cdir, 'full.yaml'), 'w', encoding='utf-8') as f:
         f.write(subscription.clash_yaml(s, u, base))
     r = subprocess.run([MIHOMO, '-t', '-d', cdir, '-f', os.path.join(cdir, 'full.yaml')], capture_output=True, text=True, timeout=120)
-    check('mihomo -t accepts the full Clash subscription', r.returncode == 0, (r.stdout + r.stderr).strip().splitlines()[-1][:200])
+    check('mihomo -t accepts the full Clash subscription', r.returncode == 0, last_line(r.stdout + r.stderr, 200))
     hop = dict(s, hy2_hop=True)
     with open(os.path.join(cdir, 'hop.yaml'), 'w', encoding='utf-8') as f:
         f.write(subscription.clash_yaml(hop, u, base))
     r = subprocess.run([MIHOMO, '-t', '-d', cdir, '-f', os.path.join(cdir, 'hop.yaml')], capture_output=True, text=True, timeout=120)
-    check('mihomo -t accepts port hopping + obfs-free config', r.returncode == 0, (r.stdout + r.stderr).strip().splitlines()[-1][:200])
+    check('mihomo -t accepts port hopping + obfs-free config', r.returncode == 0, last_line(r.stdout + r.stderr, 200))
     sbf = os.path.join(ROOT, 'singbox-full.json')
     with open(sbf, 'w', encoding='utf-8') as f:
         json.dump(sb, f, ensure_ascii=False)
@@ -183,7 +199,7 @@ def main():
             check('mihomo -> %s -> internet' % p['type'], n > 100, '%d bytes in %d ms' % (n, ms))
         except Exception as e:
             check('mihomo -> %s -> internet' % p['type'], False, '%s | %s' % (e, tail('mihomo-' + p['type'], 4)))
-        pr.terminate()
+        stop(pr)
     for o in [x for x in sb['outbounds'] if x['type'] in ('vless', 'hysteria2', 'tuic')]:
         sport = free_port()
         conf = {'log': {'level': 'warn'}, 'inbounds': [{'type': 'mixed', 'listen': '127.0.0.1', 'listen_port': sport}],
@@ -198,7 +214,7 @@ def main():
             check('sing-box -> %s -> internet' % o['type'], n > 100, '%d bytes in %d ms' % (n, ms))
         except Exception as e:
             check('sing-box -> %s -> internet' % o['type'], False, '%s | %s' % (e, tail('singbox-' + o['type'], 4)))
-        pr.terminate()
+        stop(pr)
 
     # --- traffic accounting from both cores
     paths.XRAY_BIN = XRAY
@@ -209,21 +225,24 @@ def main():
     # TUIC alone, on a fresh meter: a short connection that opens and closes between two readings
     m = cores.TuicMeter()
     m.collect(s)
-    pr = start([SINGBOX, 'run', '-c', os.path.join(ROOT, 'sb-tuic.json')], 'singbox-tuic2')
-    wait_port(json.load(open(os.path.join(ROOT, 'sb-tuic.json')))['inbounds'][0]['listen_port'])
-    n, _ = fetch_via(json.load(open(os.path.join(ROOT, 'sb-tuic.json')))['inbounds'][0]['listen_port'])
-    pr.terminate()
+    tuic_cfg = os.path.join(ROOT, 'sb-tuic.json')
+    with open(tuic_cfg, encoding='utf-8') as fh:
+        tuic_port = json.load(fh)['inbounds'][0]['listen_port']
+    pr = start([SINGBOX, 'run', '-c', tuic_cfg], 'singbox-tuic2')
+    wait_port(tuic_port)
+    n, _ = fetch_via(tuic_port)
+    stop(pr)
     tu, td = m.collect(s, users={uid}).get(uid, (0, 0))
     check('TUIC traffic attributed to the right user', td >= n * 0.9, 'fetched %d B, counted down %d B, up %d B' % (n, td, tu))
 
     # --- who is online, from the cores themselves: hold one tunnel open through each protocol
     held, clients = [], []
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    probe.connect(('192.0.2.1', 9))               # no packet sent: just picks this machine's LAN address
-    lan = probe.getsockname()[0]
-    probe.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect(('192.0.2.1', 9))               # no packet sent: just picks this machine's LAN address
+        lan = probe.getsockname()[0]
     for kind in ('vless', 'hysteria2', 'tuic'):
-        cf = json.load(open(os.path.join(ROOT, 'sb-%s.json' % kind)))
+        with open(os.path.join(ROOT, 'sb-%s.json' % kind), encoding='utf-8') as fh:
+            cf = json.load(fh)
         if kind == 'vless':                       # Xray leaves 127.0.0.1 out of its online list on purpose
             cf['outbounds'][0]['server'] = lan
         cport = free_port()
@@ -250,7 +269,7 @@ def main():
     for sk in held:
         sk.close()
     for pr in clients:
-        pr.terminate()
+        stop(pr)
 
     # --- Shadowrocket: real rule list converted, config renders for this server
     try:
@@ -281,7 +300,7 @@ def main():
         check('wrong Hysteria password is refused', False)
     except Exception:
         check('wrong Hysteria password is refused', True)
-    pr.terminate()
+    stop(pr)
 
     # --- the benchmark tool runs end to end through both protocols
     if os.environ.get('V2V_E2E_BENCH', '1') == '1':
@@ -298,13 +317,18 @@ def main():
             ok = len(res) == len(clash['proxies']) and all(v['latency']['median'] and v['down_1'] > 0 for v in res.values())
         except (OSError, ValueError, KeyError):
             ok, res = False, None
-        check('tools/bench.py measures every protocol', ok, (r.stdout.strip().splitlines() or [r.stderr[-200:]])[-4:] if not ok else
-              '; '.join('%s %sms %sMb' % (k.split()[-1], v['latency']['median'], v['down_4']) for k, v in res.items()))
+        detail = ' | '.join((r.stdout.strip().splitlines() or [r.stderr[-200:]])[-4:]) if not ok else \
+            '; '.join('%s %sms %sMb' % (k.split()[-1], v['latency']['median'], v['down_4']) for k, v in res.items())
+        check('tools/bench.py measures every protocol', ok, detail)
 
 
 if __name__ == '__main__':
+    crashed = False
     try:
         main()
+    except BaseException:
+        crashed = True
+        raise
     finally:
         for p in procs:
             if p.poll() is None:
@@ -314,11 +338,12 @@ if __name__ == '__main__':
                 p.wait(5)
             except subprocess.TimeoutExpired:
                 p.kill()
+                p.wait(5)
         db.close()
         failed = [r for r in results if not r[1]]
         print('\n%d passed, %d failed' % (len(results) - len(failed), len(failed)))
-        if failed:
+        if failed or crashed:
             print('logs kept in', ROOT)
         else:
             shutil.rmtree(ROOT, ignore_errors=True)
-        sys.exit(1 if failed else 0)
+    sys.exit(1 if failed else 0)

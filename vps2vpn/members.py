@@ -60,18 +60,42 @@ def _active(u, now):
 
 def deducting(u, now=None):
     """Is this account currently charged to the person who invited it?"""
-    now = now or time.time()
-    not_expired = not (u['expire_at'] and u['expire_at'] <= now)
-    # Keep quota-exhausted invitees charged so their spent quota cannot be recycled infinitely.
-    charged = bool(u['enabled']) or u.get('disabled_reason') == 'quota'
-    return bool(u.get('invited_by')) and u.get('invite_deduct', 0) > 0 and charged and not_expired
+    now = time.time() if now is None else now
+    if not u.get('invited_by') or u.get('invite_deduct', 0) <= 0:
+        return False
+    if u['expire_at'] and u['expire_at'] <= now:
+        return False
+    # Keep quota-exhausted and device-paused invitees charged so their quota cannot be recycled.
+    return bool(u['enabled']) or u.get('disabled_reason') in ('quota', 'devices')
+
+
+def _given_away(uid, by_inviter, now, seen):
+    if uid in seen:
+        return 0.0
+    seen.add(uid)
+    total = 0.0
+    for u in by_inviter.get(uid, ()):
+        ded = u.get('invite_deduct', 0)
+        if ded <= 0:
+            continue
+        if deducting(u, now):
+            total += ded
+        else:
+            sub = _given_away(u['id'], by_inviter, now, seen)
+            if sub > 0:
+                total += min(ded, sub)
+    return total
 
 
 def given_away(uid, users=None, now=None):
     """GB this user currently shares with accounts they invited."""
-    now = now or time.time()
-    return sum(u['invite_deduct'] for u in (users if users is not None else db.users())
-               if u.get('invited_by') == uid and deducting(u, now))
+    now = time.time() if now is None else now
+    all_users = users if users is not None else db.users()
+    by_inviter = {}
+    for u in all_users:
+        if u.get('invited_by'):
+            by_inviter.setdefault(u['invited_by'], []).append(u)
+    return _given_away(uid, by_inviter, now, set())
 
 
 def effective_quota(u, users=None, now=None):
@@ -87,22 +111,61 @@ def _live(inv, now):
 
 def reserved(uid, now=None):
     """GB promised by this member's still-usable codes (quota x remaining uses)."""
-    now = now or time.time()
+    now = time.time() if now is None else now
     return sum(i['quota_gb'] * (i['max_uses'] - i['uses'])
                for i in db.member_live_invites(uid, now) if i['kind'] == 'member')
 
 
-def _room(u, now):
+def _room(u, now, keep=MIN_KEEP_GB):
+    """GB left after shares, live reservations, traffic already used and `keep` GB of headroom.
+
+    New grants use keep=MIN_KEEP_GB (the inviter keeps 1 GB usable on top of what they used).
+    Redeeming an already-reserved code uses keep=0: spending the kept 1 GB must not void it;
+    only an inviter who is actually over quota (or whose quota was lowered) voids codes.
+    """
     if not u['quota_gb']:
         return None
-    used_gb = (u.get('used_up', 0) + u.get('used_down', 0)) / (1024 ** 3)
-    return u['quota_gb'] - used_gb - given_away(u['id'], None, now) - reserved(u['id'], now) - MIN_KEEP_GB
+    used_gb = (u.get('used_up', 0) + u.get('used_down', 0)) / (1 << 30)
+    return u['quota_gb'] - given_away(u['id'], None, now) - reserved(u['id'], now) - used_gb - keep
 
 
 def capacity(u, now=None):
     """Largest total GB this member may still share; None = not allowed (unlimited account)."""
-    room = _room(u, now or time.time())
+    room = _room(u, time.time() if now is None else now)
     return None if room is None else max(0.0, round(room, 3))
+
+
+def propagate_lifetime(uid, new_expire_at, new_reset_day=None):
+    """Propagate expiry (and optionally reset_day) to all descendants carved from uid."""
+    fields = {}
+    if new_expire_at is not None:
+        fields['expire_at'] = int(new_expire_at)
+        if int(new_expire_at):
+            fields['expire_after_days'] = 0
+    if new_reset_day is not None:
+        fields['reset_day'] = int(new_reset_day)
+    if not fields:
+        return []
+    updated = []
+    with db.transaction():
+        by_inviter = {}
+        for u in db.users():
+            if u.get('invited_by'):
+                by_inviter.setdefault(u['invited_by'], []).append(u)
+        queue = [uid]
+        visited = {uid}
+        while queue:
+            cur = queue.pop(0)
+            for child in by_inviter.get(cur, ()):
+                cid = child['id']
+                if cid in visited:
+                    continue
+                visited.add(cid)
+                if child.get('invite_deduct', 0) > 0:
+                    db.update_user(cid, **fields)
+                    updated.append(cid)
+                    queue.append(cid)
+    return updated
 
 
 def _num(v, low, high, label, integer=False):
@@ -120,7 +183,7 @@ def _num(v, low, high, label, integer=False):
 @_serial
 def create_invite(kind, quota_gb, valid_days, max_uses=1, inviter=0, expire_days=0, reset_day=0, note='',
                   by_member=False, now=None):
-    now = now or time.time()
+    now = time.time() if now is None else now
     note = str(note or '').strip()
     if len(note) > 100 or any(ord(c) < 32 for c in note):
         raise Refused('note: at most 100 characters')
@@ -187,7 +250,7 @@ def check_password(pw):
 @_serial
 def register(code, name, password, now=None):
     """Use an invite code to create an account with a member-centre login. Returns the new user id."""
-    now = now or time.time()
+    now = time.time() if now is None else now
     inv = db.invite_by_code(normalize(code))
     if not inv or not _live(inv, now):
         raise Refused('invite code is wrong, used up or expired')
@@ -199,8 +262,8 @@ def register(code, name, password, now=None):
         if not inviter or not _active(inviter, now):
             raise Refused('the person who invited you can no longer invite; the code is void')
         # This use is already counted in `reserved`; turning it into a deduction is neutral, so the books
-        # still balance unless the inviter's quota was lowered in the meantime.
-        room = _room(inviter, now)
+        # still balance unless the inviter's quota was lowered or burned past their kept allowance.
+        room = _room(inviter, now, keep=0.0)
         if room is None or room < -1e-9:
             raise Refused("the inviter's quota has run short; the code is void")
         fields.update(invited_by=inviter['id'], invite_deduct=inv['quota_gb'])
@@ -208,11 +271,12 @@ def register(code, name, password, now=None):
     else:
         expire_at = int(now + inv['expire_days'] * 86400) if inv['expire_days'] else 0
     note = 'invite %s' % inv['code'] + (' · ' + inv['note'] if inv['note'] else '')
-    uid = db.add_user(name, inv['quota_gb'], expire_at, inv['reset_day'], note[:200], **fields)
-    used = [x for x in inv['used_by'].split(',') if x] + [str(uid)]
-    db.update_invite(inv['id'], uses=inv['uses'] + 1, used_by=','.join(used),
-                     status='used' if inv['uses'] + 1 >= inv['max_uses'] else 'unused')
-    db.add_event('register', uid, '%s via %s' % (name, inv['code']))
+    with db.transaction():
+        uid = db.add_user(name, inv['quota_gb'], expire_at, inv['reset_day'], note[:200], **fields)
+        used = [x for x in inv['used_by'].split(',') if x] + [str(uid)]
+        db.update_invite(inv['id'], uses=inv['uses'] + 1, used_by=','.join(used),
+                         status='used' if inv['uses'] + 1 >= inv['max_uses'] else 'unused')
+        db.add_event('register', uid, '%s via %s' % (name, inv['code']))
     return uid
 
 
@@ -252,11 +316,13 @@ def decide(rid, approve, add_gb=None, answer=''):
         raise Refused('the account no longer exists')
     answer = str(answer or '')[:200]
     if not approve:
-        db.decide_request(rid, 'rejected', answer)
+        with db.transaction():
+            db.decide_request(rid, 'rejected', answer)
         return
     gb = r['add_gb'] if add_gb in (None, '') else _num(add_gb, 0.1, 100000, 'extra quota (GB)')
-    if u['quota_gb']:                         # unlimited stays unlimited
-        db.update_user(u['id'], quota_gb=u['quota_gb'] + gb)
-    if u['disabled_reason'] == 'quota':
-        db.update_user(u['id'], enabled=1, disabled_reason='')
-    db.decide_request(rid, 'approved', answer, gb)
+    with db.transaction():
+        if u['quota_gb']:                         # unlimited stays unlimited
+            db.update_user(u['id'], quota_gb=u['quota_gb'] + gb)
+        if u['disabled_reason'] == 'quota':
+            db.update_user(u['id'], enabled=1, disabled_reason='')
+        db.decide_request(rid, 'approved', answer, gb)

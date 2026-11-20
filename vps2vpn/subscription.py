@@ -228,6 +228,8 @@ def clash(s, u, base_url):
             'respect-rules': True,
             'default-nameserver': ['223.5.5.5', '119.29.29.29'],
             'proxy-server-nameserver': cn_dns,
+            # with respect-rules, names whose traffic goes DIRECT are resolved here instead of through the proxy
+            'direct-nameserver': cn_dns,
             # Foreign lookups go through the proxy, so neither the ISP nor a Chinese resolver sees them.
             'nameserver': ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
             'nameserver-policy': ns_policy,
@@ -252,13 +254,16 @@ def singbox(s, u, base_url):
     ns = nodes(s, u)
     for n in ns:
         if n['type'] == 'hy2':
-            o = {'type': 'hysteria2', 'tag': n['name'], 'server': n['server'], 'server_port': n['port'],
+            o = {'type': 'hysteria2', 'tag': n['name'], 'server': n['server'],
                  'password': n['password'], 'tls': {'enabled': True, 'server_name': n['sni'], 'alpn': ['h3']}}
             if n.get('pem'):
                 o['tls']['certificate'] = n['pem'].strip().splitlines()
             if n.get('hop'):
+                # sing-box uses either server_port or server_ports; with both it ignores the hopping range
                 o['server_ports'] = [n['hop'].replace('-', ':')]
                 o['hop_interval'] = '30s'
+            else:
+                o['server_port'] = n['port']
             if n.get('obfs'):
                 o['obfs'] = {'type': 'salamander', 'password': n['obfs']}
         elif n['type'] == 'tuic':
@@ -430,7 +435,8 @@ def shadowrocket(s, u, base_url, sub_url=''):
         'bypass-system = true',
         'skip-proxy = 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 100.64.0.0/10, 127.0.0.1, localhost, *.local, captive.apple.com',
         'tun-excluded-routes = 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, '
-        '192.0.2.0/24, 192.88.99.0/24, 192.168.0.0/16, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 255.255.255.255/32',
+        '192.0.2.0/24, 192.88.99.0/24, 192.168.0.0/16, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 255.255.255.255/32, '
+        'fc00::/7, fe80::/10, ff00::/8, ::1/128',
         # Chinese resolvers only see Chinese names: foreign names are sent to the proxy unresolved.
         'dns-server = https://223.5.5.5/dns-query, https://1.12.12.12/dns-query',
         'fallback-dns-server = system',
@@ -467,15 +473,16 @@ def detect_format(ua, wanted=''):
 
 def render(fmt, s, u, base_url):
     """(content_type, body, extra_headers)"""
+    qname = urllib.parse.quote(s['node_name'] or 'vps2vpn', safe='')
     headers = {'Subscription-Userinfo': userinfo_header(u), 'Profile-Update-Interval': '12',
-               'Content-Disposition': "attachment; filename*=UTF-8''%s" % urllib.parse.quote(s['node_name'] or 'vps2vpn'),
+               'Content-Disposition': "attachment; filename*=UTF-8''%s" % qname,
                'Cache-Control': 'no-store'}
     if fmt == 'clash':
         return 'text/yaml; charset=utf-8', clash_yaml(s, u, base_url), headers
     if fmt == 'singbox':
         return 'application/json; charset=utf-8', json.dumps(singbox(s, u, base_url), ensure_ascii=False, indent=1), headers
     if fmt == 'shadowrocket':
-        headers['Content-Disposition'] = "attachment; filename*=UTF-8''%s.conf" % urllib.parse.quote(s['node_name'] or 'vps2vpn')
+        headers['Content-Disposition'] = "attachment; filename*=UTF-8''%s.conf" % qname
         return 'text/plain; charset=utf-8', shadowrocket(s, u, base_url, '%s/s/%s' % (base_url, u['sub_token'])), headers
     return 'text/plain; charset=utf-8', links_base64(s, u), headers
 
@@ -489,8 +496,8 @@ def import_links(sub_url, name):
         'clash': 'clash://install-config?url=%s&name=%s' % (urllib.parse.quote(sub_url + '?format=clash', safe=''), qn),
         'shadowrocket': 'shadowrocket://add/sub://%s?remark=%s' % (b64, qn),
         # the full config (nodes + routing + DNS), not just a node list
-        'shadowrocket_conf': 'shadowrocket://config/add/%s' % (sub_url + '?format=shadowrocket'),
+        'shadowrocket_conf': 'shadowrocket://config/add/%s' % urllib.parse.quote(sub_url + '?format=shadowrocket', safe=''),
         'singbox': 'sing-box://import-remote-profile?url=%s#%s' % (urllib.parse.quote(sub_url + '?format=singbox', safe=''), qn),
-        'hiddify': 'hiddify://import/%s#%s' % (sub_url + '?format=singbox', qn),
+        'hiddify': 'hiddify://import/%s#%s' % (urllib.parse.quote(sub_url + '?format=singbox', safe=''), qn),
         'v2rayng': 'v2rayng://install-sub?url=%s&name=%s' % (q, qn),
     }

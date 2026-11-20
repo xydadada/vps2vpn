@@ -36,10 +36,19 @@ import webbrowser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-WORK = tempfile.mkdtemp(prefix='vps2vpn-deploy-')
+WORK = None
 TOKEN = secrets.token_urlsafe(16)          # only the browser tab we open can use this local page
 RECORDS = os.environ.get('V2V_RECORDS') or os.path.join(os.path.expanduser('~'), 'vps2vpn')
 JOBS = {}
+
+
+def work_dir():
+    """Lazily create the temporary work directory on first use (never at import time)."""
+    global WORK
+    if not WORK or not os.path.isdir(WORK):
+        WORK = tempfile.mkdtemp(prefix='vps2vpn-deploy-')
+        restrict(WORK)
+    return WORK
 
 
 def package():
@@ -81,16 +90,51 @@ def load_records():
     return out
 
 
+LINK_SCHEMES = ('vps2vpn', 'clash', 'hiddify', 'sing-box', 'shadowrocket')
+DEFAULT_SAFE_SCHEMES = ('https', 'http') + LINK_SCHEMES
+
+
+def safe_url(url, schemes=None, host=None):
+    """Validate a URL before opening or requesting it."""
+    if schemes is None:
+        schemes = DEFAULT_SAFE_SCHEMES
+    if not isinstance(url, str) or not url or url.startswith('-'):
+        return ''
+    if any(ord(ch) <= 32 or ord(ch) == 127 for ch in url):
+        return ''
+    try:
+        u = urllib.parse.urlsplit(url)
+    except ValueError:
+        return ''
+    if u.scheme.lower() not in schemes:
+        return ''
+    if u.scheme.lower() in ('http', 'https') and not u.hostname:
+        return ''
+    if host and u.hostname and u.hostname.lower() != host.lower():
+        return ''
+    return url
+
+
 def save_record(host, rec):
     os.makedirs(RECORDS, exist_ok=True)
     restrict(RECORDS)
     p = record_path(host)
-    tmp = p + '.tmp'
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
-        json.dump(rec, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, p)
-    restrict(p)
+    fd, tmp = tempfile.mkstemp(dir=RECORDS, prefix='.tmp-')
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+        except AttributeError:
+            pass
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(rec, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, p)
+        restrict(p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return p
 
 
@@ -100,6 +144,14 @@ def merge_record(job, res):
     rec = load_record(job['host'])
     rec.update({k: a[k] for k in ('panel', 'pin', 'join_code', 'name', 'user', 'sub_url', 'qr_url', 'links', 'checks', 'ai')
                 if a.get(k) is not None})
+    if rec.get('panel'):
+        rec['panel'] = safe_url(rec['panel'], ('https',))
+    if rec.get('sub_url'):
+        rec['sub_url'] = safe_url(rec['sub_url'], ('http', 'https'))
+    if rec.get('qr_url'):
+        rec['qr_url'] = safe_url(rec['qr_url'], ('http', 'https'))
+    if isinstance(rec.get('links'), dict):
+        rec['links'] = {k: v for k, v in rec['links'].items() if safe_url(v, LINK_SCHEMES)}
     if a.get('admin_password'):
         rec.update(admin_user=a.get('admin_user', 'admin'), admin_password=a['admin_password'])
     rec.update(host=job['host'], ssh_user=job['user'], ssh_port=job['port'], cloud=res.get('cloud', ''),
@@ -122,25 +174,47 @@ def quic_probe(host, port, timeout=3.0):
     so an answer proves the UDP port is open all the way through the cloud firewall."""
     pkt = bytes([0xC3]) + b'\x1a\x2a\x3a\x4a' + b'\x08' + os.urandom(8) + b'\x08' + os.urandom(8)
     pkt += b'\x00' * (1200 - len(pkt))
-    fam = socket.AF_INET6 if ':' in host else socket.AF_INET
-    with socket.socket(fam, socket.SOCK_DGRAM) as s:
-        s.settimeout(timeout)
-        for _ in range(2):
-            try:
-                s.sendto(pkt, (host, int(port)))
-                d, _ = s.recvfrom(2048)
-                if len(d) >= 7 and d[0] & 0x80 and d[1:5] == b'\0\0\0\0':
-                    return True
-            except socket.timeout:
-                continue
-            except OSError:
-                return False
+    try:
+        infos = socket.getaddrinfo(host, int(port), 0, socket.SOCK_DGRAM)
+    except (OSError, ValueError):
+        return False
+    for fam, socktype, proto, _, addr in infos:
+        try:
+            with socket.socket(fam, socktype, proto) as s:
+                s.settimeout(timeout)
+                for _ in range(2):
+                    try:
+                        s.sendto(pkt, addr)
+                        d, _ = s.recvfrom(2048)
+                        if len(d) >= 7 and d[0] & 0x80 and d[1:5] == b'\0\0\0\0':
+                            return True
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        break
+        except OSError:
+            continue
     return False
 
 
 def check_ports(host, checks, tries=3):
     """[{proto, port, name, ok}]. Retries a few times: the services were only just started."""
-    out = [{'proto': c[0], 'port': int(c[1]), 'name': c[2], 'ok': False} for c in checks]
+    out = []
+    for c in checks or []:
+        if not isinstance(c, (list, tuple)) or len(c) < 3:
+            continue
+        proto = str(c[0]).lower()
+        if proto not in ('tcp', 'udp'):
+            continue
+        try:
+            port = int(c[1])
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= port <= 65535:
+            continue
+        out.append({'proto': proto, 'port': port, 'name': str(c[2]), 'ok': False})
+    if not out:
+        return out
     for i in range(tries):
         todo = [c for c in out if not c['ok']]
         threads = []
@@ -160,13 +234,13 @@ def check_ports(host, checks, tries=3):
 
 
 # --- the VPN app on this computer ----------------------------------------------------------
-CLIENTS = [('clash-verge', 'Clash Verge'), ('clash verge', 'Clash Verge'), ('flclash', 'FlClash'), ('mihomo', 'Mihomo Party'),
-           ('nyanpasu', 'Clash Nyanpasu'), ('clash for windows', 'Clash for Windows'), ('clashx', 'ClashX'),
-           ('stash', 'Stash'), ('hiddify', 'Hiddify'), ('sing-box', 'sing-box')]
-LINK_FOR = {'clash': 'clash', 'hiddify': 'hiddify', 'sing-box': 'singbox'}
-MAC_APPS = [('Clash Verge.app', 'clash'), ('FlClash.app', 'clash'), ('Mihomo Party.app', 'clash'), ('Clash Nyanpasu.app', 'clash'),
-            ('ClashX Meta.app', 'clash'), ('ClashX.app', 'clash'), ('Stash.app', 'clash'), ('Hiddify.app', 'hiddify'),
-            ('SFM.app', 'sing-box')]
+CLIENTS = [('vps2vpn', 'vps2vpn'), ('clash-verge', 'Clash Verge'), ('clash verge', 'Clash Verge'), ('flclash', 'FlClash'),
+           ('mihomo', 'Mihomo Party'), ('nyanpasu', 'Clash Nyanpasu'), ('clash for windows', 'Clash for Windows'),
+           ('clashx', 'ClashX'), ('stash', 'Stash'), ('hiddify', 'Hiddify'), ('sing-box', 'sing-box')]
+LINK_FOR = {'vps2vpn': 'vps2vpn', 'clash': 'clash', 'hiddify': 'hiddify', 'sing-box': 'singbox'}
+MAC_APPS = [('vps2vpn.app', 'vps2vpn'), ('Clash Verge.app', 'clash'), ('FlClash.app', 'clash'), ('Mihomo Party.app', 'clash'),
+            ('Clash Nyanpasu.app', 'clash'), ('ClashX Meta.app', 'clash'), ('ClashX.app', 'clash'), ('Stash.app', 'clash'),
+            ('Hiddify.app', 'hiddify'), ('SFM.app', 'sing-box')]
 CLIENT_DOWNLOAD = 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest'
 
 
@@ -179,10 +253,10 @@ def client_name(path):
 
 
 def detect_client():
-    """Which installed app opens clash:// (or hiddify:// / sing-box://) links. Read-only. {'name', 'link'} or None."""
+    """Which installed app opens vps2vpn:// or clash:// (or hiddify:// / sing-box://) links. Read-only. {'name', 'link'} or None."""
     if os.name == 'nt':
         import winreg
-        for scheme in ('clash', 'hiddify', 'sing-box'):
+        for scheme in ('vps2vpn', 'clash', 'hiddify', 'sing-box'):
             for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
                 try:
                     with winreg.OpenKey(root, r'Software\Classes\%s\shell\open\command' % scheme) as k:
@@ -199,7 +273,7 @@ def detect_client():
                 if os.path.isdir(os.path.join(d, app)):
                     return {'name': app[:-4], 'link': LINK_FOR[scheme]}
         return None
-    for scheme in ('clash', 'hiddify', 'sing-box'):
+    for scheme in ('vps2vpn', 'clash', 'hiddify', 'sing-box'):
         try:
             r = subprocess.run(['xdg-mime', 'query', 'default', 'x-scheme-handler/' + scheme], capture_output=True,
                                text=True, timeout=5)
@@ -210,7 +284,10 @@ def detect_client():
     return None
 
 
-def open_link(url):
+def open_link(url, schemes=LINK_SCHEMES):
+    url = safe_url(url, schemes)
+    if not url:
+        raise ValueError('unsafe url')
     if os.name == 'nt':
         os.startfile(url)
     else:
@@ -228,10 +305,15 @@ def auto_import(job):
         return
     if job.get('no_import'):
         return
+    links = rec.get('links') or {}
+    raw = links.get(c['link']) or (links.get('clash') if c['link'] == 'vps2vpn' else '')
+    link = safe_url(raw, LINK_SCHEMES)
+    if not link:
+        return
     try:
-        open_link(rec['links'][c['link']])
+        open_link(link, LINK_SCHEMES)
         job['imported'] = True
-    except (OSError, KeyError):
+    except (OSError, ValueError, KeyError):
         pass
 
 
@@ -243,7 +325,10 @@ class PanelError(RuntimeError):
 def panel_call(rec, path, body, cookie=''):
     """POST to a saved server's panel API over HTTPS. The certificate must be the one saved when it was
     deployed, or one any browser trusts (it may have switched to Let's Encrypt since)."""
-    url = urllib.parse.urlsplit(rec['panel'])
+    panel = safe_url(rec.get('panel'), ('https',))
+    if not panel:
+        raise PanelError('主服务器的面板地址无效。')
+    url = urllib.parse.urlsplit(panel)
     attempts = ('pin', 'public') if rec.get('pin') else ('public',)
     for attempt in attempts:
         ctx = ssl.create_default_context()
@@ -294,7 +379,9 @@ def join_main(main, rec, name):
 
 # --- ssh ---------------------------------------------------------------------------------------
 def ssh_base(job):
-    kh = os.path.join(WORK, 'known_hosts')     # our own file: never touches ~/.ssh
+    os.makedirs(RECORDS, exist_ok=True)
+    restrict(RECORDS)
+    kh = os.path.join(RECORDS, 'known_hosts')     # persisted per user, separate from ~/.ssh
     # -F none: ignore the user's own ssh config (it may route through proxies or have bad permissions)
     cmd = ['ssh', '-F', 'none', '-p', str(job['port']), '-o', 'StrictHostKeyChecking=accept-new', '-o', 'UserKnownHostsFile=' + kh,
            '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8']
@@ -303,20 +390,29 @@ def ssh_base(job):
         cmd += ['-i', job['key'], '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes']
     elif job.get('password'):
         # ssh asks this helper for the password instead of the keyboard
-        reader = os.path.join(WORK, 'askpass.py')
-        with open(reader, 'w') as f:
+        wdir = work_dir()
+        tag = secrets.token_hex(6)
+        reader = os.path.join(wdir, 'askpass-%s.py' % tag)
+        fd = os.open(reader, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
             f.write('import os, sys\nsys.stdout.write(os.environ.get("V2V_PW", "") + "\\n")\n')
-        helper = os.path.join(WORK, 'askpass.cmd' if os.name == 'nt' else 'askpass.sh')
-        with open(helper, 'w') as f:
+        restrict(reader)
+        helper = os.path.join(wdir, ('askpass-%s.cmd' if os.name == 'nt' else 'askpass-%s.sh') % tag)
+        fd = os.open(helper, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\r\n' if os.name == 'nt' else '\n') as f:
             if os.name == 'nt':
-                f.write('@"%s" "%s"\r\n' % (sys.executable, reader))
+                f.write('@"%s" "%s"\n' % (sys.executable, reader))
             else:
                 f.write('#!/bin/sh\nexec "%s" "%s"\n' % (sys.executable, reader))
-        os.chmod(helper, 0o700)
+        if os.name == 'nt':
+            restrict(helper)
+        else:
+            os.chmod(helper, 0o700)
+        job['_askpass'] = [reader, helper]
         env.update(SSH_ASKPASS=helper, SSH_ASKPASS_REQUIRE='force', DISPLAY=env.get('DISPLAY', ':0'),
                    V2V_PW=job['password'])
         cmd += ['-o', 'PreferredAuthentications=password,keyboard-interactive', '-o', 'NumberOfPasswordPrompts=1']
-    cmd.append('%s@%s' % (job['user'], job['host']))
+    cmd += ['--', '%s@%s' % (job['user'], job['host'])]
     return cmd, env
 
 
@@ -342,13 +438,17 @@ def run_job(job):
                 msg += '\n-> 连不上服务器的 %s 端口。检查 IP 是否写对、服务器是否开机、云厂商防火墙是否放行 SSH。' % job['port']
             if 'sudo' in msg:
                 msg += '\n-> 这个用户不能免密码使用 sudo，请改用 root 登录。'
+            if 'IDENTIFICATION HAS CHANGED' in msg or 'Host key verification failed' in msg:
+                msg += ('\n-> 这台服务器的身份和上次连接时不一样。如果你刚重装过系统或换了同一个 IP 的新服务器，这是正常的：'
+                        '运行  ssh-keygen -R %s -f "%s"  后再部署一次。没有重装过就先别继续，可能有人在冒充你的服务器。'
+                        % (job['host'], os.path.join(RECORDS, 'known_hosts')))
             raise RuntimeError(msg)
         say(r.stdout.strip().replace('\n', ' | '))
         say('uploading vps2vpn and running the installer (1-3 minutes) ...')
         payload = base64.b64encode(package()) + b'\n'
         run_as = 'sudo -n env ' if job['user'] != 'root' else ''
-        remote = ('set -e; T=$(mktemp -d); base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; '
-                  '%sV2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install; rm -rf "$T"') % run_as
+        remote = ('set -e; T=$(mktemp -d); trap \'rm -rf "$T"\' EXIT; base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; '
+                  '%sV2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install') % run_as
         p = subprocess.Popen(cmd + [remote], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              env=env)
 
@@ -369,7 +469,12 @@ def run_job(job):
                     pass
                 continue
             say(line)
-        p.wait()
+        try:
+            p.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait(timeout=5)
+            raise RuntimeError('安装进程超时未退出')
         if p.returncode != 0 or not res:
             raise RuntimeError('安装过程出错了，详情见上面的日志')
         finish(job, res, say)
@@ -379,9 +484,9 @@ def run_job(job):
         job['state'] = 'error'
         job['error'] = str(e)
     finally:
-        if job.get('key'):
+        for path in ([job.get('key')] if job.get('key') else []) + list(job.get('_askpass') or []):
             try:
-                os.unlink(job['key'])
+                os.unlink(path)
             except OSError:
                 pass
         job.pop('password', None)
@@ -408,8 +513,8 @@ def recheck(job):
     """Firewall check, then (once the panel port is reachable) the pending join to the main server."""
     rec = job['rec']
     job['ports'] = check_ports(job['host'], rec.get('checks') or [])
-    panel_checks = [c for c in job['ports'] if c['name'] == '管理面板']
-    panel_ok = bool(panel_checks) and all(c['ok'] for c in panel_checks)
+    panel_ports = [c for c in job['ports'] if c['name'] == '管理面板']
+    panel_ok = bool(panel_ports) and all(c['ok'] for c in panel_ports)
     if panel_ok:            # the app downloads the subscription from the panel port
         auto_import(job)
     if rec.get('main') and job.get('join') != 'ok':
@@ -462,6 +567,7 @@ a{color:var(--acc)}
 <label>服务器 IP</label><input id="host" placeholder="例如 203.0.113.10" autocomplete="off">
 <label>SSH 密钥文件（.pem / .key / id_ed25519）——拖到下面的框里，或点击选择</label>
 <div id="drop">把密钥文件拖到这里，或<b>点击选择文件</b><div id="fname" class="mute"></div></div>
+<button type="button" id="clearKey" class="ghost" hidden style="margin-top:6px;padding:4px 10px;font-size:12px">清除已选密钥</button>
 <input type="file" id="file" hidden>
 <label>没有密钥文件？填服务器的 root 密码</label><input id="pw" type="password" autocomplete="off">
 <div id="mainbox" hidden><label>这台服务器怎么用</label><select id="main"></select>
@@ -476,19 +582,24 @@ a{color:var(--acc)}
 </main><script>
 const T='__TOKEN__';let key=null,jobId='';const $=s=>document.querySelector(s);
 const el=(tag,attrs,...kids)=>{const e=document.createElement(tag);for(const k in attrs||{}){if(k==='text')e.textContent=attrs[k];else if(k.startsWith('on'))e[k]=attrs[k];else e.setAttribute(k,attrs[k])}kids.filter(Boolean).forEach(c=>e.append(c));return e};
-const drop=$('#drop'),file=$('#file');
+const LINK_SCHEMES=['vps2vpn','clash','hiddify','sing-box','shadowrocket'];
+function safeHref(u,schemes){if(typeof u!=='string'||!u||/^-|[\x00-\x20\x7f]/.test(u))return '';try{const p=new URL(u);return schemes.includes(p.protocol.slice(0,-1).toLowerCase())?u:''}catch{return ''}}
+const drop=$('#drop'),file=$('#file'),clearKey=$('#clearKey');
 function take(f){if(!f)return;if(f.size>32768){alert('这不像密钥文件（太大了）');return}
- const r=new FileReader();r.onload=()=>{key=r.result;$('#fname').textContent='已选：'+f.name;
+ const r=new FileReader();r.onload=()=>{key=r.result;$('#fname').textContent='已选：'+f.name;clearKey.hidden=false;
  if(/\.pem$/i.test(f.name)&&/LightsailDefaultKey|ec2|aws/i.test(f.name)&&$('#user').value==='root'){$('#user').value='ubuntu'}};r.readAsText(f)}
+clearKey.onclick=()=>{key=null;file.value='';$('#fname').textContent='';clearKey.hidden=true};
 drop.onclick=()=>file.click();file.onchange=()=>take(file.files[0]);
 ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('on')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('on')}));
 drop.addEventListener('drop',ev=>take(ev.dataTransfer.files[0]));
-fetch('/records?t='+T).then(r=>r.json()).then(list=>{if(!list.length)return;const s=$('#main');
+(async()=>{try{const r=await fetch('/records?t='+T);if(!r.ok)return;const list=await r.json();if(!list.length)return;const s=$('#main');
  s.append(el('option',{value:'',text:'单独使用（第一台，或不想和别的服务器共用账号）'}));
  list.forEach(x=>{const o=el('option',{value:x.host,text:'加到 '+x.host+' 下面（共用账号和订阅）'+(x.can?'':' —— 没保存它的面板密码，不能自动加')});if(!x.can)o.disabled=true;s.append(o)});
- $('#mainbox').hidden=false});
-function copy(t,b){navigator.clipboard.writeText(t).then(()=>{const o=b.textContent;b.textContent='已复制';setTimeout(()=>b.textContent=o,1500)})}
+ $('#mainbox').hidden=false}catch{}})();
+function fallbackCopy(t,done){const a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.append(a);a.select();try{document.execCommand('copy');done()}catch{}finally{a.remove()}}
+function copy(t,b){const done=()=>{if(!b.dataset.orig)b.dataset.orig=b.textContent;b.textContent='已复制';clearTimeout(b._tm);b._tm=setTimeout(()=>{b.textContent=b.dataset.orig},1500)};
+ if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done).catch(()=>fallbackCopy(t,done))}else fallbackCopy(t,done)}
 function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceChildren();
  box.append(el('h2',{text:'✅ 部署成功'}));
  if(r.main){const m={ok:['ok','已加入主服务器 '+r.main+'：你在那边的订阅里会自动多出这台服务器（在 Clash / Shadowrocket 里点一下“更新订阅”）。'],
@@ -499,43 +610,50 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
  if(r.ai&&r.ai.summary){const a=r.ai;box.append(el('div',{class:'note'},el('b',{text:'AI 可用性（从服务器测试）：'+a.summary}),
   el('div',{class:'mute',text:[a.place,a.org,a.kind].filter(Boolean).join(' · ')}),...(a.advice||[]).map(x=>el('div',{text:x})),
   el('div',{class:'mute',style:'font-size:13px',text:'结果只作参考；以后可以在管理面板 → 系统里重新检测。'})))}
- if(!r.main&&r.sub_url){box.append(el('h3',{text:'① 把 VPN 装到你的设备上'}));
+ const subUrl=safeHref(r.sub_url,['http','https']);
+ if(!r.main&&subUrl){box.append(el('h3',{text:'① 把 VPN 装到你的设备上'}));
   const c=s.client;
   if(c&&s.imported)box.append(el('div',{class:'note'},el('b',{class:'ok',text:'检测到你电脑上的 '+c.name+'，已经自动打开它导入。'}),
    el('div',{text:'在它弹出的窗口点“确定/导入”，然后在软件里选中这个配置、打开“系统代理”开关就能用了。分流规则（国内网站直连、国外走代理）已经写好在里面，不用自己设置。'})));
   else if(c)box.append(el('p',{text:'检测到你电脑上的 '+c.name+'。防火墙放行后会自动导入，也可以直接点下面的按钮。'}));
-  else box.append(el('div',{class:'note'},el('b',{text:'没检测到电脑上的 VPN 软件。'}),
+  else{const dl=safeHref(s.download,['https']);box.append(el('div',{class:'note'},el('b',{text:'没检测到电脑上的 VPN 软件。'}),
    el('div',{text:'推荐装免费开源的 Clash Verge Rev（Windows 下载名字里带 setup 的 .exe，Mac 下载 .dmg）。装好后回来点“导入到 Clash（电脑）”。'}),
-   el('a',{href:s.download,target:'_blank',rel:'noopener',text:'打开下载页'})));
-  const L=r.links||{};const b3=el('button',{class:'ghost',text:'复制订阅链接'});b3.onclick=()=>copy(r.sub_url,b3);
-  box.append(el('div',{class:'btns'},el('a',{class:'btn',href:(c&&L[c.link])||L.clash||'#',text:c?(s.imported?'再导入一次到 ':'导入到 ')+c.name:'导入到 Clash（电脑）'}),
-   el('a',{class:'btn',href:L.shadowrocket_conf||'#',text:'导入到 Shadowrocket'}),b3));
-  box.append(el('div',{class:'qr'},el('img',{src:r.qr_url,alt:'QR'}),el('div',{class:'mute',text:'手机打开 Shadowrocket 或 Clash，扫这个二维码就导入好了。电脑上没反应的话：先装好 Clash Verge / FlClash，再点上面的按钮；或者复制订阅链接，在软件里“新建订阅”粘贴。'})))}
+   dl?el('a',{href:dl,target:'_blank',rel:'noopener noreferrer',text:'打开下载页'}):null))}
+  const L=r.links||{};const b3=el('button',{class:'ghost',text:'复制订阅链接'});b3.onclick=()=>copy(subUrl,b3);
+  const mainLink=safeHref((c&&L[c.link])||L.clash,LINK_SCHEMES),srLink=safeHref(L.shadowrocket_conf,LINK_SCHEMES);
+  box.append(el('div',{class:'btns'},mainLink?el('a',{class:'btn',href:mainLink,text:c?(s.imported?'再导入一次到 ':'导入到 ')+c.name:'导入到 Clash（电脑）'}):null,
+   srLink?el('a',{class:'btn',href:srLink,text:'导入到 Shadowrocket'}):null,b3));
+  const qrSrc=safeHref(r.qr_url,['http','https']);
+  box.append(el('div',{class:'qr'},qrSrc?el('img',{src:qrSrc,alt:'QR'}):null,el('div',{class:'mute',text:'手机打开 Shadowrocket 或 Clash，扫这个二维码就导入好了。电脑上没反应的话：先装好 Clash Verge / FlClash，再点上面的按钮；或者复制订阅链接，在软件里“新建订阅”粘贴。'})))}
  box.append(el('h3',{text:(r.main?'':'② ')+'防火墙检查（从你这台电脑测试）'}));
  const bad=(s.ports||[]).filter(c=>!c.ok);
  (s.ports||[]).forEach(c=>box.append(el('div',{class:'chk'},el('span',{text:c.name+'  '+c.proto.toUpperCase()+' '+c.port}),el('span',{class:c.ok?'ok':'bad',text:c.ok?'✓ 通了':'✗ 不通'}))));
  if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商的网页控制台，找“防火墙 / 安全组”，添加一条规则：协议选“全部/所有”，来源 0.0.0.0/0。'}),
   el('div',{class:'mute',text:'需要放行：'+bad.map(c=>c.proto.toUpperCase()+' '+c.port).join('、')})));
   const rb=el('button',{text:'我已放行，再检查一次'});rb.onclick=async()=>{rb.disabled=true;rb.textContent='正在检查…';
-   const x=await (await fetch('/recheck?t='+T+'&id='+jobId,{method:'POST'})).json();render(x)};box.append(el('p',{},rb))}
+   try{const res=await fetch('/recheck?t='+T+'&id='+encodeURIComponent(jobId),{method:'POST'});if(!res.ok)throw new Error('HTTP '+res.status);const x=await res.json();render(x)}
+   catch(e){rb.disabled=false;rb.textContent='我已放行，再检查一次';alert('检查失败：'+(e.message||e))}};box.append(el('p',{},rb))}
  else if(s.ports&&s.ports.length)box.append(el('p',{class:'ok',text:'全部通了，可以用了。'}));
  box.append(el('h3',{text:(r.main?'':'③ ')+'管理面板（加用户、看流量）'}));
- if(r.panel){const pw=r.admin_password||'';const pv=el('code',{text:pw?'••••••••••••':'（用你自己设置的密码）'});
+ const panelUrl=safeHref(r.panel,['https']);
+ if(panelUrl){const pw=r.admin_password||'';const pv=el('code',{text:pw?'••••••••••••':'（用你自己设置的密码）'});
   const show=el('button',{class:'ghost',text:'显示'});show.onclick=()=>{pv.textContent=pv.textContent===pw?'••••••••••••':pw;show.textContent=pv.textContent===pw?'隐藏':'显示'};
-  const cp=el('button',{class:'ghost',text:'复制'});cp.onclick=()=>copy(pw,cp);const cu=el('button',{class:'ghost',text:'打开'});cu.onclick=()=>window.open(r.panel,'_blank','noopener');
-  box.append(el('div',{class:'kv'},el('span',{class:'mute',text:'地址'}),el('code',{text:r.panel}),cu,el('span',{class:'mute',text:'用户名'}),el('code',{text:r.admin_user||'admin'}),el('span'),
+  const cp=el('button',{class:'ghost',text:'复制'});cp.onclick=()=>copy(pw,cp);const cu=el('button',{class:'ghost',text:'打开'});cu.onclick=()=>window.open(panelUrl,'_blank','noopener,noreferrer');
+  box.append(el('div',{class:'kv'},el('span',{class:'mute',text:'地址'}),el('code',{text:panelUrl}),cu,el('span',{class:'mute',text:'用户名'}),el('code',{text:r.admin_user||'admin'}),el('span'),
    el('span',{class:'mute',text:'密码'}),pv,pw?el('div',{class:'btns'},show,cp):el('span')));
   box.append(el('p',{class:'mute',style:'font-size:13px',text:'浏览器若提示“不安全”，点“高级 → 继续访问”即可（照样加密）。这些信息已保存在：'+(s.record_file||'')}))}}
 $('#go').onclick=async()=>{
  const host=$('#host').value.trim();if(!host)return alert('先填服务器 IP');if(!key&&!$('#pw').value)return alert('拖入密钥文件，或者填密码');
  $('#go').disabled=true;$('#out').hidden=false;$('#res').hidden=true;$('#status').textContent='正在部署，大约 1-3 分钟，别关这个页面…';
- const r=await fetch('/start?t='+T,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host,key,pw:$('#pw').value,user:$('#user').value.trim()||'root',port:$('#port').value.trim()||'22',main:$('#main').value||''})});
- const j=await r.json();if(!r.ok){$('#status').innerHTML='<span class="err"></span>';$('#status .err').textContent=j.error;$('#go').disabled=false;return}
+ let r,j;try{r=await fetch('/start?t='+T,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host,key,pw:$('#pw').value,user:$('#user').value.trim()||'root',port:$('#port').value.trim()||'22',main:$('#main').value||''})});
+  j=await r.json()}catch(e){$('#status').replaceChildren(el('span',{class:'err',text:'无法连接本地部署服务：'+(e.message||e)}));$('#go').disabled=false;return}
+ if(!r.ok){$('#status').replaceChildren(el('span',{class:'err',text:j.error||'启动失败'}));$('#go').disabled=false;return}
  jobId=j.id;
- const poll=async()=>{const s=await (await fetch('/job?t='+T+'&id='+j.id)).json();$('#log').textContent=s.log.join('\n');$('#log').scrollTop=1e9;
+ const poll=async()=>{let s;try{const pr=await fetch('/job?t='+T+'&id='+encodeURIComponent(j.id));if(!pr.ok)throw new Error('HTTP '+pr.status);s=await pr.json()}catch(e){$('#status').replaceChildren(el('span',{class:'err',text:'获取进度失败：'+(e.message||e)}));$('#go').disabled=false;return}
+  $('#log').textContent=(s.log||[]).join('\n');$('#log').scrollTop=1e9;
   if(s.state==='running')return setTimeout(poll,1000);$('#go').disabled=false;
   if(s.state==='done'){$('#status').textContent='部署完成。';render(s);$('#res').scrollIntoView({behavior:'smooth'})}
-  else{$('#logbox').open=true;$('#status').innerHTML='<span class="err"></span>';$('#status .err').textContent='失败：'+(s.error||'未知错误')}};poll()}
+  else{$('#logbox').open=true;$('#status').replaceChildren(el('span',{class:'err',text:'失败：'+(s.error||'未知错误')}))}};poll()}
 </script></body></html>'''
 
 
@@ -549,6 +667,12 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Type', ctype + '; charset=utf-8')
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Content-Security-Policy',
+                         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                         "img-src 'self' http: https: data:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'")
         self.end_headers()
         self.wfile.write(b)
 
@@ -585,7 +709,18 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(200, json.dumps(page_view(recheck(job))))
         if path != '/start':
             return self.reply(404, '{}')
-        d = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            return self.reply(400, json.dumps({'error': '请求格式不对'}))
+        if length < 0 or length > (1 << 20):
+            return self.reply(413, json.dumps({'error': '请求内容太大'}))
+        try:
+            d = json.loads(self.rfile.read(length) or b'{}')
+        except ValueError:
+            return self.reply(400, json.dumps({'error': '请求格式不对'}))
+        if not isinstance(d, dict):
+            return self.reply(400, json.dumps({'error': '请求格式不对'}))
         job, err = new_job(str(d.get('host', '')), str(d.get('user', 'root')), str(d.get('port', '22')),
                            str(d.get('main', '')))
         if err:
@@ -604,9 +739,9 @@ class H(http.server.BaseHTTPRequestHandler):
 
 def new_job(host, user, port, main=''):
     host, user, port = host.strip().strip('[]'), user.strip(), port.strip()
-    if not re.fullmatch(r'[A-Za-z0-9.:\-]{3,255}', host):
+    if not re.fullmatch(r'[A-Za-z0-9.:\-]{3,255}', host) or host.startswith('-'):
         return None, 'IP 地址格式不对'
-    if not re.fullmatch(r'[a-z_][a-z0-9_.-]{0,31}', user) or not port.isdigit():
+    if not re.fullmatch(r'[a-z_][a-z0-9_.-]{0,31}', user) or not port.isdigit() or not 1 <= int(port) <= 65535:
         return None, '用户名或端口格式不对'
     if main and (main == host or not load_record(main).get('admin_password')):
         return None, '选的主服务器不能用（不能加到它自己下面，或者没保存它的面板密码）'
@@ -614,7 +749,7 @@ def new_job(host, user, port, main=''):
 
 
 def write_key(text):
-    path = os.path.join(WORK, 'key-' + secrets.token_hex(4))
+    path = os.path.join(work_dir(), 'key-' + secrets.token_hex(4))
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'w', newline='\n') as f:
         f.write(text.replace('\r\n', '\n').strip() + '\n')
@@ -671,7 +806,8 @@ def main():
         try:
             return headless(sys.argv[2:])
         finally:
-            shutil.rmtree(WORK, ignore_errors=True)
+            if WORK:
+                shutil.rmtree(WORK, ignore_errors=True)
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     srv = http.server.ThreadingHTTPServer(('127.0.0.1', port), H)
     url = 'http://127.0.0.1:%d/?t=%s' % (srv.server_address[1], TOKEN)
@@ -684,7 +820,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        shutil.rmtree(WORK, ignore_errors=True)
+        if WORK:
+            shutil.rmtree(WORK, ignore_errors=True)
 
 
 if __name__ == '__main__':

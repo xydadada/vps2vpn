@@ -108,15 +108,17 @@ class Storage(tu.Base):
         db.close()
         os.remove(paths.DB)
         c = sqlite3.connect(paths.DB)                 # a database from the first release
-        c.executescript('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, uuid TEXT NOT NULL,'
-                        'hy2_pass TEXT NOT NULL, sub_token TEXT NOT NULL UNIQUE, quota_gb REAL NOT NULL DEFAULT 0,'
-                        'expire_at INTEGER NOT NULL DEFAULT 0, reset_day INTEGER NOT NULL DEFAULT 0, used_up INTEGER NOT NULL DEFAULT 0,'
-                        'used_down INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, disabled_reason TEXT NOT NULL DEFAULT "",'
-                        'note TEXT NOT NULL DEFAULT "", last_seen INTEGER NOT NULL DEFAULT 0, last_reset TEXT NOT NULL DEFAULT "",'
-                        'created_at INTEGER NOT NULL);'
-                        "INSERT INTO users(name, uuid, hy2_pass, sub_token, created_at) VALUES('old', 'u', 'p', 'tok', 1);")
-        c.commit()
-        c.close()
+        try:
+            c.executescript('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, uuid TEXT NOT NULL,'
+                            'hy2_pass TEXT NOT NULL, sub_token TEXT NOT NULL UNIQUE, quota_gb REAL NOT NULL DEFAULT 0,'
+                            'expire_at INTEGER NOT NULL DEFAULT 0, reset_day INTEGER NOT NULL DEFAULT 0, used_up INTEGER NOT NULL DEFAULT 0,'
+                            'used_down INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, disabled_reason TEXT NOT NULL DEFAULT "",'
+                            'note TEXT NOT NULL DEFAULT "", last_seen INTEGER NOT NULL DEFAULT 0, last_reset TEXT NOT NULL DEFAULT "",'
+                            'created_at INTEGER NOT NULL);'
+                            "INSERT INTO users(name, uuid, hy2_pass, sub_token, created_at) VALUES('old', 'u', 'p', 'tok', 1);")
+            c.commit()
+        finally:
+            c.close()
         u = db.users()[0]
         self.assertEqual((u['name'], u['login_hash'], u['invited_by'], u['remote_id']), ('old', '', 0, 0))
 
@@ -180,7 +182,8 @@ class Monitor(tu.Base):
         self.assertAlmostEqual(gh['v4']['uptime'], 2 / 3, places=3)
         self.assertEqual(gh['v4']['spark'], [100.0, None, 102.0])
         self.assertEqual(sm['latest']['region'], 'SG')
-        self.assertEqual(len(json.load(open(monitor.FILE))), 3)
+        with open(monitor.FILE, encoding='utf-8') as f:
+            self.assertEqual(len(json.load(f)), 3)
 
 
 class Shadowrocket(tu.Base):
@@ -300,7 +303,8 @@ class MemberWeb(tu.Base):
         self.httpd = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
         self.port = self.httpd.server_address[1]
         db.set_settings(panel_port=self.port)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self._thread.start()
         self.cookie = ''
         web._fails.clear()
         self._apply = web.apply_async
@@ -310,6 +314,7 @@ class MemberWeb(tu.Base):
         web.apply_async = self._apply
         self.httpd.shutdown()
         self.httpd.server_close()
+        self._thread.join(5)
 
     req = tu.Web.req
 
@@ -445,15 +450,15 @@ class MemberWeb(tu.Base):
         ctx = ssl.create_default_context()
         ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
         c = http.client.HTTPSConnection('127.0.0.1', self.port, context=ctx, timeout=10)
-        c.request('POST', '/adm/api/login', json.dumps({'username': 'admin', 'password': 'adminpassword'}),
-                  {'Content-Type': 'application/json', 'X-V2V': '1'})
-        r = c.getresponse()
-        cookie = r.getheader('Set-Cookie').split(';')[0]
-        r.read()
-        hdr = {'Content-Type': 'application/json', 'X-V2V': '1', 'Cookie': cookie}
         orig = abuse.check
         abuse.check = lambda s=None, log=print: {}
         try:
+            c.request('POST', '/adm/api/login', json.dumps({'username': 'admin', 'password': 'adminpassword'}),
+                      {'Content-Type': 'application/json', 'X-V2V': '1'})
+            r = c.getresponse()
+            cookie = r.getheader('Set-Cookie').split(';')[0]
+            r.read()
+            hdr = {'Content-Type': 'application/json', 'X-V2V': '1', 'Cookie': cookie}
             for _ in range(2):          # same keep-alive connection: leftover bytes would garble the next request
                 c.request('POST', '/adm/api/abuse', json.dumps({'pad': 'x' * 5000}), hdr)
                 r = c.getresponse()

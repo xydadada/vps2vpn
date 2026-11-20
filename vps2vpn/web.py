@@ -11,14 +11,17 @@ URL map (paths are secret random prefixes chosen at install time):
   /<member_path>/            member centre: sign in with name + password, or register with an invite code
   /<panel_path>/             admin panel (and /api/node/sync for a main server, authorised by the node key)
 """
+import hmac
 import html
 import http.server
+import ipaddress
 import json
 import math
 import mimetypes
 import os
 import re
 import shutil
+import signal
 import socket
 import sqlite3
 import ssl
@@ -31,10 +34,155 @@ from . import (VERSION, abuse, aicheck, certs, cluster, cores, db, doctor, jobs,
                secure, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
-_fails = {}                    # ip -> [timestamps] of failed logins
+_fails = {}                    # rate-limit bucket -> [monotonic timestamps] of failed attempts
 _fails_lock = threading.Lock()
+_FAIL_CAP = 2000
+_totp_lock = threading.Lock()
+_totp_last_step = {}           # secret -> last accepted 30s time-step (prevents replay)
 _apply_lock = threading.Lock()
+_apply_pending = False
+_apply_force = False
+_apply_running = False
 _cert_lock = threading.Lock()
+_SVG_CSP = "default-src 'none'; style-src 'none'; sandbox"
+
+
+class _BadRequest(ValueError):
+    """Malformed HTTP request framing, JSON body, or query parameter (answered with 400)."""
+
+
+def _rate_key(ip):
+    """Aggregate IPv6 clients to /64 so a single host cannot rotate IIDs to bypass rate limits."""
+    try:
+        addr = ipaddress.ip_address(ip)
+        if addr.version == 6:
+            return str(ipaddress.ip_network((addr, 64), strict=False))
+        return str(addr)
+    except ValueError:
+        return ip
+
+
+def _totp_consume(secret, code):
+    """Verify a TOTP code and reject replaying the same or an older 30 s time-step."""
+    digits = ''.join(c for c in str(code or '') if c.isdigit())
+    if not isinstance(secret, str) or not secret or len(digits) != 6:
+        return False
+    cur = int(time.time() // 30)
+    matched = None
+    try:
+        for k in (-1, 0, 1):
+            if hmac.compare_digest(secure.totp(secret, (cur + k) * 30), digits):
+                matched = cur + k
+                break
+    except (ValueError, TypeError, AttributeError):
+        return False
+    if matched is None:
+        return False
+    with _totp_lock:
+        if matched <= _totp_last_step.get(secret, -1):
+            return False
+        if len(_totp_last_step) > 64:
+            _totp_last_step.clear()
+        _totp_last_step[secret] = matched
+    return True
+
+
+def _norm_host(host):
+    if hasattr(certs, '_norm_host'):
+        return certs._norm_host(host)
+    h = str(host or '').strip()
+    if not h:
+        return ''
+    try:
+        return str(ipaddress.ip_address(h.strip('[]')))
+    except ValueError:
+        return h.lower().rstrip('.')
+
+
+def _trunc_utf8(text, max_bytes=900):
+    raw = text.encode('utf-8')
+    if len(raw) <= max_bytes:
+        return text
+    return raw[:max_bytes].decode('utf-8', 'ignore')
+
+
+def _is_private_ip(addr):
+    return (addr.is_private or addr.is_loopback or addr.is_link_local
+            or addr.is_multicast or addr.is_reserved or addr.is_unspecified)
+
+
+def _is_private_host(host):
+    h = (host or '').strip().strip('[]').lower()
+    if not h or h == 'localhost' or h.endswith('.localhost') or h.endswith('.local'):
+        return True
+    try:
+        return _is_private_ip(ipaddress.ip_address(h))
+    except ValueError:
+        pass
+    if paths.LIVE:
+        try:
+            infos = socket.getaddrinfo(h, 443, type=socket.SOCK_STREAM)
+        except OSError:
+            return False
+        for info in infos:
+            try:
+                if _is_private_ip(ipaddress.ip_address(info[4][0].split('%', 1)[0])):
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def _propagate_lifetime(uid, old_expire, new_expire=None, old_reset=None, new_reset=None):
+    """Propagate expiry and reset_day recursively to accounts carved from this user's quota."""
+    if hasattr(members, 'propagate_lifetime'):
+        updated = members.propagate_lifetime(uid, new_expire, new_reset)
+        if updated and new_reset and not old_reset:
+            t_now = time.localtime()
+            if t_now.tm_mday >= new_reset:
+                month = time.strftime('%Y-%m', t_now)
+                for cid in updated:
+                    child = db.user(cid)
+                    if child and not child['last_reset']:
+                        db.update_user(cid, last_reset=month)
+        return
+    by_inviter = {}
+    for x in db.users():
+        if x['invited_by'] and x['invite_deduct']:
+            by_inviter.setdefault(x['invited_by'], []).append(x)
+    queue = [uid]
+    seen = {uid}
+    t_now = time.localtime()
+    month = time.strftime('%Y-%m', t_now)
+    while queue:
+        cur = queue.pop(0)
+        for child in by_inviter.get(cur, ()):
+            cid = child['id']
+            if cid in seen:
+                continue
+            seen.add(cid)
+            upd = {}
+            if new_expire is not None:
+                upd['expire_at'] = int(new_expire)
+                if int(new_expire):
+                    upd['expire_after_days'] = 0
+            if new_reset is not None:
+                upd['reset_day'] = int(new_reset)
+                if new_reset > 0 and child['reset_day'] == 0 and not child['last_reset'] and t_now.tm_mday >= new_reset:
+                    upd['last_reset'] = month
+            if upd:
+                db.update_user(cid, **upd)
+            queue.append(cid)
+
+
+def _csv_cell(v):
+    """Neutralize spreadsheet formula prefixes in exported CSV cells."""
+    if isinstance(v, (int, float)) and v >= 0:
+        return v
+    s = str(v)
+    if s and (s[0] in ('=', '+', '-', '@', '\t', '\r') or s.lstrip()[:1] in ('=', '+', '-', '@')):
+        return "'" + s
+    return s
 
 
 def setup_token():
@@ -90,15 +238,32 @@ def client_info(s, link):
 
 
 def apply_async(force=False):
-    """Restarting cores can take a second; never block the HTTP response on it."""
-    def go():
-        with _apply_lock:
-            try:
-                cores.apply(force=force)
-                jobs.log('configs applied')
-            except Exception as e:
-                jobs.log('apply failed: %s' % e)
-    threading.Thread(target=go, daemon=True).start()
+    """Restarting cores can take a second; coalesce bursts and never block the HTTP response on it."""
+    global _apply_pending, _apply_force, _apply_running
+    start = False
+    with _apply_lock:
+        _apply_pending = True
+        _apply_force = _apply_force or bool(force)
+        if not _apply_running:
+            _apply_running = True
+            start = True
+    if start:
+        def go():
+            global _apply_pending, _apply_force, _apply_running
+            while True:
+                with _apply_lock:
+                    if not _apply_pending:
+                        _apply_running = False
+                        return
+                    f = _apply_force
+                    _apply_pending = False
+                    _apply_force = False
+                try:
+                    cores.apply(force=f)
+                    jobs.log('configs applied')
+                except Exception as e:
+                    jobs.log('apply failed: %s' % e)
+        threading.Thread(target=go, daemon=True, name='apply').start()
     cluster.sync_soon()          # joined servers learn about user changes within seconds
 
 
@@ -106,28 +271,37 @@ class TLSContext:
     """Reloads the certificate when the files change (Let's Encrypt IP certs renew every few days)."""
 
     def __init__(self):
-        self.ctx, self.key = None, None
+        self.ctx, self.key, self.checked = None, None, 0.0
         self.lock = threading.Lock()
 
     def get(self):
-        s = db.settings()
-        host = s['domain'] or s['public_host']
-        crt, key = certs.current(host)
-        try:
-            stamp = (crt, os.path.getmtime(crt), os.path.getmtime(key))
-        except OSError:
-            if not host:
-                host = 'vps2vpn.local'
-            certs.ensure_self_signed(host)
-            crt, key = certs.current(host)
-            stamp = (crt, os.path.getmtime(crt), os.path.getmtime(key))
         with self.lock:
+            now = time.monotonic()
+            if self.ctx is not None and now - self.checked < 5.0:
+                return self.ctx
+            s = db.settings()
+            host = s['domain'] or s['public_host']
+            crt, key = certs.current(host)
+            try:
+                sc, sk = os.stat(crt), os.stat(key)
+            except OSError:
+                certs.ensure_self_signed(host or 'vps2vpn.local')
+                crt, key = certs.current(host)
+                sc, sk = os.stat(crt), os.stat(key)
+            stamp = (crt, key, sc.st_ino, sc.st_mtime_ns, sc.st_size,
+                     sk.st_ino, sk.st_mtime_ns, sk.st_size)
             if stamp != self.key:
                 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                 ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-                ctx.load_cert_chain(crt, key)
+                try:
+                    ctx.load_cert_chain(crt, key)
+                except (ssl.SSLError, OSError):
+                    if self.ctx is not None:
+                        return self.ctx
+                    raise
                 ctx.set_alpn_protocols(['http/1.1'])
                 self.ctx, self.key = ctx, stamp
+            self.checked = now
             return self.ctx
 
 
@@ -137,6 +311,7 @@ class Server(http.server.ThreadingHTTPServer):
 
     def __init__(self, addr, handler, tls):
         self.tls = tls
+        self._sem = threading.BoundedSemaphore(128)
         if ':' in addr[0]:
             self.address_family = socket.AF_INET6
         super().__init__(addr, handler)
@@ -148,6 +323,22 @@ class Server(http.server.ThreadingHTTPServer):
             except OSError:
                 pass
         super().server_bind()
+
+    def process_request(self, request, client_address):
+        if not self._sem.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._sem.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._sem.release()
 
     def finish_request(self, request, client_address):
         request.settimeout(20)
@@ -200,18 +391,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if isinstance(body, str):
             body = body.encode()
         if getattr(self, '_raw', b'') is None:
-            # Read what the client sent even if the endpoint did not need it: replying with unread request
-            # data still in the socket makes the kernel reset the connection, and the reply is lost on
-            # real networks (seen with "check now" buttons that POST an empty JSON body).
-            try:
-                self._read_body(8 << 20)
-            except (ValueError, OSError):
-                self.close_connection = True
+            if code >= 400:
+                te_vals = self.headers.get_all('Transfer-Encoding') or []
+                cl_vals = self.headers.get_all('Content-Length') or []
+                if (not te_vals and len(cl_vals) == 1
+                        and re.fullmatch(r'\d{1,6}', cl_vals[0].strip())
+                        and int(cl_vals[0].strip()) <= 65536):
+                    try:
+                        self._read_body(65536)
+                    except (_BadRequest, ValueError, OSError):
+                        self.close_connection = True
+                elif te_vals or cl_vals:
+                    self.close_connection = True
+            else:
+                # Read what the client sent even if the endpoint did not need it: replying with unread request
+                # data still in the socket makes the kernel reset the connection, and the reply is lost on
+                # real networks (seen with "check now" buttons that POST an empty JSON body).
+                try:
+                    self._read_body(8 << 20)
+                except (_BadRequest, ValueError, OSError):
+                    self.close_connection = True
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
+        if self.close_connection and not any(k.lower() == 'connection' for k in (headers or {})):
+            self.send_header('Connection', 'close')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
+        # No Strict-Transport-Security: if the certificate ever lapses (a failed renewal, a removed domain) the
+        # panel falls back to a self-signed one, and HSTS would leave the admin no way to click through.
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -229,57 +437,110 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _read_body(self, limit):
         if getattr(self, '_raw', b'') is not None:
             return                       # already read (or nothing to read)
-        if 'chunked' in (self.headers.get('Transfer-Encoding') or '').lower():
+        te_vals = self.headers.get_all('Transfer-Encoding') or []
+        cl_vals = self.headers.get_all('Content-Length') or []
+        if te_vals and cl_vals:
+            self._raw = b''
+            self.close_connection = True
+            raise _BadRequest('conflicting length headers')
+        if te_vals:
+            te = ','.join(te_vals).strip().lower()
+            if te != 'chunked':
+                self._raw = b''
+                self.close_connection = True
+                raise _BadRequest('unsupported transfer-encoding')
             self._raw = self._read_chunked(limit)    # some HTTP libraries (Dart, Go) send bodies this way
             return
-        raw_len = (self.headers.get('Content-Length') or '0').strip()
-        try:
+        if len(cl_vals) > 1:
+            self._raw = b''
+            self.close_connection = True
+            raise _BadRequest('duplicate content-length')
+        if cl_vals:
+            raw_len = cl_vals[0].strip()
+            if not re.fullmatch(r'\d{1,12}', raw_len):
+                self._raw = b''
+                self.close_connection = True
+                raise _BadRequest('bad Content-Length')
             n = int(raw_len)
-        except ValueError:
+        else:
+            n = 0
+        if n > limit:
             self._raw = b''
             self.close_connection = True
-            raise ValueError('bad Content-Length')
-        if n < 0 or n > limit:
+            raise _BadRequest('request too large')
+        data = self.rfile.read(n) if n > 0 else b''
+        if len(data) != n:
             self._raw = b''
             self.close_connection = True
-            raise ValueError('request too large' if n > limit else 'bad Content-Length')
-        self._raw = self.rfile.read(n) if n > 0 else b''
-        if len(self._raw) != n:
-            self.close_connection = True
-            raise ValueError('incomplete request body')
+            raise _BadRequest('incomplete request body')
+        self._raw = data
 
     def _read_chunked(self, limit):
         out = bytearray()
         while True:
             line = self.rfile.readline(64)
-            if not line:
+            if not line or not line.endswith(b'\n'):
+                self._raw = b''
                 self.close_connection = True
-                raise ValueError('incomplete chunked body')
+                raise _BadRequest('incomplete chunked body')
             raw_size = line.split(b';', 1)[0].strip()
-            if not raw_size or not re.fullmatch(rb'[0-9a-fA-F]+', raw_size):
+            if not re.fullmatch(rb'[0-9a-fA-F]{1,8}', raw_size):
+                self._raw = b''
                 self.close_connection = True
-                raise ValueError('bad chunked body')
+                raise _BadRequest('bad chunked body')
             size = int(raw_size, 16)
             if size == 0:
-                while self.rfile.readline(1024) not in (b'\r\n', b'\n', b''):
-                    pass                 # optional trailer lines
-                return bytes(out)
-            if len(out) + size > limit:
+                for _ in range(33):
+                    tr = self.rfile.readline(1024)
+                    if tr in (b'\r\n', b'\n'):
+                        return bytes(out)
+                    if not tr or not tr.endswith(b'\n'):
+                        self._raw = b''
+                        self.close_connection = True
+                        raise _BadRequest('bad chunked body')
+                self._raw = b''
                 self.close_connection = True
-                raise ValueError('request too large')
+                raise _BadRequest('too many trailers')
+            if len(out) + size > limit:
+                self._raw = b''
+                self.close_connection = True
+                raise _BadRequest('request too large')
             chunk = self.rfile.read(size)
             if len(chunk) != size:
+                self._raw = b''
                 self.close_connection = True
-                raise ValueError('incomplete chunked body')
+                raise _BadRequest('incomplete chunked body')
             out += chunk
-            self.rfile.readline(4)       # CRLF after each chunk
+            crlf = self.rfile.readline(4)       # CRLF after each chunk
+            if crlf not in (b'\r\n', b'\n'):
+                self._raw = b''
+                self.close_connection = True
+                raise _BadRequest('bad chunked body')
 
     def body_json(self, limit=4 << 20):
         self._read_body(limit)
-        return json.loads(self._raw or b'{}')
+        try:
+            obj = json.loads(self._raw or b'{}')
+        except ValueError:
+            raise _BadRequest('invalid json')
+        if not isinstance(obj, dict):
+            raise _BadRequest('json object required')
+        return obj
 
     def client_ip(self):
-        return self.client_address[0]
+        ip = self.client_address[0]
+        return ip[7:] if ip.startswith('::ffff:') else ip
+
+    def _local_host(self):
+        try:
+            ip = self.connection.getsockname()[0]
+            if ip.startswith('::ffff:'):
+                ip = ip[7:]
+            if ip and ip not in ('0.0.0.0', '::'):
+                return ip
+        except (AttributeError, OSError, IndexError):
+            pass
+        return '127.0.0.1'
 
     def cookie(self, name):
         for part in (self.headers.get('Cookie') or '').split(';'):
@@ -289,25 +550,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return ''
 
     def base_url(self, s):
-        host = s['public_host'] or self.headers.get('Host', '').rsplit(':', 1)[0]
-        host = s['domain'] or host
+        host = s['domain'] or s['public_host'] or self._local_host()
         scheme = 'https' if certs.trusted(host) else 'http'
         h = '[%s]' % host if ':' in host and not host.startswith('[') else host
         return '%s://%s:%d' % (scheme, h, s['panel_port'])
 
     def _https_location(self, s):
-        """Safe HTTPS redirect URL using configured host (never trusting an arbitrary Host header)."""
-        host = s['domain'] or s['public_host']
-        if host:
-            h = '[%s]' % host if ':' in host and not host.startswith('[') else host
-            netloc = '%s:%d' % (h, s['panel_port'])
-        else:
-            raw = (self.headers.get('Host') or '').strip()
-            if not re.fullmatch(r'(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+)(?::\d{1,5})?', raw):
-                return None
-            netloc = raw
-        safe_path = '/' + self.path.lstrip('/')
-        return 'https://%s%s' % (netloc, safe_path)
+        """Safe HTTPS redirect URL using configured host or local socket address (never Host header)."""
+        host = s['domain'] or s['public_host'] or self._local_host()
+        h = '[%s]' % host if ':' in host and not host.startswith('[') else host
+        url = urllib.parse.urlsplit(self.path)
+        safe_path = '/' + url.path.lstrip('/')
+        if url.query:
+            safe_path += '?' + url.query
+        safe_path = safe_path.replace('\r', '').replace('\n', '')
+        return 'https://%s:%d%s' % (h, s['panel_port'], safe_path)
 
     # --- routing ----------------------------------------------------------------
     def do_HEAD(self):
@@ -321,11 +578,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def route(self, method):
         self._raw = None                 # request body not read yet (one handler serves a keep-alive connection)
+        self._s = None
         try:
             url = urllib.parse.urlsplit(self.path)
             path = url.path
             self.query = dict(urllib.parse.parse_qsl(url.query))
             s = db.settings()
+            self._s = s
             m = re.fullmatch(r'/s/([A-Za-z0-9_-]{16,64})(?:/(qr\.svg))?', path)
             if m and method == 'GET':
                 return self.subscription(s, m.group(1), m.group(2))
@@ -334,8 +593,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 u = db.user_by_token(m.group(1))
                 # The app may hold a plain-http subscription link; tell it to use https instead of a bare 404
                 # (which it would read as "link changed"). Only for a valid token: probes keep seeing nginx's 404.
-                if u and s['setup_done'] and m.group(2) in ('/api/me', '/api/report') and not self.secure_ok():
-                    return self.json({'service': 'vps2vpn', 'error': 'https_required'}, 426)
+                if (u and s['setup_done']
+                        and (m.group(2) in ('/api/me', '/api/report') or m.group(2).startswith('/download/'))
+                        and not self.secure_ok()):
+                    return self.json({'service': 'vps2vpn', 'error': 'https_required'}, 426, {'Upgrade': 'TLS/1.2'})
                 if not u or not s['setup_done'] or not self.secure_ok():
                     return self.not_found()
                 return self.member_area(method, m.group(2), s, u, '/s/%s/' % m.group(1))
@@ -358,7 +619,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.send(301, '', headers={'Location': loc}) if loc else self.not_found()
                 return self.panel(method, path[len(pp):] or '/', s)
             return self.not_found()
-        except ValueError as e:
+        except _BadRequest as e:
             try:
                 self.json({'error': str(e)[:120]}, 400)
             except OSError:
@@ -376,7 +637,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def secure_ok(self):
         """HTTPS, or plain HTTP from this machine in development mode."""
-        return self.is_tls or (paths.DEV and self.client_ip() in ('127.0.0.1', '::1', '::ffff:127.0.0.1'))
+        return self.is_tls or (paths.DEV and self.client_ip() in ('127.0.0.1', '::1'))
 
     # --- public: subscriptions ------------------------------------------------------
     def subscription(self, s, token, qr_svg):
@@ -391,14 +652,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if target == 'links':
                 nodes = subscription.nodes(s, u) if u['enabled'] else []
                 text = subscription.share_link(nodes[0]) if nodes else sub_url
-            return self.send(200, qr.svg(text, scale=5), 'image/svg+xml', {'Cache-Control': 'no-store'})
+            return self.send(200, qr.svg(_trunc_utf8(text, 900), scale=5), 'image/svg+xml',
+                             {'Cache-Control': 'no-store', 'Content-Security-Policy': _SVG_CSP})
         fmt = subscription.detect_format(self.headers.get('User-Agent'), self.query.get('format', ''))
         if not fmt:
             if self.secure_ok():          # the person's own page (usage, import buttons, requests, invites)
                 return self.member_page('/s/%s/' % token)
             return self.send(200, landing_page(s, u, sub_url), 'text/html; charset=utf-8',
-                             {'Cache-Control': 'no-store', 'Content-Security-Policy':
-                              "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"})
+                             {'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Content-Security-Policy':
+                              "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+                              "script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
         if not u['enabled']:
             s = dict(s, reality_enabled=False, hy2_enabled=False, tuic_enabled=False, servers=[])   # usage header still sent
         ctype, body, headers = subscription.render(fmt, s, u, base)
@@ -411,10 +674,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         f = rules.local_file(name, fmt)
         if not os.path.exists(f):
             if fmt == 'shadowrocket':     # needs converting, so it cannot be a redirect: fetch it now
-                try:
-                    paths.write_atomic(f, rules.fetch_converted(name, fmt), 0o644)
-                except OSError:
-                    return self.send(503, 'rule set not available yet')
+                with rules._refresh_lock:
+                    if not os.path.exists(f):
+                        try:
+                            paths.write_atomic(f, rules.fetch_converted(name, fmt), 0o644)
+                        except OSError:
+                            return self.send(503, 'rule set not available yet')
             else:
                 return self.send(302, '', headers={'Location': rules.upstream_url(name, fmt, cdn=True)})
         with open(f, 'rb') as fh:
@@ -533,7 +798,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send(200, data, ctype, {
             'Cache-Control': 'no-cache',
             'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-                                       "frame-ancestors 'none'",
+                                       "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
             'X-Frame-Options': 'DENY'})
 
     def session_cookie(self, tok, max_age=7 * 86400):
@@ -541,43 +806,57 @@ class Handler(http.server.BaseHTTPRequestHandler):
             tok, db.settings()['panel_path'], max_age)
 
     def rate_limited(self):
-        now = time.time()
-        ip = self.client_ip()
+        now = time.monotonic()
+        key = _rate_key(self.client_ip())
         with _fails_lock:
-            hits = [t for t in _fails.get(ip, []) if now - t < 600]
+            hits = [t for t in _fails.get(key, ()) if now - t < 600]
             if hits:
-                _fails[ip] = hits
+                _fails[key] = hits
             else:
-                _fails.pop(ip, None)
-            if len(_fails) > 2000:
+                _fails.pop(key, None)
+            if len(_fails) > _FAIL_CAP:
                 for k in list(_fails):
                     kept = [t for t in _fails[k] if now - t < 600]
                     if kept:
                         _fails[k] = kept
                     else:
                         _fails.pop(k, None)
+                while len(_fails) > _FAIL_CAP:
+                    _fails.pop(next(iter(_fails)))
             return len(hits) >= 8
 
     def _record_fail(self):
-        now = time.time()
-        ip = self.client_ip()
+        now = time.monotonic()
+        key = _rate_key(self.client_ip())
         with _fails_lock:
-            hits = [t for t in _fails.get(ip, []) if now - t < 600]
+            hits = [t for t in _fails.get(key, ()) if now - t < 600]
             hits.append(now)
-            _fails[ip] = hits
+            _fails[key] = hits
+            if len(_fails) > _FAIL_CAP:
+                for k in list(_fails):
+                    kept = [t for t in _fails[k] if now - t < 600]
+                    if kept:
+                        _fails[k] = kept
+                    else:
+                        _fails.pop(k, None)
+                while len(_fails) > _FAIL_CAP:
+                    _fails.pop(next(iter(_fails)))
 
     def _clear_fails(self):
         with _fails_lock:
-            _fails.pop(self.client_ip(), None)
+            _fails.pop(_rate_key(self.client_ip()), None)
 
     # --- setup wizard ----------------------------------------------------------------
     def api_setup_info(self, s):
         if s['setup_done']:
             return self.json({'error': 'already set up'}, 409)
+        if self.rate_limited():
+            return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
         if not secure.hmac_eq(self.query.get('token', ''), setup_token()):
+            self._record_fail()
             return self.json({'error': 'bad setup link'}, 403)
-        host = self.headers.get('Host', '').rsplit(':', 1)[0].strip('[]')
-        return self.json({'host': s['public_host'] or host, 'targets': system.GOOD_TARGETS,
+        host = s['domain'] or s['public_host'] or self._local_host()
+        return self.json({'host': host, 'targets': system.GOOD_TARGETS,
                           'target': s['reality_target'], 'language': s['language']})
 
     def api_setup(self, s):
@@ -592,16 +871,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pw = str(d.get('password', ''))
         if len(pw) < 8:
             return self.json({'error': 'password must be at least 8 characters'}, 400)
+        if len(pw) > 128:
+            return self.json({'error': 'password: 8 to 128 characters'}, 400)
         changes = validate_settings(d.get('settings', {}), s)
         if isinstance(changes, str):
             return self.json({'error': changes}, 400)
-        changes.update(admin_user=str(d.get('username') or 'admin')[:32], admin_hash=secure.hash_password(pw))
+        admin_user = re.sub(r'[\x00-\x1f\x7f]', '', str(d.get('username') or 'admin')).strip()[:32] or 'admin'
+        changes.update(admin_user=admin_user, admin_hash=secure.hash_password(pw))
         db.set_settings(**changes)
-        first = str(d.get('first_user') or 'me').strip()[:32] or 'me'
+        first = re.sub(r'[\x00-\x1f\x7f]', '', str(d.get('first_user') or 'me')).strip()[:32] or 'me'
         if not db.users():
             db.add_user(first)
         s = db.settings()
-        certs.ensure_self_signed(s['domain'] or s['public_host'])
+        certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
         db.set_settings(setup_done=True)
         try:
             os.unlink(SETUP_TOKEN_FILE)
@@ -619,20 +901,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.rate_limited():
             return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
         d = self.body_json()
-        ua = re.sub(r'[\x00-\x1f]', '', self.headers.get('User-Agent', ''))[:120]
-        ok = secure.hmac_eq(str(d.get('username', '')), s['admin_user']) & \
-            secure.check_password(str(d.get('password', '')), s['admin_hash'])
+        ua = re.sub(r'[\x00-\x1f\x7f]', '', self.headers.get('User-Agent', ''))[:120]
+        pw = str(d.get('password', ''))
+        ok = (len(pw) <= 128
+              and (secure.hmac_eq(str(d.get('username', '')), s['admin_user'])
+                   & secure.check_password(pw, s['admin_hash'])))
         if not ok:
             self._record_fail()
             db.add_event('login', 0, 'fail|%s|%s' % (self.client_ip(), ua))
             time.sleep(0.5)
             return self.json({'error': 'wrong username or password'}, 403)
         if s['admin_totp']:
-            code = str(d.get('code') or '')
+            code = str(d.get('code') or '').strip()
             if not code:
-                self._record_fail()
                 return self.json({'error': 'totp_required'}, 403)
-            if not secure.totp_check(s['admin_totp'], code):
+            if not _totp_consume(s['admin_totp'], code):
                 self._record_fail()
                 db.add_event('login', 0, 'fail2fa|%s|%s' % (self.client_ip(), ua))
                 time.sleep(0.5)
@@ -668,8 +951,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'secret': sec, 'uri': uri})
         d = self.body_json()
         if d.get('off'):
-            if not secure.check_password(str(d.get('password', '')), s['admin_hash']):
+            if self.rate_limited():
+                return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
+            pw = str(d.get('password', ''))
+            if len(pw) > 128 or not secure.check_password(pw, s['admin_hash']):
+                self._record_fail()
                 return self.json({'error': 'current password is wrong'}, 403)
+            with _totp_lock:
+                _totp_last_step.pop(s['admin_totp'], None)
             db.set_settings(admin_totp='')
             return self.json({'ok': True})
         sec = str(d.get('secret', '')).strip().upper()
@@ -677,6 +966,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'bad secret'}, 400)
         if not secure.totp_check(sec, d.get('code')):
             return self.json({'error': 'wrong 2FA code'}, 400)
+        with _totp_lock:
+            _totp_last_step.pop(sec, None)
         db.set_settings(admin_totp=sec)
         return self.json({'ok': True})
 
@@ -727,7 +1018,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'services': {'xray': system.unit_active(cores.XRAY_UNIT), 'hysteria': system.unit_active(cores.HY2_UNIT),
                          'tuic': system.unit_active(cores.TUIC_UNIT)},
             'cert': {'trusted': certs.trusted(host), 'names': certs.acme_names(), 'status': s['cert_status']},
-            'online': cores.online_count(s), 'rules_age': rules.mirror_age(), 'log': jobs.LOG[-60:],
+            'online': None if online is None else len(online), 'rules_age': rules.mirror_age(), 'log': jobs.LOG[-60:],
             'ports': system.needed_ports(s), 'os': system.os_info(), 'base_url': base,
             'member_url': '%s/%s/' % (base, s['member_path']) if s['member_enabled'] else '',
             'pending_requests': len(db.requests(status='pending')), 'servers': cluster.view(s),
@@ -737,11 +1028,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         })
 
     def trouble_view(self, s):
-        mine = {s['public_host'], s['domain'], s.get('public_ipv6', '')} - {''}
+        mine = {_norm_host(s['public_host']), _norm_host(s['domain']), _norm_host(s.get('public_ipv6', ''))} - {''}
         out = []
         for line, r in jobs.line_trouble(s).items():
+            hosts = {_norm_host(h) for h in r['hosts']} - {''}
             out.append({'line': line, 'name': jobs.LINES[line][2], 'users': len(r['users']), 'last': r['last'],
-                        'hosts': r['hosts'], 'here': not r['hosts'] or bool(mine & set(r['hosts']))})
+                        'hosts': r['hosts'], 'here': not hosts or bool(mine & hosts)})
         return out
 
     def api_change_port(self, method, s):
@@ -775,7 +1067,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         db.set_settings(**changes)
         s2 = db.settings()
         if 'public_host' in changes or 'domain' in changes:
-            certs.ensure_self_signed(s2['domain'] or s2['public_host'])
+            certs.ensure_self_signed(s2['domain'] or s2['public_host'] or 'vps2vpn.local')
         if 'tune_network' in changes:
             system.tune_network(s2['tune_network'])
         system.open_firewall(s2)
@@ -788,7 +1080,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             clean = [{k: v for k, v in u.items() if k not in secret_fields} for u in db.users()]
             return self.json({'users': clean})
         d = self.body_json()
-        name = str(d.get('name', '')).strip()[:32]
+        name = re.sub(r'[\x00-\x1f\x7f]', '', str(d.get('name', ''))).strip()[:32]
         if not name:
             return self.json({'error': 'name required'}, 400)
         if db.user_by_name(name):
@@ -807,7 +1099,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
         d = self.body_json()
-        prefix = re.sub(r'\s+', '', str(d.get('prefix', '')))[:24]
+        prefix = re.sub(r'[\s\x00-\x1f\x7f]+', '', str(d.get('prefix', '')))[:24]
         try:
             count = int(d.get('count', 0))
         except (TypeError, ValueError):
@@ -869,7 +1161,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 db.delete_user(uid)
             elif action == 'extend':
                 if u['expire_at']:     # from the old date, or from today if it already passed
-                    db.update_user(uid, expire_at=int(max(u['expire_at'], now) + value * 86400))
+                    new_exp = int(max(u['expire_at'], now) + value * 86400)
+                    db.update_user(uid, expire_at=new_exp)
+                    _propagate_lifetime(uid, u['expire_at'], new_exp)
             elif action == 'add_gb':
                 if u['quota_gb']:      # unlimited stays unlimited
                     db.update_user(uid, quota_gb=u['quota_gb'] + value)
@@ -890,12 +1184,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     'last_seen', 'created', 'note', 'subscription'])
         day = lambda t: time.strftime('%Y-%m-%d', time.localtime(t)) if t else ''
         for u in db.users():
-            w.writerow([u['id'], u['name'], 'active' if u['enabled'] else (u['disabled_reason'] or 'paused'),
-                        round((u['used_up'] + u['used_down']) / (1 << 30), 3), u['quota_gb'] or '',
-                        day(u['expire_at']) or ('%d days from first use' % u['expire_after_days']
-                                                if u['expire_after_days'] else ''),
-                        u['reset_day'] or '', u['max_ips'] or '', day(u['last_seen']), day(u['created_at']), u['note'],
-                        '%s/s/%s' % (base, u['sub_token'])])
+            row = [u['id'], u['name'], 'active' if u['enabled'] else (u['disabled_reason'] or 'paused'),
+                   round((u['used_up'] + u['used_down']) / (1 << 30), 3), u['quota_gb'] or '',
+                   day(u['expire_at']) or ('%d days from first use' % u['expire_after_days']
+                                           if u['expire_after_days'] else ''),
+                   u['reset_day'] or '', u['max_ips'] or '', day(u['last_seen']), day(u['created_at']), u['note'],
+                   '%s/s/%s' % (base, u['sub_token'])]
+            w.writerow([_csv_cell(c) for c in row])
         name = 'vps2vpn-users-%s.csv' % time.strftime('%Y%m%d')
         # BOM so Excel reads the UTF-8 names correctly
         return self.send(200, '﻿' + buf.getvalue(), 'text/csv; charset=utf-8',
@@ -931,15 +1226,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 fields['disabled_reason'] = '' if fields['enabled'] else 'manual'
                 if fields['enabled']:
                     fields['paused_until'] = 0
+            if 'reset_day' in fields and fields['reset_day'] > 0 and u['reset_day'] == 0 and not u['last_reset']:
+                t_now = time.localtime()
+                if t_now.tm_mday >= fields['reset_day']:
+                    fields['last_reset'] = time.strftime('%Y-%m', t_now)
             other = db.user_by_name(fields['name']) if 'name' in fields else None
             if other and other['id'] != uid:
                 return self.json({'error': 'name already used'}, 400)
             db.update_user(uid, **fields)
-            if 'expire_at' in fields and fields['expire_at'] != u['expire_at']:
-                # Accounts carved from this one's quota share its lifetime: move theirs along with it.
-                for x in db.users():
-                    if x['invited_by'] == uid and x['invite_deduct'] and x['expire_at'] == u['expire_at']:
-                        db.update_user(x['id'], expire_at=fields['expire_at'])
+            exp_changed = 'expire_at' in fields and fields['expire_at'] != u['expire_at']
+            rst_changed = 'reset_day' in fields and fields['reset_day'] != u['reset_day']
+            if exp_changed or rst_changed:
+                # Accounts carved from this one's quota share its lifetime and reset schedule.
+                _propagate_lifetime(uid, u['expire_at'], fields['expire_at'] if exp_changed else None,
+                                    u['reset_day'], fields['reset_day'] if rst_changed else None)
         jobs.enforce()
         apply_async()
         return self.json({'ok': True})
@@ -1014,6 +1314,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
         db.set_settings(node_key=secure.token(24), node_master='', node_master_id='')
+        removed = False
+        for u in db.users():
+            if u['remote_id']:
+                db.delete_user(u['id'])
+                removed = True
+        if removed:
+            apply_async()
         return self.json({'ok': True, 'join_code': cluster.join_code(db.settings(), self.base_url(s))})
 
     # --- member centre ---------------------------------------------------------------------------
@@ -1152,6 +1459,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def member_view(self, s, u, by_link):
         base = self.base_url(s)
         sub_url = '%s/s/%s' % (base, u['sub_token'])
+        # Installer downloads are only served over TLS (route() requires secure_ok), so never emit http:// here.
+        dl_url = 'https://' + sub_url[7:] if sub_url.startswith('http://') else sub_url
         users = db.users()
         names = {x['id']: x['name'] for x in users}
         nxt = 0
@@ -1177,7 +1486,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                          for x in users if x['invited_by'] == u['id']],
             'online': online, 'servers': 1 + len([x for x in s['servers'] if x.get('info')]),
             'ai': ai_view(aicheck.latest()),
-            'client': client_info(s, sub_url),
+            'client': client_info(s, dl_url),
         }
 
     def api_password(self, method, s):
@@ -1558,5 +1867,36 @@ def serve(port=None, host='::'):
         httpd = Server(('0.0.0.0', port), Handler, tls)    # no IPv6 on this machine
     sched = jobs.Scheduler()
     sched.start()
+    stopping = threading.Event()
+
+    def _stop(signum=None, frame=None):
+        if stopping.is_set():
+            return
+        stopping.set()
+        sched.stop.set()
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _stop)
+        except (ValueError, OSError):
+            pass
     jobs.log('vps2vpn %s panel on port %d' % (VERSION, port))
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        _stop()
+        try:
+            httpd.server_close()
+        except OSError:
+            pass
+        try:
+            if db.settings()['setup_done']:
+                jobs.collect()      # flush traffic counted since the last minute tick
+        except Exception:
+            pass
+        try:
+            jobs.HISTORY.save()
+        except Exception:
+            pass
+        db.close()

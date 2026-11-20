@@ -91,10 +91,17 @@ def tune_network(enabled=True):
     if not paths.LIVE:
         return 'skipped (not running as root on Linux)'
     if not enabled:
-        if os.path.exists(paths.SYSCTL_FILE):
-            os.unlink(paths.SYSCTL_FILE)
+        for p in (paths.SYSCTL_FILE, paths.MODULES_FILE):
+            if os.path.exists(p):
+                os.unlink(p)
         return 'off'
     run(['modprobe', 'tcp_bbr'])
+    run(['modprobe', 'sch_fq'])
+    # Load the modules at boot too, before systemd-sysctl applies tcp_congestion_control = bbr.
+    try:
+        paths.write_atomic(paths.MODULES_FILE, 'tcp_bbr\nsch_fq\n', 0o644)
+    except OSError:
+        pass
     paths.write_atomic(paths.SYSCTL_FILE, sysctl_text(), 0o644)
     r = run(['sysctl', '-p', paths.SYSCTL_FILE])
     return 'ok' if r.returncode == 0 else 'partial: ' + (r.stderr or '')[-200:]
@@ -123,13 +130,64 @@ def parse_range(text):
 
 
 def nft_rules(s):
+    """One nft transaction that (re)creates our table: `table` makes sure it exists so `delete` cannot fail,
+    then the fresh definition. Applied atomically by `nft -f`, and the same file is loaded at boot."""
     a, b = parse_range(s['hy2_hop_range'])
-    return ('table inet %s {\n'
+    return ('table inet %s\n'
+            'delete table inet %s\n'
+            'table inet %s {\n'
             ' chain prerouting {\n'
             '  type nat hook prerouting priority dstnat; policy accept;\n'
             '  iifname != "lo" udp dport %d-%d redirect to :%d\n'
             ' }\n'
-            '}\n') % (NFT_TABLE, a, b, s['hy2_port'])
+            '}\n') % (NFT_TABLE, NFT_TABLE, NFT_TABLE, a, b, s['hy2_port'])
+
+
+def nft_unit_text(nft_bin):
+    return ('[Unit]\n'
+            'Description=vps2vpn UDP port hopping rules\n'
+            'After=network-pre.target nftables.service\n'
+            'Wants=network-pre.target\n'
+            'ConditionPathExists=%s\n'
+            '\n'
+            '[Service]\n'
+            'Type=oneshot\n'
+            'RemainAfterExit=yes\n'
+            'ExecStart=%s -f %s\n'
+            '\n'
+            '[Install]\n'
+            'WantedBy=multi-user.target\n') % (paths.NFT_FILE, nft_bin, paths.NFT_FILE)
+
+
+def _persist_hopping(rules_text):
+    """Best effort: keep the rules across reboots (kernel nft state is lost on reboot)."""
+    try:
+        paths.write_atomic(paths.NFT_FILE, rules_text, 0o644)
+        unit = nft_unit_text(shutil.which('nft') or '/usr/sbin/nft')
+        try:
+            with open(paths.NFT_UNIT, encoding='utf-8') as f:
+                same = f.read() == unit
+        except OSError:
+            same = False
+        if not same:
+            paths.write_atomic(paths.NFT_UNIT, unit, 0o644)
+            run(['systemctl', 'daemon-reload'], timeout=30)
+        run(['systemctl', 'enable', os.path.basename(paths.NFT_UNIT)], timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _unpersist_hopping():
+    try:
+        if os.path.exists(paths.NFT_UNIT):
+            run(['systemctl', 'disable', os.path.basename(paths.NFT_UNIT)], timeout=30)
+        for p in (paths.NFT_FILE, paths.NFT_UNIT):
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                pass
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def port_hopping(s):
@@ -137,12 +195,16 @@ def port_hopping(s):
     if not paths.LIVE or not shutil.which('nft'):
         return None
     if not (s['hy2_enabled'] and s['hy2_hop']):
-        run(['nft', 'delete', 'table', 'inet', NFT_TABLE])
+        run(['nft', 'delete', 'table', 'inet', NFT_TABLE], timeout=15)
+        _unpersist_hopping()
         return 'off'
     # Atomic replace in one nft transaction (avoids packet-drop window between delete and recreate).
-    script = 'table inet %s\nflush table inet %s\n%s' % (NFT_TABLE, NFT_TABLE, nft_rules(s))
-    r = subprocess.run(['nft', '-f', '-'], input=script, capture_output=True, text=True)
-    return 'ok' if r.returncode == 0 else 'failed: ' + r.stderr[-200:]
+    script = nft_rules(s)
+    r = subprocess.run(['nft', '-f', '-'], input=script, capture_output=True, text=True, timeout=15)
+    if r.returncode != 0:
+        return 'failed: ' + r.stderr[-200:]
+    _persist_hopping(script)
+    return 'ok'
 
 
 # --- host firewall (only if one is already active; we never enable one) ----------

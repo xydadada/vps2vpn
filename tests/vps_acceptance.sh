@@ -23,7 +23,7 @@ checks() {
   chk "hysteria runs as unprivileged user" bash -c "ps -o user= -C hysteria | grep -qx vps2vpn"
   chk "sing-box (TUIC) runs as unprivileged user" bash -c "ps -o user= -C sing-box | grep -qx vps2vpn"
   echo "== ports"
-  local pp rp hp
+  local pp rp hp tp
   pp=$(settings panel_port); rp=$(settings reality_port); hp=$(settings hy2_port); tp=$(settings tuic_port)
   chk "panel listening on TCP $pp" bash -c "ss -Hltn 'sport = :$pp' | grep -q ."
   chk "REALITY listening on TCP $rp" bash -c "ss -Hltn 'sport = :$rp' | grep -q ."
@@ -58,13 +58,15 @@ checks
 if [ $FULL = 1 ]; then
   echo "== reinstall over a running install"
   before=$(settings reality_private_key | sha256sum)
-  if V2V_SRC="${V2V_SRC:-}" bash "$HERE/install.sh" install >/tmp/v2v-reinstall.log 2>&1; then ok "reinstall"; else bad "reinstall (see /tmp/v2v-reinstall.log)"; fi
+  log1=$(mktemp /tmp/v2v-reinstall-XXXXXX.log)
+  if V2V_SRC="${V2V_SRC:-}" bash "$HERE/install.sh" install >"$log1" 2>&1; then ok "reinstall"; rm -f "$log1"; else bad "reinstall (see $log1)"; fi
   [ "$(settings reality_private_key | sha256sum)" = "$before" ] && ok "keys survive reinstall" || bad "keys changed on reinstall"
   echo "== uninstall keeps data, reinstall restores service"
   bash "$HERE/install.sh" uninstall >/dev/null 2>&1
   chk "units removed" bash -c "! systemctl cat vps2vpn >/dev/null 2>&1"
   chk "data kept" test -f /var/lib/vps2vpn/vps2vpn.db
-  bash "$HERE/install.sh" install >/tmp/v2v-reinstall2.log 2>&1
+  log2=$(mktemp /tmp/v2v-reinstall2-XXXXXX.log)
+  if V2V_SRC="${V2V_SRC:-}" bash "$HERE/install.sh" install >"$log2" 2>&1; then ok "reinstall after uninstall"; rm -f "$log2"; else bad "reinstall after uninstall (see $log2)"; fi
   [ "$(settings reality_private_key | sha256sum)" = "$before" ] && ok "same keys after uninstall + install" || bad "keys changed after uninstall + install"
   checks
 fi

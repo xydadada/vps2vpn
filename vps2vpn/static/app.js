@@ -19,7 +19,7 @@ const T = {
     users: '使用者', add_user: '添加使用者', name: '名字', quota: '流量上限 (GB，0 = 不限)', expire: '到期日（留空 = 永久）',
     reset_day: '每月几号重置流量（0 = 不重置）', note: '备注', save: '保存', cancel: '取消', del: '删除',
     used: '已用', unlimited: '不限', never: '永久', status: '状态', expires: '到期', last_seen: '最近使用',
-    enabled: '正常', r_quota: '流量用完', r_expired: '已到期', r_manual: '手动停用', search: '搜索名字或备注',
+    enabled: '正常', r_quota: '流量用完', r_expired: '已到期', r_manual: '手动停用', r_remote: '主服务器停用', search: '搜索名字或备注',
     share: '订阅', share_tip: '把链接或二维码发给使用者：手机扫码，或在 App 里「从 URL 导入」。',
     copy: '复制订阅链接', open_page: '打开导入页面', rotate: '更换链接', reset: '清零流量',
     confirm_del: '删除后他的链接立即失效，不能恢复。', confirm_rotate: '旧链接会立刻失效，需要把新链接重新发给他。',
@@ -38,7 +38,7 @@ const T = {
     cert_ok: '受信任证书', cert_self_s: '自签名证书', cert_self_tip: '仍然全程加密，只是浏览器会提示不安全。',
     saved: '已保存，正在生效…', change_pw: '修改管理员密码', old_pw: '当前密码', new_pw: '新密码',
     backup: '备份与恢复', backup_tip: '每天自动备份一次（保留 14 天）。换服务器时下载备份，在新服务器上恢复即可。',
-    download_backup: '下载备份', restore: '从备份恢复', restore_ok: '已恢复',
+    download_backup: '下载备份', restore: '从备份恢复', restore_ok: '已恢复', confirm_restore: '恢复会覆盖当前所有用户、邀请码和设置，确定继续吗？', retry: '重试',
     ports: '防火墙端口', ports_tip: '需要在云服务商的防火墙 / 安全组里放行这些端口（服务器自己的防火墙已自动放行）。',
     logs: '最近日志', restart: '重启代理服务', rules_refresh: '立即更新分流规则', rules_age: '分流规则更新于', ago: '前', version: '版本',
     days: '天', hours: '小时', minutes: '分钟', bbr: 'BBR 加速', yes: '已开启', no: '未开启',
@@ -121,7 +121,7 @@ const T = {
     users: 'Users', add_user: 'Add user', name: 'Name', quota: 'Quota (GB, 0 = unlimited)', expire: 'Expires (empty = never)',
     reset_day: 'Monthly reset day (0 = never)', note: 'Note', save: 'Save', cancel: 'Cancel', del: 'Delete',
     used: 'Used', unlimited: 'unlimited', never: 'never', status: 'Status', expires: 'Expires', last_seen: 'Last seen',
-    enabled: 'active', r_quota: 'quota used', r_expired: 'expired', r_manual: 'paused', search: 'Search name or note',
+    enabled: 'active', r_quota: 'quota used', r_expired: 'expired', r_manual: 'paused', r_remote: 'paused by main server', search: 'Search name or note',
     share: 'Subscription', share_tip: 'Send this link or QR code to the user. Scan it, or use "Import from URL" in the app.',
     copy: 'Copy link', open_page: 'Open import page', rotate: 'New link', reset: 'Reset usage',
     confirm_del: 'Their link stops working immediately. This cannot be undone.', confirm_rotate: 'The old link stops working immediately; send them the new one.',
@@ -140,7 +140,7 @@ const T = {
     cert_ok: 'Trusted certificate', cert_self_s: 'Self-signed', cert_self_tip: 'Still fully encrypted; browsers just show a warning.',
     saved: 'Saved, applying…', change_pw: 'Change admin password', old_pw: 'Current password', new_pw: 'New password',
     backup: 'Backup & restore', backup_tip: 'A backup is made every day (14 kept). To move servers, download one here and restore it on the new server.',
-    download_backup: 'Download backup', restore: 'Restore from backup', restore_ok: 'Restored',
+    download_backup: 'Download backup', restore: 'Restore from backup', restore_ok: 'Restored', confirm_restore: 'Restoring replaces all current users, invite codes and settings. Continue?', retry: 'Retry',
     ports: 'Firewall ports', ports_tip: 'Open these in your cloud provider\'s firewall / security group (the server\'s own firewall is already open).',
     logs: 'Recent log', restart: 'Restart proxy services', rules_refresh: 'Update routing rules now', rules_age: 'Routing rules updated', ago: 'ago', version: 'Version',
     days: 'd', hours: 'h', minutes: 'min', bbr: 'BBR', yes: 'on', no: 'off',
@@ -208,7 +208,7 @@ const T = {
 };
 let L = (navigator.language || '').startsWith('zh') ? 'zh' : 'en';
 const t = k => (T[L] && T[L][k]) || T.en[k] || k;
-const S = {view: 'home', data: null, days: [], timer: null, charts: {}, q: '', f: 'all', sort: 'id', sel: new Set(), sys: [], sysAt: 0};
+const S = {view: 'home', data: null, days: [], timer: null, charts: {}, q: '', f: 'all', sort: 'id', sel: new Set(), sys: [], sysAt: 0, viewSeq: 0, drawerSeq: 0, refreshSeq: 0, refreshing: false};
 const GB = 1073741824;
 
 function setLang(l) {
@@ -237,6 +237,7 @@ const pad2 = n => String(n).padStart(2, '0');
 const localDate = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const last30 = () => { const d = []; for (let i = 29; i >= 0; i--) d.push(localDate(new Date(Date.now() - i * 864e5))); return d; };
 const dateStr = ts => ts ? localDate(new Date(ts * 1000)) : t('never');
+const localDay = ms => localDate(new Date(ms));
 const field = (label, input, hint) => h('label', {class: 'field'}, h('span', null, label), input, hint ? h('em', null, hint) : null);
 const check = (label, input) => h('label', {class: 'check'}, input, h('span', null, label));
 const panel = (title, sub, right, ...body) => h('div', {class: 'panel'},
@@ -247,16 +248,17 @@ const chip = (kind, text) => h('span', {class: 'chip ' + kind}, text);
 const legend = () => h('div', {class: 'legend'}, h('span', {style: '--c:var(--down)'}, t('down')), h('span', {style: '--c:var(--up)'}, t('up_')));
 const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, 'vps2vpn'), h('small', null, 'SELF-HOSTED VPN')));
 const AVA = ['#e5432a', '#3f5fe6', '#0b9e86', '#d4860f', '#8b5cf6', '#db2777', '#0891b2'];
+const retryBox = (msg, fn) => h('div', {class: 'empty-state'}, h('p', null, msg), h('button', {class: 'btn sm', onclick: fn}, icon('refresh'), t('retry')));
 
 /* ---------------- start ---------------- */
 async function boot() {
   let hello;
-  try { hello = await api('hello', undefined, {quiet: true}); } catch (e) { document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
+  try { hello = await api('hello', undefined, {quiet: true}); } catch (e) { document.body.replaceChildren(retryBox(e.message, boot)); return; }
   setLang(hello.language);
   Theme.apply(Theme.get());
   if (!hello.setup_done) return renderSetup();
   if (!hello.logged_in) return renderLogin();
-  renderShell();
+  try { await renderShell(); } catch (e) { if (e.message !== 'login') document.body.replaceChildren(retryBox(e.message, boot)); }
 }
 
 /* the split sign-in layout of the original console, used for setup and login */
@@ -350,17 +352,19 @@ async function renderSetup() {
 /* ---------------- login ---------------- */
 function renderLogin() {
   clearInterval(S.timer);
+  S.viewSeq++; S.drawerSeq++; S.refreshSeq++; S.refreshing = false;
+  document.body.style.overflow = '';
   const u = h('input', {type: 'text', autocomplete: 'username', required: true});
   const p = h('input', {type: 'password', autocomplete: 'current-password', required: true});
   const b = h('button', {class: 'btn primary', type: 'submit'}, t('login'));
   const msg = h('div', {class: 'err', role: 'status'});
-  const code = h('input', {type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', pattern: '[0-9]*', class: 'otp'});
+  const code = h('input', {type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '12', class: 'otp'});
   const codeField = field(t('totp_code'), code); codeField.hidden = true;
   const f = h('form', null, h('div', {class: 'kicker'}, 'ADMIN CONSOLE'), h('h1', null, t('login')), h('p', {class: 'intro'}, t('login_intro')),
     field(t('username'), u), field(t('password').replace(/（.*|\(.*/, ''), p), codeField, b, msg);
   f.onsubmit = async e => {
     e.preventDefault(); b.disabled = true; msg.textContent = '';
-    try { await api('login', {username: u.value, password: p.value, code: code.value}, {quiet: true}); renderShell(); }
+    try { await api('login', {username: u.value, password: p.value, code: code.value.replace(/\s+/g, '')}, {quiet: true}); await renderShell(); }
     catch (er) {
       b.disabled = false;
       if (er.message === 'totp_required') { codeField.hidden = false; msg.textContent = t('totp_need'); code.focus(); return; }
@@ -374,7 +378,11 @@ function renderLogin() {
 /* ---------------- shell: sidebar + pages, same layout as the original console ---------------- */
 const VIEWS = [['home', 'home', 'nav_home'], ['users', 'users', 'nav_users'], ['members', 'key', 'nav_members'],
   ['servers', 'server', 'nav_servers'], ['monitor', 'globe', 'nav_monitor'], ['settings', 'sliders', 'nav_settings'], ['system', 'pulse', 'nav_system']];
-const badge = () => S.data && S.data.pending_requests ? h('span', {class: 'badge', id: 'reqBadge'}, S.data.pending_requests) : h('span', {id: 'reqBadge', hidden: true});
+const badge = () => S.data && S.data.pending_requests ? h('span', {class: 'badge', 'data-req-badge': '1'}, S.data.pending_requests) : h('span', {'data-req-badge': '1', hidden: true});
+function updateReqBadges() {
+  const n = (S.data && S.data.pending_requests) || 0;
+  for (const rb of document.querySelectorAll('[data-req-badge]')) { rb.textContent = n || ''; rb.hidden = !n; rb.className = n ? 'badge' : ''; }
+}
 async function saveSettings(body, redraw) { try { await api('settings', body); toast(t('saved')); await load(); if (redraw) redraw(); } catch (e) { err(e); } }
 async function load() {
   S.data = await api('state'); setLang(S.data.settings.language);
@@ -385,26 +393,36 @@ async function loadDays() { try { S.days = (await api('traffic?days=30')).days |
 
 async function renderShell() {
   await Promise.all([load(), loadDays()]);
+  const doLogout = async btn => { btn.disabled = true; try { await api('logout', {}); location.reload(); } catch (e) { err(e); btn.disabled = false; } };
   const nav = v => h('button', {class: 'nav-item', 'data-view': v[0], onclick: () => go(v[0])}, icon(v[1]), t(v[2]), v[0] === 'members' ? badge() : null);
   const themeBtn = (v, ic, k) => h('button', {'data-theme-btn': v, title: t(k)}, icon(ic));
+  const sideLogout = h('button', {class: 'btn ghost'}, icon('out'), t('logout'));
+  sideLogout.onclick = () => doLogout(sideLogout);
   const side = h('aside', {class: 'side'}, brand(),
     h('nav', {class: 'nav'}, h('div', {class: 'nav-label'}, t('nav_main')), nav(VIEWS[0]), nav(VIEWS[1]), nav(VIEWS[2]),
       h('div', {class: 'nav-label'}, t('nav_infra')), nav(VIEWS[3]), nav(VIEWS[4]), nav(VIEWS[5]), nav(VIEWS[6])),
     h('div', {class: 'side-foot'}, h('div', {class: 'seg', role: 'group'}, themeBtn('auto', 'auto', 'theme_auto'), themeBtn('light', 'sun', 'theme_light'), themeBtn('dark', 'moon', 'theme_dark')),
-      h('button', {class: 'btn ghost', onclick: async () => { try { await api('logout', {}); location.reload(); } catch (e) { err(e); } }}, icon('out'), t('logout')),
-      h('div', {class: 'ver'}, 'v' + S.data.version)));
+      sideLogout, h('div', {class: 'ver'}, 'v' + S.data.version)));
+  const mobTheme = h('button', {class: 'btn icon mob-only', title: t('theme_' + Theme.get())}, icon(Theme.get() === 'light' ? 'sun' : Theme.get() === 'dark' ? 'moon' : 'auto'));
+  mobTheme.onclick = () => {
+    const order = ['auto', 'light', 'dark'], next = order[(order.indexOf(Theme.get()) + 1) % 3];
+    Theme.set(next); mobTheme.title = t('theme_' + next); mobTheme.replaceChildren(icon(next === 'light' ? 'sun' : next === 'dark' ? 'moon' : 'auto'));
+  };
+  const mobLogout = h('button', {class: 'btn icon mob-only', title: t('logout')}, icon('out'));
+  mobLogout.onclick = () => doLogout(mobLogout);
   const top = h('header', {class: 'top'}, h('div', null, h('div', {class: 'kicker', id: 'viewKicker'}), h('h1', {id: 'viewTitle'})),
     h('div', {class: 'top-actions'}, h('span', {id: 'livePill', class: 'live-pill'}, 'LIVE'), h('span', {class: 'sync', id: 'syncInfo'}, t('synced')),
+      mobTheme, mobLogout,
       h('button', {class: 'btn', onclick: () => refresh(true)}, icon('refresh'), t('refresh')),
       h('button', {class: 'btn primary', id: 'newBtn', onclick: () => editUser(null)}, icon('plus'), t('add_user'))));
-  const tabbar = h('nav', {class: 'tabbar'}, VIEWS.map(v => h('button', {'data-view': v[0], onclick: () => go(v[0])}, icon(v[1]), t('tab_' + v[0]))));
+  const tabbar = h('nav', {class: 'tabbar'}, VIEWS.map(v => h('button', {'data-view': v[0], onclick: () => go(v[0])}, icon(v[1]), t('tab_' + v[0]), v[0] === 'members' ? badge() : null)));
   const drawer = h('aside', {class: 'drawer', id: 'drawer', 'aria-hidden': 'true'});
   const scrim = h('div', {class: 'scrim', id: 'scrim', onclick: closeDrawer});
   document.body.replaceChildren(h('div', {class: 'app'}, side, h('main', {class: 'main'}, top, h('div', {id: 'view'}))), tabbar, scrim, drawer);
   Theme.mount();
   if (!S.escBound) {
     S.escBound = true;
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('dialog.modal[open]')) closeDrawer(); });
   }
   go(S.view);
   clearInterval(S.timer);
@@ -413,6 +431,8 @@ async function renderShell() {
 
 function go(v) {
   S.view = v;
+  S.viewSeq++;
+  for (const ch of Object.values(S.charts)) if (ch && ch.destroy) ch.destroy();
   for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-current', b.dataset.view === v ? 'page' : 'false');
   const vv = VIEWS.find(x => x[0] === v);
   $('viewTitle').textContent = t(vv[2]); $('viewKicker').textContent = t('k_' + v);
@@ -422,17 +442,30 @@ function go(v) {
 }
 
 async function refresh(manual) {
-  if (!$('view')) return;
+  if (!$('view') || (S.refreshing && !manual)) return;
+  S.refreshing = true;
+  const seq = ++S.refreshSeq, startView = S.view;
   try {
-    $('syncInfo').textContent = t('syncing');
+    const si = $('syncInfo'); if (si) si.textContent = t('syncing');
     await load();
+    if (seq !== S.refreshSeq) return;
     if (manual || S.view === 'home') await loadDays();
-    $('livePill').classList.remove('stale'); $('syncInfo').textContent = t('synced') + ' · ' + new Date().toLocaleTimeString(KT.locale, {hour12: false});
-  } catch (e) { $('livePill').classList.add('stale'); $('syncInfo').textContent = e.message; return; }
-  const rb = $('reqBadge'); if (rb) { rb.textContent = S.data.pending_requests || ''; rb.hidden = !S.data.pending_requests; rb.className = S.data.pending_requests ? 'badge' : ''; }
+    if (seq !== S.refreshSeq) return;
+    const lp = $('livePill'), si2 = $('syncInfo');
+    if (lp) lp.classList.remove('stale');
+    if (si2) si2.textContent = t('synced') + ' · ' + new Date().toLocaleTimeString(KT.locale, {hour12: false});
+  } catch (e) {
+    const lp = $('livePill'), si = $('syncInfo');
+    if (lp) lp.classList.add('stale');
+    if (si) si.textContent = e.message;
+    return;
+  } finally {
+    if (seq === S.refreshSeq) S.refreshing = false;
+  }
+  updateReqBadges();
   if (S.view === 'home') updateHome();
-  else if (S.view === 'users' && (manual || !document.querySelector('#view input:focus'))) drawUsers();
-  else if (manual) go(S.view);
+  else if (S.view === 'users' && (manual || !document.querySelector('#view select:focus, dialog.modal[open]'))) drawUsers();
+  else if (manual && S.view === startView) go(S.view);
 }
 
 /* ---------------- overview ---------------- */
@@ -472,8 +505,9 @@ class HistChart {
     this.pts = []; this.hover = null; this.dirty = true;
     el.addEventListener('pointermove', e => { this.hover = e.offsetX; this.dirty = true; Ticker.start(); });
     el.addEventListener('pointerleave', () => { this.hover = null; this.tip.classList.add('hide'); this.dirty = true; Ticker.start(); });
-    new ResizeObserver(() => { this.dirty = true; Ticker.start(); }).observe(el); Ticker.add(this);
+    this.ro = new ResizeObserver(() => { this.dirty = true; Ticker.start(); }); this.ro.observe(el); Ticker.add(this);
   }
+  destroy() { if (this.ro) { this.ro.disconnect(); this.ro = null; } Ticker.remove(this); }
   set(pts) { this.pts = pts; this.dirty = true; Ticker.start(); }
   tick() { if (!this.dirty) return false; this.dirty = false; this.draw(); return false; }
   draw() {
@@ -493,9 +527,13 @@ class HistChart {
     ctx.strokeStyle = P.line; ctx.beginPath(); ctx.moveTo(pl, H - pb + .5); ctx.lineTo(w - pr, H - pb + .5); ctx.stroke();
     ctx.fillStyle = P.muted; ctx.textBaseline = 'top'; ctx.textAlign = 'center';
     const span = t1 - t0, every = span > 43200 ? 4 : span > 14400 ? 2 : span > 3600 ? 1 : 0;
-    if (every) for (let x = Math.ceil(t0 / 3600) * 3600; x <= t1; x += 3600) {
-      const d = new Date(x * 1000); if (d.getHours() % every) continue;
-      const px = X(x); if (px < pl + 16 || px > w - pr - 16) continue; ctx.fillText(String(d.getHours()).padStart(2, '0') + ':00', px, H - pb + 5);
+    if (every) {
+      const first = new Date(t0 * 1000); first.setMinutes(0, 0, 0);
+      if (first.getTime() / 1000 < t0) first.setHours(first.getHours() + 1);
+      for (let x = first.getTime() / 1000; x <= t1; x += 3600) {
+        const d = new Date(x * 1000); if (d.getHours() % every) continue;
+        const px = X(x); if (px < pl + 16 || px > w - pr - 16) continue; ctx.fillText(String(d.getHours()).padStart(2, '0') + ':00', px, H - pb + 5);
+      }
     } else { ctx.textAlign = 'right'; ctx.fillText(new Date(t1 * 1000).toLocaleTimeString(KT.locale, {hour12: false, hour: '2-digit', minute: '2-digit'}), w - pr, H - pb + 5); }
     ctx.textAlign = 'left';
     const vis = pts.filter(p => p.t >= t0);
@@ -515,16 +553,16 @@ class HistChart {
       if (best) {
         const x = X(best.t); ctx.strokeStyle = alpha(P.text, .35); ctx.beginPath(); ctx.moveTo(x + .5, pt); ctx.lineTo(x + .5, H - pb); ctx.stroke();
         for (const s of this.o.series) if (best[s.key] != null) { ctx.fillStyle = P[s.color] || s.color; ctx.beginPath(); ctx.arc(x, Y(best[s.key]), 3.5, 0, 7); ctx.fill(); }
-        this.tip.classList.remove('hide'); this.tip.style.left = x + 'px'; this.tip.style.top = '44px';
-        this.tip.textContent = new Date(best.t * 1000).toLocaleTimeString(KT.locale, {hour12: false, hour: '2-digit', minute: '2-digit'}) + '　' +
+        this.tip.textContent = new Date(best.t * 1000).toLocaleTimeString(KT.locale, {hour12: false, hour: '2-digit', minute: '2-digit'}) + (KT === KT_ZH ? '　' : '  ') +
           this.o.series.map(s => s.label + ' ' + (best[s.key] == null ? '—' : this.o.unit(best[s.key]))).join('  ');
+        placeTip(this.tip, x, 44, w);
       }
     }
   }
 }
 async function loadSys(force) {
   if (!force && Date.now() - S.sysAt < 60000) return;
-  S.sysAt = Date.now();
+  const seq = S.viewSeq;
   try {
     const r = await api('sys-history');
     // 5-minute averages: one point a minute is too jagged to read at a glance
@@ -538,8 +576,9 @@ async function loadSys(force) {
     S.sys = [...B.values()].sort((a, b) => a.t - b.t).map(b => {
       const p = {t: b.t}; for (const k of ['cpu', 'mem', 'down', 'up']) p[k] = b.n[k] ? b.s[k] / b.n[k] : null; return p;
     });
+    S.sysAt = Date.now();
   } catch (e) { return; }
-  if (S.charts.sys) { S.charts.sys.set(S.sys); S.charts.net.set(S.sys); }
+  if (seq === S.viewSeq && S.view === 'home' && S.charts.sys) { S.charts.sys.set(S.sys); S.charts.net.set(S.sys); }
 }
 
 function updateHome() {
@@ -554,14 +593,15 @@ function updateHome() {
   $('kOnlineU').textContent = '/ ' + d.users.length + ' ' + t('users_n');
   $('kOnlineS').replaceChildren(h('span', null, t('active_n') + ' ', h('b', null, active)), h('span', null, t('paused_n') + ' ', h('b', null, d.users.length - active)));
   const rows = S.days.map(x => ({day: x.day, upload: x.up, download: x.down}));
+  const days30 = last30(), d7 = new Set(days30.slice(-7));
   const total = rows.reduce((a, r) => a + r.upload + r.download, 0);
-  const today = new Date().toISOString().slice(0, 10), tr = rows.find(r => r.day === today);
-  const last7 = rows.slice(-7).reduce((a, r) => a + r.upload + r.download, 0) / 7;
+  const today = localDay(Date.now()), tr = rows.find(r => r.day === today);
+  const last7 = rows.filter(r => d7.has(r.day)).reduce((a, r) => a + r.upload + r.download, 0) / 7;
   c.tw.month.set(total); $('kMonthU').textContent = 'GB';
   $('kMonthS').replaceChildren(h('span', null, t('today') + ' ', h('b', null, fmt.bytes(tr ? tr.upload + tr.download : 0))), h('span', null, t('avg7') + ' ', h('b', null, fmt.bytes(last7))));
   c.tw.mem.set(hl.mem_total ? hl.mem_used * 100 / hl.mem_total : null);
   $('kMemS').replaceChildren(h('span', null, t('load') + ' ', h('b', null, hl.load == null ? '—' : hl.load.toFixed(2))), h('span', null, (hl.cpus || '—') + ' CPU'), h('span', null, t('uptime') + ' ', h('b', null, dur(hl.uptime))));
-  if (JSON.stringify(rows) !== c.daysKey) { c.daysKey = JSON.stringify(rows); c.days.set(rows, last30()); }
+  if (JSON.stringify(rows) !== c.daysKey) { c.daysKey = JSON.stringify(rows); c.days.set(rows, days30); }
   // services
   const svc = (name, on, active, detail) => h('div', {class: 'svc'}, h('b', null, name),
     !on ? chip('off', t('off')) : active === true ? chip('ok', t('running')) : active === false ? chip('bad', t('stopped')) : chip('off', t('unknown')), h('small', null, detail));
@@ -599,7 +639,7 @@ async function changePort(line, name, redraw) {
 function userState(u) {
   if (u.enabled) return chip('ok', t('enabled'));
   if (u.disabled_reason === 'devices') return chip('warn', t('r_devices'));
-  return chip(u.disabled_reason === 'manual' || !u.disabled_reason ? 'off' : 'bad', t({quota: 'r_quota', expired: 'r_expired'}[u.disabled_reason] || 'r_manual'));
+  return chip(u.disabled_reason === 'manual' || !u.disabled_reason ? 'off' : 'bad', t({quota: 'r_quota', expired: 'r_expired', remote: 'r_remote'}[u.disabled_reason] || 'r_manual'));
 }
 const expText = u => u.expire_at ? dateStr(u.expire_at) : u.expire_after_days ? u.expire_after_days + ' ' + t('days') + ' · ' + t('exp_waiting') : t('never');
 const FILTERS = {
@@ -635,64 +675,66 @@ function usageBar(u) {
   return h('div', null, h('div', {class: 'use-top'}, h('b', null, fmt.bytes(used)), h('span', null, q ? fmt.bytes(q) : t('unlimited'))),
     h('div', {class: 'bar' + (p > .95 ? ' bad' : p > .8 ? ' warn' : '')}, h('i', {style: 'width:' + Math.min(100, p * 100) + '%'})));
 }
-function drawUsers() {
-  const us = S.data.users;
+function renderUsersList() {
+  const body = $('uBody'); if (!body || !S.data) return;
+  const us = S.data.users, q = S.q.toLowerCase();
   for (const id of [...S.sel]) if (!us.some(u => u.id === id)) S.sel.delete(id);
-  const listHost = h('div', {class: 'stack'});
-  const renderList = () => {
-    const q = S.q.toLowerCase();
-    const found = us.filter(u => !q || u.name.toLowerCase().includes(q) || (u.note || '').toLowerCase().includes(q));
-    const list = found.filter(FILTERS[S.f] || FILTERS.all).sort(SORTS[S.sort] || SORTS.id);
-    const chips = h('div', {class: 'chips'}, Object.keys(FILTERS).map(k => {
-      const n = found.filter(FILTERS[k]).length;
-      return k !== 'all' && !n && S.f !== k ? null : h('button', {class: 'filter-chip', 'aria-pressed': String(S.f === k), onclick: () => { S.f = k; renderList(); }}, t('f_' + k), h('span', {class: 'n'}, n));
-    }));
-    const allSel = list.length > 0 && list.every(u => S.sel.has(u.id));
-    const selAll = h('input', {type: 'checkbox', 'aria-label': t('sel_all'), checked: allSel});
-    selAll.onchange = () => { for (const u of list) selAll.checked ? S.sel.add(u.id) : S.sel.delete(u.id); renderList(); };
-    const head = h('div', {class: 'acct-grid u-grid acct-head'}, h('div', {class: 'c-sel'}, selAll), h('div', null, t('name')), h('div', {class: 'c-use'}, t('usage')), h('div', {class: 'c-exp'}, t('expires')), h('div', {class: 'c-state'}, t('status')), h('div', {class: 'c-acts'}));
-    const rows = list.map(u => {
-      const box = h('input', {type: 'checkbox', checked: S.sel.has(u.id), 'aria-label': u.name});
-      box.onchange = () => { box.checked ? S.sel.add(u.id) : S.sel.delete(u.id); renderList(); };
-      const dev = u.online ? (u.online.devices != null ? u.online.devices : u.online.ips.length) : 0;
-      return h('div', {class: 'acct-grid u-grid acct-row' + (S.sel.has(u.id) ? ' sel' : ''), tabindex: '0',
-          onclick: e => { if (!e.target.closest('button,input,label')) openUser(u.id); }, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) openUser(u.id); }},
-        h('label', {class: 'c-sel'}, box),
-        h('div', {class: 'who'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
-          h('div', {style: 'min-width:0'}, h('b', null, u.online ? h('span', {class: 'on-dot', title: t('online_now')}) : null, u.name),
-            h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + t('devices') : '') + ' · ' + u.online.protocols.join('/')
-              : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
-        h('div', {class: 'c-use'}, usageBar(u)),
-        h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
-          [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null),
-        h('div', {class: 'c-state'}, userState(u)),
-        h('div', {class: 'row-acts c-acts'}, h('button', {class: 'btn sm primary', onclick: () => openUser(u.id)}, icon('link'), t('share')),
-          h('button', {class: 'btn sm icon', title: t('edit'), onclick: () => editUser(u)}, icon('edit'))));
-    });
-    const bb = (a, ic, k, cls) => h('button', {class: 'btn sm' + (cls ? ' ' + cls : ''), onclick: () => bulk(a)}, icon(ic), t(k));
-    const bulkBar = S.sel.size ? h('div', {class: 'bulk-bar'}, h('b', null, t('selected') + ' ' + S.sel.size),
-      h('div', {class: 'bulk-acts'}, bb('enable', 'play', 'enable'), bb('disable', 'pause', 'disable'), bb('extend', 'clock', 'b_extend'), bb('add_gb', 'plus', 'b_addgb'),
-        bb('reset', 'refresh', 'b_reset'), bb('rotate', 'key', 'b_rotate'), bb('delete', 'x', 'del', 'danger')),
-      h('button', {class: 'btn sm ghost', onclick: () => { S.sel.clear(); renderList(); }}, t('clear_sel'))) : null;
-    listHost.replaceChildren(chips, bulkBar,
-      h('div', {class: 'panel'}, head, ...(rows.length ? rows : [h('div', {class: 'empty'}, us.length ? t('no_match') : t('no_users'))])));
-  };
+  const found = us.filter(u => !q || u.name.toLowerCase().includes(q) || (u.note || '').toLowerCase().includes(q));
+  const list = found.filter(FILTERS[S.f] || FILTERS.all).sort(SORTS[S.sort] || SORTS.id);
+  const chips = h('div', {class: 'chips'}, Object.keys(FILTERS).map(k => {
+    const n = found.filter(FILTERS[k]).length;
+    return k !== 'all' && !n && S.f !== k ? null : h('button', {class: 'filter-chip', 'aria-pressed': String(S.f === k), onclick: () => { S.f = k; renderUsersList(); }}, t('f_' + k), h('span', {class: 'n'}, n));
+  }));
+  const allSel = list.length > 0 && list.every(u => S.sel.has(u.id));
+  const selAll = h('input', {type: 'checkbox', 'aria-label': t('sel_all'), checked: allSel});
+  selAll.onchange = () => { for (const u of list) selAll.checked ? S.sel.add(u.id) : S.sel.delete(u.id); renderUsersList(); };
+  const head = h('div', {class: 'acct-grid u-grid acct-head'}, h('div', {class: 'c-sel'}, selAll), h('div', null, t('name')), h('div', {class: 'c-use'}, t('usage')), h('div', {class: 'c-exp'}, t('expires')), h('div', {class: 'c-state'}, t('status')), h('div', {class: 'c-acts'}));
+  const rows = list.map(u => {
+    const box = h('input', {type: 'checkbox', checked: S.sel.has(u.id), 'aria-label': u.name});
+    box.onchange = () => { box.checked ? S.sel.add(u.id) : S.sel.delete(u.id); renderUsersList(); };
+    const dev = u.online ? (u.online.devices != null ? u.online.devices : u.online.ips.length) : 0;
+    return h('div', {class: 'acct-grid u-grid acct-row' + (S.sel.has(u.id) ? ' sel' : ''), tabindex: '0',
+        onclick: e => { if (!e.target.closest('button,input,label')) openUser(u.id); }, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) openUser(u.id); }},
+      h('label', {class: 'c-sel'}, box),
+      h('div', {class: 'who'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
+        h('div', {style: 'min-width:0'}, h('b', null, u.online ? h('span', {class: 'on-dot', title: t('online_now')}) : null, u.name),
+          h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + t('devices') : '') + ' · ' + u.online.protocols.join('/')
+            : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
+      h('div', {class: 'c-use'}, usageBar(u)),
+      h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
+        [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null),
+      h('div', {class: 'c-state'}, userState(u)),
+      h('div', {class: 'row-acts c-acts'}, h('button', {class: 'btn sm primary', onclick: () => openUser(u.id)}, icon('link'), t('share')),
+        h('button', {class: 'btn sm icon', title: t('edit'), onclick: () => editUser(u)}, icon('edit'))));
+  });
+  const bb = (a, ic, k, cls) => h('button', {class: 'btn sm' + (cls ? ' ' + cls : ''), onclick: () => bulk(a)}, icon(ic), t(k));
+  const bulkBar = S.sel.size ? h('div', {class: 'bulk-bar'}, h('b', null, t('selected') + ' ' + S.sel.size),
+    h('div', {class: 'bulk-acts'}, bb('enable', 'play', 'enable'), bb('disable', 'pause', 'disable'), bb('extend', 'clock', 'b_extend'), bb('add_gb', 'plus', 'b_addgb'),
+      bb('reset', 'refresh', 'b_reset'), bb('rotate', 'key', 'b_rotate'), bb('delete', 'x', 'del', 'danger')),
+    h('button', {class: 'btn sm ghost', onclick: () => { S.sel.clear(); renderUsersList(); }}, t('clear_sel'))) : null;
+  body.replaceChildren(chips, ...[bulkBar].filter(Boolean),
+    h('div', {class: 'panel'}, head, ...(rows.length ? rows : [h('div', {class: 'empty'}, us.length ? t('no_match') : t('no_users'))])));
+}
+function drawUsers() {
+  if ($('uBody')) { renderUsersList(); return; }
+  const search = h('input', {id: 'uSearch', type: 'search', placeholder: t('search'), value: S.q});
   let composing = false;
-  const search = h('input', {type: 'search', placeholder: t('search'), value: S.q});
   search.addEventListener('compositionstart', () => { composing = true; });
-  search.addEventListener('compositionend', () => { composing = false; S.q = search.value; renderList(); });
-  search.oninput = () => { if (!composing) { S.q = search.value; renderList(); } };
+  search.addEventListener('compositionend', () => { composing = false; S.q = search.value; renderUsersList(); });
+  search.oninput = e => { if (composing || e.isComposing) return; S.q = search.value; renderUsersList(); };
   const sort = h('select', {'aria-label': 'sort'}, Object.keys(SORTS).map(k => h('option', {value: k}, t('s_' + k)))); sort.value = S.sort;
-  sort.onchange = () => { S.sort = sort.value; renderList(); };
-  renderList();
+  sort.onchange = () => { S.sort = sort.value; renderUsersList(); };
+  const body = h('div', {id: 'uBody', class: 'stack'});
   $('view').replaceChildren(h('section', {class: 'page' + (S.fresh ? '' : ' still')},
     h('div', {class: 'toolbar'}, h('div', {class: 'search'}, icon('search'), search), sort,
       h('div', {class: 'tool-r'}, h('button', {class: 'btn', onclick: batchAdd}, icon('users'), t('batch_add')),
         h('a', {class: 'btn', href: 'api/users-export', download: ''}, icon('arrowDown'), t('export_csv')))),
-    listHost));
+    body));
+  renderUsersList();
 }
 
 function batchAdd() {
+  S.drawerSeq++;
   const f = {prefix: h('input', {type: 'text', maxlength: '24', value: L === 'zh' ? '用户' : 'user'}), count: h('input', {type: 'number', min: '1', max: '200', value: '10'}),
     quota: h('input', {type: 'number', min: '0', value: '100'}), reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}),
     mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'days'}, t('exp_days')), h('option', {value: 'first'}, t('exp_first'))),
@@ -700,7 +742,7 @@ function batchAdd() {
     note: h('input', {type: 'text', maxlength: '200'})};
   f.mode.value = 'first';
   const daysF = field(t('exp_first_days'), f.days);
-  const sync = () => { daysF.hidden = f.mode.value === 'never'; daysF.firstChild.textContent = t(f.mode.value === 'first' ? 'exp_first_days' : 'exp_days'); };
+  const sync = () => { daysF.hidden = f.mode.value === 'never'; f.days.disabled = daysF.hidden; daysF.firstChild.textContent = t(f.mode.value === 'first' ? 'exp_first_days' : 'exp_days'); };
   f.mode.onchange = sync; sync();
   const save = h('button', {class: 'btn primary', type: 'submit'}, icon('check'), t('batch_add'));
   const form = h('form', {class: 'stack'}, h('div', {class: 'form-grid'}, field(t('batch_prefix'), f.prefix), field(t('batch_count'), f.count),
@@ -723,18 +765,26 @@ function batchAdd() {
 }
 
 function openDrawer() { $('drawer').classList.add('on'); $('drawer').setAttribute('aria-hidden', 'false'); $('scrim').classList.add('on'); document.body.style.overflow = 'hidden'; }
-function closeDrawer() { const d = $('drawer'); if (!d) return; d.classList.remove('on'); d.setAttribute('aria-hidden', 'true'); $('scrim').classList.remove('on'); document.body.style.overflow = ''; }
+function closeDrawer() { S.drawerSeq++; const d = $('drawer'); if (!d) return; d.classList.remove('on'); d.setAttribute('aria-hidden', 'true'); $('scrim').classList.remove('on'); document.body.style.overflow = ''; }
 
 async function openUser(id, first) {
   const u = S.data.users.find(x => x.id === id); if (!u) return;
+  const seq = ++S.drawerSeq;
   let links;
-  try { links = await api('user-links?id=' + id); } catch (e) { return err(e); }
+  try { links = await api('user-links?id=' + id); } catch (e) { if (seq === S.drawerSeq) err(e); return; }
+  if (seq !== S.drawerSeq || !$('drawer')) return;
   const used = u.used_up + u.used_down, q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB;
   const histBox = h('div', {class: 'chart h160'});
   const pwIn = h('input', {type: 'password', autocomplete: 'new-password', placeholder: '8+'});
   const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
-  const act = async (fn, ok) => { try { await fn(); toast(ok || t('saved')); await load(); closeDrawer(); if (S.view === 'users') drawUsers(); } catch (e) { err(e); } };
+  const act = async (btn, fn, ok) => {
+    if (btn) btn.disabled = true;
+    try { await fn(); toast(ok || t('saved')); await load(); closeDrawer(); if (S.view === 'users') drawUsers(); }
+    catch (e) { err(e); if (btn) btn.disabled = false; }
+  };
+  const actBtn = (cls, ic, label, onClick) => { const b = h('button', {class: cls}, ...(ic ? [icon(ic)] : []), label); b.onclick = () => onClick(b); return b; };
   const imp = links.import;
+  const sep = L === 'zh' ? '：' : ': ';
   $('drawer').replaceChildren(
     h('div', {class: 'dr-h'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
       h('div', null, h('b', null, first ? t('done_title') : u.name), h('small', null, first ? t('done_sub') : (u.note || ('#' + u.id)))),
@@ -761,21 +811,24 @@ async function openUser(id, first) {
       u.remote_id ? null : h('div', {class: 'dr-sec'}, h('h4', null, t('member_login'), h('span', {class: 'right'}, u.has_login ? chip('ok', t('login_on')) : chip('off', t('login_off')))),
         h('p', {class: 'muted', style: 'font-size:12.5px;margin:0 0 10px;line-height:1.7'}, t('member_login_tip')),
         h('div', {style: 'display:flex;gap:8px;flex-wrap:wrap'}, pwIn,
-          h('button', {class: 'btn', onclick: () => act(() => api(`users/${u.id}/login`, {password: pwIn.value}))}, icon('lock'), t('set_pw')),
-          u.has_login ? h('button', {class: 'btn ghost', onclick: () => act(() => api(`users/${u.id}/login`, {password: ''}), t('pw_cleared'))}, t('clear_pw')) : null),
-        S.data.member_url ? h('div', {class: 'muted', style: 'font-size:12px;margin-top:8px;word-break:break-all'}, t('member_centre') + '：' + S.data.member_url) : null),
+          actBtn('btn', 'lock', t('set_pw'), b => act(b, () => api(`users/${u.id}/login`, {password: pwIn.value}))),
+          u.has_login ? actBtn('btn ghost', null, t('clear_pw'), b => act(b, () => api(`users/${u.id}/login`, {password: ''}), t('pw_cleared'))) : null),
+        S.data.member_url ? h('div', {class: 'muted', style: 'font-size:12px;margin-top:8px;word-break:break-all'}, t('member_centre') + sep + S.data.member_url) : null),
       h('div', {class: 'dr-sec'}, h('h4', null, t('actions')), h('div', {class: 'act-grid'},
         h('button', {class: 'btn', onclick: () => { closeDrawer(); editUser(u); }}, icon('edit'), t('edit')),
-        h('button', {class: 'btn', onclick: () => act(() => api(`users/${u.id}/save`, {enabled: !u.enabled}))}, icon(u.enabled ? 'pause' : 'play'), u.enabled ? t('disable') : t('enable')),
-        h('button', {class: 'btn', onclick: async () => { if (await confirmBox(t('reset'), t('confirm_reset'))) act(() => api(`users/${u.id}/reset`, {})); }}, icon('refresh'), t('reset')),
-        h('button', {class: 'btn', onclick: async () => { if (await confirmBox(t('rotate'), t('confirm_rotate'))) act(() => api(`users/${u.id}/rotate`, {})); }}, icon('key'), t('rotate')),
-        h('button', {class: 'btn danger', onclick: async () => { if (await confirmBox(t('del') + ' · ' + u.name, t('confirm_del'), {danger: true, confirm: t('del')})) act(() => api(`users/${u.id}/delete`, {})); }}, icon('x'), t('del'))))));
+        actBtn('btn', u.enabled ? 'pause' : 'play', u.enabled ? t('disable') : t('enable'), b => act(b, () => api(`users/${u.id}/save`, {enabled: !u.enabled}))),
+        actBtn('btn', 'refresh', t('reset'), async b => { if (await confirmBox(t('reset'), t('confirm_reset'))) await act(b, () => api(`users/${u.id}/reset`, {})); }),
+        actBtn('btn', 'key', t('rotate'), async b => { if (await confirmBox(t('rotate'), t('confirm_rotate'))) await act(b, () => api(`users/${u.id}/rotate`, {})); }),
+        actBtn('btn danger', 'x', t('del'), async b => { if (await confirmBox(t('del') + ' · ' + u.name, t('confirm_del'), {danger: true, confirm: t('del')})) await act(b, () => api(`users/${u.id}/delete`, {})); })))));
   openDrawer();
   new Ring(ringBox.firstChild).set(q ? used / q : 0, q && used / q > .9 ? 'danger' : 'down');
-  api('users/' + u.id + '/history?days=30').then(r => new DayBars(histBox).set(r.days.map(x => ({day: x.day, upload: x.up, download: x.down})), last30())).catch(() => {});
+  api('users/' + u.id + '/history?days=30').then(r => {
+    if (seq === S.drawerSeq && histBox.isConnected) new DayBars(histBox).set(r.days.map(x => ({day: x.day, upload: x.up, download: x.down})), last30());
+  }).catch(() => {});
 }
 
 function editUser(u) {
+  S.drawerSeq++;
   const isNew = !u; u = u || {name: '', quota_gb: 0, expire_at: 0, reset_day: 0, note: '', max_ips: 0, expire_after_days: 0};
   const f = {name: h('input', {type: 'text', value: u.name, maxlength: '32'}), quota: h('input', {type: 'number', min: '0', step: '1', value: u.quota_gb || 0}),
     exp: h('input', {type: 'date', value: u.expire_at ? dateStr(u.expire_at) : ''}), reset: h('input', {type: 'number', min: '0', max: '28', value: u.reset_day || 0}),
@@ -784,8 +837,8 @@ function editUser(u) {
     first: h('input', {type: 'number', min: '1', max: '3650', value: u.expire_after_days || 30})};
   f.mode.value = u.expire_at ? 'date' : u.expire_after_days ? 'first' : 'never';
   const expF = field(t('expire').split(/[（(]/)[0], f.exp), firstF = field(t('exp_first_days'), f.first);
-  const sync = () => { expF.hidden = f.mode.value !== 'date'; firstF.hidden = f.mode.value !== 'first'; };
-  f.mode.onchange = () => { sync(); if (f.mode.value === 'date' && !f.exp.value) f.exp.value = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10); };
+  const sync = () => { expF.hidden = f.mode.value !== 'date'; firstF.hidden = f.mode.value !== 'first'; f.exp.disabled = expF.hidden; f.first.disabled = firstF.hidden; };
+  f.mode.onchange = () => { sync(); if (f.mode.value === 'date' && !f.exp.value) f.exp.value = localDay(Date.now() + 30 * 864e5); };
   sync();
   const save = h('button', {class: 'btn primary', type: 'submit'}, icon('check'), t('save'));
   const form = h('form', {class: 'stack'}, field(t('name'), f.name), h('div', {class: 'form-grid'}, field(t('quota'), f.quota), field(t('reset_day'), f.reset),
@@ -815,12 +868,12 @@ function editUser(u) {
 
 /* ---------------- members: requests, invite codes, member centre ---------------- */
 async function drawMembers() {
-  const s = S.data.settings;
-  const view = $('view');
+  const s = S.data.settings, view = $('view'), seq = S.viewSeq;
   view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
   let inv, req;
-  try { [inv, req] = await Promise.all([api('invites'), api('requests')]); } catch (e) { return err(e); }
-  if (S.view !== 'members') return;
+  try { [inv, req] = await Promise.all([api('invites'), api('requests')]); }
+  catch (e) { if (seq === S.viewSeq && S.view === 'members') view.replaceChildren(retryBox(e.message, drawMembers)); return err(e); }
+  if (seq !== S.viewSeq || S.view !== 'members') return;
   const pend = req.requests.filter(r => r.status === 'pending'), done = req.requests.filter(r => r.status !== 'pending').slice(0, 10);
   const decide = async (r, ok) => {
     let body = {};
@@ -831,7 +884,7 @@ async function drawMembers() {
       const ans = await modal({title: t('reject') + ' · ' + r.name, input: true, placeholder: t('answer'), confirm: t('reject'), danger: true});
       if (ans == null) return; body = {answer: ans};
     }
-    try { await api(`requests/${r.id}/${ok ? 'approve' : 'reject'}`, body); toast(t('saved')); await load(); drawMembers(); } catch (e) { err(e); }
+    try { await api(`requests/${r.id}/${ok ? 'approve' : 'reject'}`, body); toast(t('saved')); await load(); updateReqBadges(); drawMembers(); } catch (e) { err(e); }
   };
   const reqRows = pend.map(r => h('div', {class: 'tl-row'}, h('b', null, r.name), h('b', {class: 'num'}, '+' + r.add_gb + ' GB'),
     h('span', {class: 'muted'}, fmt.time(r.created_at) + (r.reason ? ' · ' + r.reason : '')),
@@ -857,7 +910,7 @@ async function drawMembers() {
       (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + (i.note ? ' · ' + i.note : '') + ' · ' + fmt.time(i.valid_until)),
     h('span', {class: 'tl-acts'}, chip(i.status === 'unused' ? 'ok' : 'off', t('st_' + i.status)),
       i.status === 'unused' ? h('button', {class: 'btn sm', title: t('copy_link'), onclick: () => copyText(i.register_url || i.code, t('copy_link'))}, icon('link')) : null,
-      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async () => { if (await confirmBox(t('revoke'), i.code)) { try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (e) { err(e); } } }}, t('revoke')) : null)));
+      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async e => { if (await confirmBox(t('revoke'), i.code)) { const b = e.currentTarget; b.disabled = true; try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (er) { err(er); b.disabled = false; } } }}, t('revoke')) : null)));
   const cb = k => { const e = h('input', {type: 'checkbox', checked: !!s[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
   view.replaceChildren(h('section', {class: 'page'},
     h('div', {class: 'grid g-2-1'},
@@ -877,25 +930,33 @@ async function drawMembers() {
 
 /* ---------------- servers: join code, joined servers, monthly traffic ---------------- */
 async function drawServers() {
-  const s = S.data.settings, view = $('view');
+  const s = S.data.settings, view = $('view'), seq = S.viewSeq;
+  view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
   let sv;
-  try { sv = await api('servers'); } catch (e) { return err(e); }
-  if (S.view !== 'servers') return;
+  try { sv = await api('servers'); }
+  catch (e) { if (seq === S.viewSeq && S.view === 'servers') view.replaceChildren(retryBox(e.message, drawServers)); return err(e); }
+  if (seq !== S.viewSeq || S.view !== 'servers') return;
   const code = h('input', {type: 'text', placeholder: 'v2v1.…', autocomplete: 'off'}), name = h('input', {type: 'text', maxlength: '24'});
   const add = h('button', {class: 'btn primary'}, icon('plus'), t('add_server'));
   add.onclick = async () => { add.disabled = true; try { await api('servers', {code: code.value.trim(), name: name.value.trim()}); toast(t('saved')); await load(); drawServers(); } catch (e) { err(e); add.disabled = false; } };
-  const act = async (id, a, body) => { try { await api(`servers/${id}/${a}`, body || {}); await load(); drawServers(); } catch (e) { err(e); } };
+  const act = async (btn, id, a, body) => { if (btn) btn.disabled = true; try { await api(`servers/${id}/${a}`, body || {}); await load(); drawServers(); } catch (e) { err(e); if (btn) btn.disabled = false; } };
   const rows = sv.servers.map(x => h('div', {class: 'tl-row'},
     h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + x.protocols.join(' / ') + ' · ' + x.users + ' ' + t('users_n') +
       (x.health && x.health.mem_total ? ' · ' + t('mem') + ' ' + Math.round(x.health.mem_used * 100 / x.health.mem_total) + '%' : '') +
       (x.last_ok ? ' · ' + t('last_sync') + ' ' + fmt.ago(x.last_ok) : '') + (x.version ? ' · v' + x.version : '')),
     h('span', {class: 'tl-acts'}, x.error ? chip('bad', x.error.slice(0, 60)) : x.enabled ? chip('ok', t('running')) : chip('off', t('off')),
-      h('button', {class: 'btn sm', onclick: () => act(x.id, 'sync')}, icon('refresh')),
-      h('button', {class: 'btn sm', onclick: () => act(x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
-      h('button', {class: 'btn sm danger', onclick: async () => { if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(x.id, 'remove'); }}, icon('x')))));
+      h('button', {class: 'btn sm', onclick: e => act(e.currentTarget, x.id, 'sync')}, icon('refresh')),
+      h('button', {class: 'btn sm', onclick: e => act(e.currentTarget, x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
+      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x')))));
   const sm = S.data.server_month || {}, used = (sm.rx || 0) + (sm.tx || 0), cap = s.server_cap_gb * GB;
   const capIn = h('input', {type: 'number', min: '0', value: s.server_cap_gb || 0}), dayIn = h('input', {type: 'number', min: '1', max: '28', value: s.server_reset_day || 1});
   const ring = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, cap ? fmt.pct(used / cap) : '∞'), h('small', null, sm.period || '')));
+  const resetKeyBtn = h('button', {class: 'btn'}, icon('key'), t('reset_key'));
+  resetKeyBtn.onclick = async () => {
+    if (!await confirmBox(t('reset_key'), t('reset_key_tip'))) return;
+    resetKeyBtn.disabled = true;
+    try { await api('node-key', {}); await load(); drawServers(); } catch (e) { err(e); resetKeyBtn.disabled = false; }
+  };
   view.replaceChildren(h('section', {class: 'page'},
     sv.node_master ? h('div', {class: 'alert'}, icon('server'), t('managed_by') + sv.node_master) : null,
     panel(t('servers'), null, null, tip(t('servers_tip')), h('div', {class: 'stack'},
@@ -907,8 +968,7 @@ async function drawServers() {
         h('div', {class: 'form-grid'}, field(t('cap'), capIn), field(t('cap_day'), dayIn)),
         h('div', null, h('button', {class: 'btn', onclick: () => saveSettings({server_cap_gb: Number(capIn.value), server_reset_day: Number(dayIn.value)}, drawServers)}, icon('check'), t('save')))))),
       panel(t('join_code'), null, null, tip(t('join_tip')), h('div', {class: 'stack'}, h('div', {class: 'creds', style: 'max-height:90px;overflow:auto'}, sv.join_code),
-        h('div', {class: 'act-grid'}, h('button', {class: 'btn primary', onclick: () => copyText(sv.join_code, t('join_code'))}, icon('copy'), t('copy_btn')),
-          h('button', {class: 'btn', onclick: async () => { if (await confirmBox(t('reset_key'), t('reset_key_tip'))) { try { await api('node-key', {}); drawServers(); } catch (e) { err(e); } } }}, icon('key'), t('reset_key'))))))));
+        h('div', {class: 'act-grid'}, h('button', {class: 'btn primary', onclick: () => copyText(sv.join_code, t('join_code'))}, icon('copy'), t('copy_btn')), resetKeyBtn))))));
   const renewIn = h('input', {type: 'date', value: s.vps_renew_at || ''}), noteIn = h('input', {type: 'text', maxlength: '40', value: s.vps_renew_note || ''});
   const left = S.data.renew_days;
   view.firstChild.append(panel(t('renew'), left != null ? t('renew_left')(left) : null, null, tip(t('renew_tip')), h('div', {class: 'stack'},
@@ -921,7 +981,7 @@ async function drawServers() {
 
 /* ---------------- monitor: site reachability + abuse watch ---------------- */
 function spark(cv, vals) {
-  Ticker.add({tick() {
+  Ticker.add({el: cv, tick() {
     const {ctx, w, h: hh} = setupCanvas(cv), P = Palette.v; ctx.clearRect(0, 0, w, hh);
     const ok = vals.filter(v => v != null), max = Math.max(200, ...ok) * 1.15, n = Math.max(1, vals.length - 1);
     vals.forEach((v, i) => { if (v == null) { ctx.fillStyle = alpha(P.danger || '#e5432a', .7); ctx.fillRect(i / n * w - 1, 0, 2, hh); } });
@@ -938,17 +998,17 @@ function probeErr(r) {
     : /SSL|certificate/i.test(e) ? 'e_tls' : 'e_other');
 }
 async function drawMonitor() {
-  const s = S.data.settings, view = $('view');
+  const s = S.data.settings, view = $('view'), seq = S.viewSeq;
+  view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
   let mo, ab;
-  try { [mo, ab] = await Promise.all([api('monitor'), api('abuse')]); } catch (e) { return err(e); }
-  if (S.view !== 'monitor') return;
+  try { [mo, ab] = await Promise.all([api('monitor'), api('abuse')]); }
+  catch (e) { if (seq === S.viewSeq && S.view === 'monitor') view.replaceChildren(retryBox(e.message, drawMonitor)); return err(e); }
+  if (seq !== S.viewSeq || S.view !== 'monitor') return;
   const run = h('button', {class: 'btn primary'}, icon('refresh'), t('run_now'));
   run.onclick = async () => {
     run.disabled = true;
-    try {
-      await api('monitor', {}); toast('…');
-      setTimeout(() => { if (S.view === 'monitor') drawMonitor(); }, 9000);
-    } catch (e) { err(e); run.disabled = false; }
+    try { await api('monitor', {}); toast('…'); setTimeout(() => { if (seq === S.viewSeq && S.view === 'monitor') drawMonitor(); }, 9000); }
+    catch (e) { err(e); run.disabled = false; }
   };
   const lt = mo.latest;
   const sites = (mo.sites || []).map(x => {
@@ -963,7 +1023,8 @@ async function drawMonitor() {
   const accs = ab.accounts.filter(a => a.streams || a.ips || a.flags.length);
   const acb = k => { const e = h('input', {type: 'checkbox', checked: !!s[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
   const scan = h('button', {class: 'btn'}, icon('shield'), t('scan_now'));
-  scan.onclick = async () => { try { await api('abuse', {}); drawMonitor(); } catch (e) { err(e); } };
+  scan.onclick = async () => { scan.disabled = true; try { await api('abuse', {}); drawMonitor(); } catch (e) { err(e); scan.disabled = false; } };
+  const sep = L === 'zh' ? '：' : ': ';
   view.replaceChildren(h('section', {class: 'page'},
     panel(t('monitor'), null, run, tip(t('monitor_tip')), !lt ? h('div', {class: 'empty'}, t('no_data')) : h('div', {class: 'stack'},
       h('div', {class: 'port-list'}, chip('info plain', fmt.time(lt.at)), lt.region ? chip('info plain', t('region') + ' ' + lt.region) : null,
@@ -971,7 +1032,7 @@ async function drawMonitor() {
         lt.speed && lt.speed.ok ? chip('ok', t('speed') + ' ' + lt.speed.mbps + ' Mbps') : null, chip(lt.v6 ? 'ok' : 'off', 'IPv6 ' + (lt.v6 ? t('yes') : t('no')))),
       h('div', {class: 'site-grid'}, ...sites), acb('monitor_enabled'))),
     panel(t('abuse'), null, scan, tip(t('abuse_tip')), h('div', {class: 'stack'}, acb('abuse_guard'),
-      h('div', {class: 'muted', style: 'font-size:12px'}, t('coverage') + '：' + (ab.coverage.join(', ') || '—') + (ab.at ? ' · ' + fmt.time(ab.at) : '')),
+      h('div', {class: 'muted', style: 'font-size:12px'}, t('coverage') + sep + (ab.coverage.join(', ') || '—') + (ab.at ? ' · ' + fmt.time(ab.at) : '')),
       accs.length ? h('div', {class: 'tl'}, accs.map(a => h('div', {class: 'tl-row'}, h('b', null, a.name),
         h('span', {class: 'muted num'}, `${t('streams')} ${a.streams} · ${t('targets')} ${a.targets} · ${t('ports_n')} ${a.ports} · ${t('addrs')} ${a.ips}`),
         h('span', {class: 'tl-acts'}, ...(a.flags.length ? a.flags.map(flag) : [chip('ok', t('ok_quiet'))]))))) : h('div', {class: 'muted', style: 'font-size:12.5px'}, t('abuse_none')),
@@ -999,14 +1060,17 @@ function drawSettings() {
   const proto = (k, title, desc, ...grid) => h('div', {class: 'proto'}, check(title, cb(k)), h('em', null, desc), h('div', {class: 'form-grid'}, ...grid));
   const portBtn = (line, name) => s[line === 'reality' ? 'reality_enabled' : line + '_enabled'] ?
     h('div', {class: 'full'}, h('button', {class: 'btn sm', type: 'button', title: t('change_port_tip'), onclick: () => changePort(line, name, drawSettings)}, icon('refresh'), t('change_port'))) : null;
-  const certBtn = h('button', {class: 'btn sm', type: 'button', onclick: async () => { try { await api('cert', {}); toast('…'); } catch (e) { err(e); } }}, icon('lock'), t('cert_now'));
+  const certBtn = h('button', {class: 'btn sm', type: 'button'}, icon('lock'), t('cert_now'));
+  certBtn.onclick = async () => { certBtn.disabled = true; try { await api('cert', {}); toast('…'); } catch (e) { err(e); } finally { certBtn.disabled = false; } };
   const saveBtn = h('button', {class: 'btn primary'}, icon('check'), t('save'));
   saveBtn.onclick = async () => {
     const body = {};
     for (const el of inputs) body[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value;
     if (!body.reality_enabled && !body.hy2_enabled && !body.tuic_enabled) return toast(t('proto_one'), 'err');
+    const prevLang = L;
     saveBtn.disabled = true;
-    try { await api('settings', body); toast(t('saved')); await load(); drawSettings(); } catch (e) { err(e); saveBtn.disabled = false; }
+    try { await api('settings', body); toast(t('saved')); await load(); if (L !== prevLang) await renderShell(); else drawSettings(); }
+    catch (e) { err(e); saveBtn.disabled = false; }
   };
   $('view').replaceChildren(h('section', {class: 'page'},
     panel(t('s_proto'), null, null, h('div', null,
@@ -1065,11 +1129,12 @@ async function runDoctor(btn, box) {
   btn.disabled = true; box.replaceChildren(h('div', {class: 'skeleton', style: 'height:120px'}));
   try {
     const r = (await api('doctor', {})).results, bad = r.filter(x => x.ok === false).length;
+    const sep = L === 'zh' ? '：' : ': ';
     box.replaceChildren(h('div', {style: 'margin-bottom:6px'}, bad ? chip('bad', bad + ' ' + t('doctor_bad')) : chip('ok', t('doctor_ok'))),
       ...r.map(x => {
         const zh = L === 'zh' && DOC[x.id], name = zh ? zh[0] : x.id.replace(/_/g, ' '), fix = x.ok === false ? ((zh && zh[1]) || x.fix) : '';
         return h('div', {class: 'doc-row'}, h('span', {class: 'dot ' + (x.ok === true ? 'ok' : x.ok === false ? 'bad' : '')}),
-          h('div', null, h('b', null, name), h('small', null, x.detail), fix ? h('div', {class: 'fix'}, h('b', null, t('fix') + '：'), fix) : null));
+          h('div', null, h('b', null, name), h('small', null, x.detail), fix ? h('div', {class: 'fix'}, h('b', null, t('fix') + sep), fix) : null));
       }));
   } catch (e) { box.replaceChildren(h('div', {class: 'empty'}, e.message)); }
   btn.disabled = false;
@@ -1077,8 +1142,9 @@ async function runDoctor(btn, box) {
 const AI_KIND = {hosting: ['机房 IP（数据中心）', 'Data-centre IP'], residential: ['家庭宽带 IP', 'Home broadband IP'], mobile: ['手机网络 IP', 'Mobile IP']};
 const AI_SITES = [['claude', 'Claude'], ['claude_api', 'Claude API'], ['chatgpt', 'ChatGPT'], ['gemini', 'Gemini']];
 function aiPanel() {
-  const box = h('div', {class: 'skeleton', style: 'height:120px'}), btn = h('button', {class: 'btn sm'}, icon('pulse'), t('ai_run'));
+  const seq = S.viewSeq, box = h('div', {class: 'skeleton', style: 'height:120px'}), btn = h('button', {class: 'btn sm'}, icon('pulse'), t('ai_run'));
   const draw = r => {
+    if (seq !== S.viewSeq || !box.isConnected) return;
     box.className = ''; box.style.height = '';
     const res = r.result;
     if (!res) return box.replaceChildren(h('p', {class: 'muted', style: 'margin:0;font-size:12.5px'}, t('ai_never')));
@@ -1097,24 +1163,27 @@ function aiPanel() {
         r.servers.map(x => h('div', {class: 'muted', style: 'font-size:12.5px'}, h('b', null, x.name), '  ', x.summary || '—'))) : null,
       h('p', {class: 'muted num', style: 'margin:10px 0 0;font-size:11.5px'}, t('ai_at') + ' ' + fmt.time(res.at))].filter(Boolean));
   };
-  const get = async body => { try { draw(await api('aicheck', body)); } catch (e) { box.className = ''; box.style.height = ''; box.replaceChildren(h('div', {class: 'empty'}, e.message)); } };
+  const get = async body => { try { draw(await api('aicheck', body)); } catch (e) { if (seq === S.viewSeq && box.isConnected) { box.className = ''; box.style.height = ''; box.replaceChildren(retryBox(e.message, () => get(body))); } } };
   btn.onclick = async () => { btn.disabled = true; box.className = 'skeleton'; box.style.height = '120px'; await get({}); btn.disabled = false; };
   get();
   return panel(t('ai'), t('ai_tip'), btn, box);
 }
 function securityPanel() {
-  const totpBox = h('div', {class: 'stack'}), histBox = h('div', {class: 'skeleton', style: 'height:120px'}), sessBox = h('div');
+  const seq = S.viewSeq, totpBox = h('div', {class: 'stack'}), histBox = h('div', {class: 'skeleton', style: 'height:120px'}), sessBox = h('div');
   const fill = async () => {
     let r;
-    try { r = await api('security'); } catch (e) { histBox.className = ''; histBox.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
+    try { r = await api('security'); }
+    catch (e) { if (seq === S.viewSeq && histBox.isConnected) { histBox.className = ''; histBox.style.height = ''; histBox.replaceChildren(retryBox(e.message, fill)); } return; }
+    if (seq !== S.viewSeq || !histBox.isConnected) return;
     // two-step verification
     const on = r.totp;
     const enable = async btn => {
       btn.disabled = true;
       let g; try { g = await api('totp'); } catch (e) { btn.disabled = false; return err(e); }
-      const code = h('input', {type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', class: 'otp', placeholder: '000000'});
+      if (seq !== S.viewSeq || !totpBox.isConnected) return;
+      const code = h('input', {type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '12', class: 'otp', placeholder: '000000'});
       const ok = h('button', {class: 'btn primary'}, icon('check'), t('totp_confirm'));
-      ok.onclick = async () => { ok.disabled = true; try { await api('totp', {secret: g.secret, code: code.value}); toast(t('totp_on')); await load(); fill(); } catch (e) { err(e); ok.disabled = false; code.select(); } };
+      ok.onclick = async () => { ok.disabled = true; try { await api('totp', {secret: g.secret, code: code.value.replace(/\s+/g, '')}); toast(t('totp_on')); await load(); fill(); } catch (e) { err(e); ok.disabled = false; code.select(); } };
       code.onkeydown = e => { if (e.key === 'Enter') ok.click(); };
       totpBox.replaceChildren(h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('totp_scan')),
         h('div', {class: 'totp-setup'}, h('img', {class: 'qr', alt: 'QR', src: 'api/qr?text=' + encodeURIComponent(g.uri)}),
@@ -1127,18 +1196,20 @@ function securityPanel() {
       if (!on) return enable(tb);
       const pw = await modal({title: t('totp_disable'), text: t('totp_pw'), input: true, type: 'password', confirm: t('totp_disable'), danger: true});
       if (pw == null) return;
-      try { await api('totp', {off: true, password: pw}); toast(t('saved')); await load(); fill(); } catch (e) { err(e); }
+      tb.disabled = true;
+      try { await api('totp', {off: true, password: pw}); toast(t('saved')); await load(); fill(); } catch (e) { err(e); tb.disabled = false; }
     };
     totpBox.replaceChildren(h('div', {class: 'sec-row'}, h('div', {class: 'sec-ic' + (on ? ' on' : '')}, icon('shield')),
       h('div', {style: 'flex:1;min-width:0'}, h('b', null, t('totp'), ' ', chip(on ? 'ok' : 'off', t(on ? 'totp_on' : 'totp_off'))), h('p', {class: 'muted'}, t('totp_tip'))), tb));
     // sessions
-    const lo = h('button', {class: 'btn sm', onclick: async () => { try { await api('security', {logout_others: true}); toast(t('saved')); fill(); } catch (e) { err(e); } }}, icon('out'), t('logout_others'));
+    const lo = h('button', {class: 'btn sm'}, icon('out'), t('logout_others'));
+    lo.onclick = async () => { lo.disabled = true; try { await api('security', {logout_others: true}); toast(t('saved')); fill(); } catch (e) { err(e); lo.disabled = false; } };
     sessBox.replaceChildren(h('div', {class: 'sec-row'}, h('div', {class: 'sec-ic'}, icon('users')),
       h('div', {style: 'flex:1'}, h('b', null, t('sessions')), h('p', {class: 'muted'}, h('b', {class: 'num'}, r.sessions))), r.sessions > 1 ? lo : null));
     // sign-in history
     const ua = s => /iPhone|iPad/.test(s) ? 'iOS' : /Android/.test(s) ? 'Android' : /Mac OS/.test(s) ? 'macOS' : /Windows/.test(s) ? 'Windows' : /Linux/.test(s) ? 'Linux' : (s || '').slice(0, 24);
     const br = s => /Edg\//.test(s) ? 'Edge' : /Chrome\//.test(s) ? 'Chrome' : /Firefox\//.test(s) ? 'Firefox' : /Safari\//.test(s) ? 'Safari' : '';
-    histBox.className = '';
+    histBox.className = ''; histBox.style.height = '';
     histBox.replaceChildren(...[r.logins.length ? h('div', {class: 'tl'}, r.logins.slice(0, 12).map(x => h('div', {class: 'tl-row'},
       h('span', {class: 'num muted', style: 'min-width:92px;flex:none'}, fmt.time(x.at)), h('code', {class: 'code-chip'}, x.ip || '—'),
       h('span', {class: 'muted'}, [ua(x.ua), br(x.ua)].filter(Boolean).join(' · ')),
@@ -1158,19 +1229,40 @@ function drawSystem() {
   docBtn.onclick = () => runDoctor(docBtn, docBox);
   const tgTok = h('input', {type: 'text', placeholder: '123456789:AA…', autocomplete: 'off'});
   const tgCb = k => { const e = h('input', {type: 'checkbox', checked: !!d.settings[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
+  const tgOffBtn = h('button', {class: 'btn sm'}, t('tg_off'));
+  tgOffBtn.onclick = async () => { tgOffBtn.disabled = true; try { await api('telegram', {off: true}); await load(); drawSystem(); } catch (e) { err(e); tgOffBtn.disabled = false; } };
+  const tgConnBtn = h('button', {class: 'btn'}, t('tg_connect'));
+  tgConnBtn.onclick = async () => {
+    tgConnBtn.disabled = true;
+    try { await api('telegram', {token: tgTok.value.trim()}); toast(t('tg_on')); await load(); drawSystem(); }
+    catch (e) { toast(e.message === 'no_chat' ? t('tg_no_chat') : e.message === 'bad_token' ? t('tg_bad') : e.message, 'err'); tgConnBtn.disabled = false; }
+  };
   const tgBody = tg ? h('div', {class: 'stack'}, h('div', null, chip('ok', t('tg_on'))), h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_cmds')),
-      tgCb('tg_bot'), tgCb('tg_backup'),
-      h('div', null, h('button', {class: 'btn sm', onclick: async () => { try { await api('telegram', {off: true}); await load(); drawSystem(); } catch (e) { err(e); } }}, t('tg_off'))))
-    : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_tip')), field(t('tg_token'), tgTok),
-      h('div', null, h('button', {class: 'btn', onclick: async () => {
-        try { await api('telegram', {token: tgTok.value.trim()}); toast(t('tg_on')); await load(); drawSystem(); }
-        catch (e) { toast(e.message === 'no_chat' ? t('tg_no_chat') : e.message === 'bad_token' ? t('tg_bad') : e.message, 'err'); }
-      }}, t('tg_connect'))));
+      tgCb('tg_bot'), tgCb('tg_backup'), h('div', null, tgOffBtn))
+    : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_tip')), field(t('tg_token'), tgTok), h('div', null, tgConnBtn));
   const pw = {user: h('input', {type: 'text', value: d.settings.admin_user}), old: h('input', {type: 'password', autocomplete: 'current-password'}), nw: h('input', {type: 'password', autocomplete: 'new-password'})};
+  const pwBtn = h('button', {class: 'btn'}, icon('lock'), t('save'));
+  pwBtn.onclick = async () => {
+    pwBtn.disabled = true;
+    try { await api('password', {username: pw.user.value, old: pw.old.value, new: pw.nw.value}); toast(t('saved')); pw.old.value = pw.nw.value = ''; }
+    catch (e) { err(e); } finally { pwBtn.disabled = false; }
+  };
   const restore = h('input', {type: 'file', accept: '.json', hidden: true});
   restore.onchange = async () => {
     const f = restore.files[0]; if (!f) return;
-    try { await api('restore', JSON.parse(await f.text())); toast(t('restore_ok')); await load(); } catch (er) { err(er); }
+    try {
+      if (!await confirmBox(t('restore'), t('confirm_restore'), {danger: true, confirm: t('restore')})) return;
+      await api('restore', JSON.parse(await f.text())); toast(t('restore_ok')); await renderShell();
+    } catch (er) { err(er); }
+    finally { restore.value = ''; }
+  };
+  const rulesBtn = h('button', {class: 'btn sm'}, icon('refresh'), t('rules_refresh'));
+  rulesBtn.onclick = async () => { rulesBtn.disabled = true; try { await api('rules-refresh', {}); toast('…'); } catch (e) { err(e); } finally { rulesBtn.disabled = false; } };
+  const restartBtn = h('button', {class: 'btn sm'}, icon('bolt'), t('restart'));
+  restartBtn.onclick = async () => {
+    if (!await confirmBox(t('restart'), '')) return;
+    restartBtn.disabled = true;
+    try { await api('restart', {}); toast(t('saved')); } catch (e) { err(e); } finally { restartBtn.disabled = false; }
   };
   $('view').replaceChildren(h('section', {class: 'page'},
     h('div', {class: 'grid g-2-1'},
@@ -1183,15 +1275,12 @@ function drawSystem() {
     securityPanel(),
     h('div', {class: 'grid g-2'},
       panel(t('change_pw'), null, null, h('div', {class: 'stack'}, field(t('username'), pw.user), field(t('old_pw'), pw.old), field(t('new_pw'), pw.nw),
-        h('div', null, h('button', {class: 'btn', onclick: async () => {
-          try { await api('password', {username: pw.user.value, old: pw.old.value, new: pw.nw.value}); toast(t('saved')); pw.old.value = pw.nw.value = ''; } catch (e) { err(e); }
-        }}, icon('lock'), t('save'))))),
+        h('div', null, pwBtn))),
       panel(t('backup'), null, null, h('p', {class: 'muted', style: 'margin:0 0 12px;font-size:12.5px;line-height:1.8'}, t('backup_tip')),
         h('div', {class: 'act-grid'}, h('a', {class: 'btn', href: 'api/backup'}, icon('arrowDown'), t('download_backup')),
           h('label', {class: 'btn'}, icon('arrowUp'), t('restore'), restore)))),
     panel(t('logs'), `${t('rules_age')} ${d.rules_age == null ? '—' : dur(d.rules_age) + ' ' + t('ago')} · ${t('version')} ${d.version} · ${d.os}`,
-      h('div', {style: 'display:flex;gap:8px'}, h('button', {class: 'btn sm', onclick: async () => { try { await api('rules-refresh', {}); toast('…'); } catch (e) { err(e); } }}, icon('refresh'), t('rules_refresh')),
-        h('button', {class: 'btn sm', onclick: async () => { if (await confirmBox(t('restart'), '')) { try { await api('restart', {}); toast(t('saved')); } catch (e) { err(e); } } }}, icon('bolt'), t('restart'))),
+      h('div', {style: 'display:flex;gap:8px'}, rulesBtn, restartBtn),
       h('div', {class: 'log'}, d.log.join('\n') || '—'))));
 }
 

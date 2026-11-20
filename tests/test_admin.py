@@ -158,7 +158,8 @@ class AdminWeb(tu.Base):
         self.httpd = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
         self.port = self.httpd.server_address[1]
         db.set_settings(panel_port=self.port)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self._thread.start()
         self.cookie = ''
         web._fails.clear()
         self._apply = web.apply_async
@@ -168,6 +169,7 @@ class AdminWeb(tu.Base):
         web.apply_async = self._apply
         self.httpd.shutdown()
         self.httpd.server_close()
+        self._thread.join(5)
 
     req = tu.Web.req
 
@@ -207,7 +209,10 @@ class AdminWeb(tu.Base):
         self.login()
         st, body, _ = self.req('GET', '/adm/api/totp')
         sec = json.loads(body)['secret']
-        self.assertEqual(self.req('POST', '/adm/api/totp', {'secret': sec, 'code': '000000'})[0], 400)
+        now = time.time()
+        valid = {secure.totp(sec, now + d) for d in (-30, 0, 30)}
+        wrong = next('%06d' % i for i in range(10) if '%06d' % i not in valid)
+        self.assertEqual(self.req('POST', '/adm/api/totp', {'secret': sec, 'code': wrong})[0], 400)
         st, body, _ = self.req('POST', '/adm/api/totp', {'secret': sec, 'code': secure.totp(sec)})
         self.assertEqual(st, 200, body)
         state = json.loads(self.req('GET', '/adm/api/state')[1])
@@ -216,7 +221,7 @@ class AdminWeb(tu.Base):
         self.cookie = ''
         st, body, _ = self.login()
         self.assertEqual((st, json.loads(body)['error']), (403, 'totp_required'))
-        self.assertEqual(self.login(code='000000')[0], 403)
+        self.assertEqual(self.login(code=wrong)[0], 403)
         st, body, _ = self.login(code=secure.totp(sec))
         self.assertEqual(st, 200, body)
         hist = json.loads(self.req('GET', '/adm/api/security')[1])

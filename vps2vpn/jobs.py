@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 import random
+import shutil
 import threading
 import time
 import traceback
@@ -12,14 +13,23 @@ import traceback
 from . import abuse, aicheck, certs, cluster, cores, db, members, monitor, notify, paths, rules, system
 
 LOG = []          # recent events shown in the panel
+_log_lock = threading.Lock()
 _report_lock = threading.Lock()
+_enforce_lock = threading.Lock()
+_port_lock = threading.Lock()
 
 
 def log(msg):
     line = time.strftime('%m-%d %H:%M:%S ') + str(msg)
-    LOG.append(line)
-    del LOG[:-200]
+    with _log_lock:
+        LOG.append(line)
+        del LOG[:-200]
     print(line, flush=True)
+
+
+def recent_logs(n=60):
+    with _log_lock:
+        return list(LOG[-n:]) if n else []
 
 
 def over_limit(u, now=None, quota=None):
@@ -42,53 +52,79 @@ def monthly_reset(u, now=None):
 
 def enforce(now=None):
     """Turn users off/on according to quota, expiry and reset day. Returns True if cores need new configs."""
-    changed = False
-    users = db.users()
-    t_now = now or time.time()
-    for u in users:
-        if u['remote_id']:
-            continue                 # an account of a main server: it decides about limits
-        if u['expire_after_days'] and not u['expire_at'] and u['used_up'] + u['used_down'] > 0:
-            # "N days from first use": the clock starts with the first traffic
-            u['expire_at'] = int(t_now + u['expire_after_days'] * 86400)
-            db.update_user(u['id'], expire_at=u['expire_at'], expire_after_days=0)
-            log('%s used the account for the first time; expires in %d days' % (u['name'], u['expire_after_days']))
-        if not u['enabled'] and u['disabled_reason'] == 'devices' and t_now >= u['paused_until']:
-            db.update_user(u['id'], enabled=1, disabled_reason='', paused_until=0)
-            u.update(enabled=1, disabled_reason='')
-            log('device pause over: %s' % u['name'])
-            changed = True
-        due, month = monthly_reset(u, now)
-        if due:
-            db.update_user(u['id'], used_up=0, used_down=0, last_reset=month)
-            u.update(used_up=0, used_down=0)
-            log('monthly reset: %s' % u['name'])
-        quota = members.effective_quota(u, users, now)
-        reason = over_limit(u, now, quota)
-        if u['quota_gb'] and u['enabled'] and not reason and \
-                u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
-            notify.send('%s has used 80%% of %g GB / %s 已用掉 80%% 流量' % (u['name'], quota, u['name']),
-                        key='q80-%d-%s' % (u['id'], month), every=40 * 86400)
-        if u['enabled'] and reason:
-            db.update_user(u['id'], enabled=0, disabled_reason=reason)
-            log('disabled %s (%s)' % (u['name'], reason))
-            notify.send('%s paused: %s / %s 已停用（%s）' % (u['name'], reason, u['name'],
-                                                         '流量用完' if reason == 'quota' else '已到期'),
-                        key='off-%d-%s' % (u['id'], reason), every=86400)
-            changed = True
-        elif not u['enabled'] and u['disabled_reason'] in ('quota', 'expired') and not reason:
-            db.update_user(u['id'], enabled=1, disabled_reason='')
-            log('re-enabled %s' % u['name'])
-            changed = True
-    return changed
+    with _enforce_lock:
+        changed = False
+        users = db.users()
+        by_id = {u['id']: u for u in users}
+        t_now = now or time.time()
+        for _pass in range(2):
+            pass_changed = False
+            for u in users:
+                if u['remote_id']:
+                    continue                 # an account of a main server: it decides about limits
+                if u['expire_after_days'] and not u['expire_at'] and u['used_up'] + u['used_down'] > 0:
+                    # "N days from first use": the clock starts with the first traffic
+                    days = u['expire_after_days']
+                    u['expire_at'] = int(t_now + days * 86400)
+                    u['expire_after_days'] = 0
+                    db.update_user(u['id'], expire_at=u['expire_at'], expire_after_days=0)
+                    for cid in members.propagate_lifetime(u['id'], u['expire_at']):
+                        if cid in by_id:
+                            by_id[cid]['expire_at'] = u['expire_at']
+                            by_id[cid]['expire_after_days'] = 0
+                    log('%s used the account for the first time; expires in %d days' % (u['name'], days))
+                device_due = not u['enabled'] and u['disabled_reason'] == 'devices' and t_now >= u['paused_until']
+                due, month = monthly_reset(u, now)
+                if due:
+                    db.update_user(u['id'], used_up=0, used_down=0, last_reset=month)
+                    u.update(used_up=0, used_down=0, last_reset=month)
+                    log('monthly reset: %s' % u['name'])
+                quota = members.effective_quota(u, users, now)
+                reason = over_limit(u, now, quota)
+                if device_due:
+                    if reason:
+                        db.update_user(u['id'], enabled=0, disabled_reason=reason, paused_until=0)
+                        u.update(enabled=0, disabled_reason=reason, paused_until=0)
+                        log('device pause over: %s (now disabled: %s)' % (u['name'], reason))
+                    else:
+                        db.update_user(u['id'], enabled=1, disabled_reason='', paused_until=0)
+                        u.update(enabled=1, disabled_reason='', paused_until=0)
+                        log('device pause over: %s' % u['name'])
+                        pass_changed = True
+                    continue
+                if u['quota_gb'] and u['enabled'] and not reason and \
+                        u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
+                    notify.send('%s has used 80%% of %g GB / %s 已用掉 80%% 流量' % (u['name'], quota, u['name']),
+                                key='q80-%d-%s' % (u['id'], month), every=40 * 86400)
+                if u['enabled'] and reason:
+                    db.update_user(u['id'], enabled=0, disabled_reason=reason)
+                    u.update(enabled=0, disabled_reason=reason)
+                    log('disabled %s (%s)' % (u['name'], reason))
+                    notify.send('%s paused: %s / %s 已停用（%s）' % (u['name'], reason, u['name'],
+                                                                 '流量用完' if reason == 'quota' else '已到期'),
+                                key='off-%d-%s' % (u['id'], reason), every=86400)
+                    pass_changed = True
+                elif not u['enabled'] and u['disabled_reason'] in ('quota', 'expired') and not reason:
+                    db.update_user(u['id'], enabled=1, disabled_reason='')
+                    u.update(enabled=1, disabled_reason='')
+                    log('re-enabled %s' % u['name'])
+                    pass_changed = True
+            if pass_changed:
+                changed = True
+            else:
+                break
+        return changed
 
 
 def collect():
     s = db.settings()
     known = {u['id'] for u in db.users()}
-    for uid, (up, down) in cores.collect_traffic(s).items():
-        if uid in known and (up or down):
-            db.add_traffic(uid, up, down)
+    deltas = [(uid, up, down) for uid, (up, down) in cores.collect_traffic(s).items()
+              if uid in known and (up or down)]
+    if deltas:
+        with db.transaction():
+            for uid, up, down in deltas:
+                db.add_traffic(uid, up, down)
 
 
 def period_of(now, reset_day):
@@ -166,20 +202,53 @@ REPORT_TTL = 24 * 3600
 MAX_REPORTED_HOSTS = 64
 
 
+def _norm_host(host):
+    if host is None:
+        return ''
+    h = str(host).strip().lower()
+    if h.startswith('[') and h.endswith(']'):
+        h = h[1:-1]
+    h = h.rstrip('.')
+    if h:
+        try:
+            h = str(ipaddress.ip_address(h))
+        except ValueError:
+            pass
+    return h
+
+
+def _local_hosts(s):
+    return {_norm_host(h) for h in (s.get('public_host'), s.get('domain'), s.get('public_ipv6')) if h} - {''}
+
+
 def report_line(uid, line, ok, host='', now=None):
-    """Keep endpoint state separate; alert counts still count each account once."""
+    """Keep endpoint state separate; alert counts distinct accounts per (line, host)."""
     if line not in LINES:
         raise ValueError('unknown line')
     now = int(now or time.time())
-    host = str(host).strip().lower().rstrip('.')
+    if host is not None and len(str(host)) > 512:
+        raise ValueError('host too long')
+    host = _norm_host(host)
     if len(host) > 253:
         raise ValueError('host too long')
     owner = str(uid)
+    first = False
     with _report_lock:
         reps = _prune(db.settings()['line_reports'] or {}, now)
-        mine = reps.setdefault(line, {})
-        mine = {('%s@%s' % (k, str(v[1]).strip().lower().rstrip('.')) if '@' not in k else k): v
-                for k, v in mine.items()}
+        raw = reps.get(line) or {}
+        mine = {}
+        for k, v in raw.items():
+            if not isinstance(v, (list, tuple)) or len(v) < 2:
+                continue
+            vh = _norm_host(v[1])
+            if '@' in k:
+                u_part, h_part = k.split('@', 1)
+                nk = '%s@%s' % (u_part, _norm_host(h_part))
+            else:
+                nk = '%s@%s' % (k, vh)
+            nv = [v[0], vh]
+            if nk not in mine or nv[0] > mine[nk][0]:
+                mine[nk] = nv
         reps[line] = mine
         key = '%s@%s' % (owner, host)
         owned = [k for k in mine if k.split('@', 1)[0] == owner]
@@ -191,16 +260,21 @@ def report_line(uid, line, ok, host='', now=None):
                     key = owned[0]
             mine.pop(key, None)
         else:
-            first = not owned
-            if key not in mine and len(owned) >= MAX_REPORTED_HOSTS:
+            first = key not in mine
+            if first and len(owned) >= MAX_REPORTED_HOSTS:
                 raise ValueError('too many reported hosts')
             mine[key] = [now, host]
         db.set_settings(line_reports=_prune(reps, now))
     if not ok and first:
-        n = len(line_trouble(db.settings(), now).get(line, {}).get('users', []))
+        s_now = db.settings()
+        cur = _prune(s_now['line_reports'] or {}, now).get(line) or {}
+        n = len({k.split('@', 1)[0] for k, v in cur.items() if _norm_host(v[1]) == host})
         if n >= 2:
-            notify.send('%d accounts cannot connect over %s / %d 个使用者报告 %s 连不上，可在面板一键换端口' % (
-                n, LINES[line][2], n, LINES[line][2]), key='line-' + line, every=6 * 3600)
+            is_local = (not host) or (host in _local_hosts(s_now))
+            where = (' (%s)' % host) if host else ''
+            hint = '，可在面板一键换端口' if is_local else ''
+            notify.send('%d accounts cannot connect over %s%s / %d 个使用者报告 %s%s 连不上%s' % (
+                n, LINES[line][2], where, n, LINES[line][2], where, hint), key='line-' + line, every=6 * 3600)
 
 
 def _prune(reps, now):
@@ -213,8 +287,9 @@ def line_trouble(s, now=None):
     now = now or time.time()
     out = {}
     for line, m in _prune(s['line_reports'] or {}, now).items():
+        hosts = {_norm_host(v[1]) for v in m.values()} - {''}
         out[line] = {'users': sorted({int(u.split('@', 1)[0]) for u in m}),
-                     'hosts': sorted({v[1] for v in m.values() if v[1]}),
+                     'hosts': sorted(hosts),
                      'last': max(v[0] for v in m.values())}
     return out
 
@@ -225,23 +300,34 @@ def change_port(line):
     if line not in LINES:
         raise ValueError('unknown line')
     key, proto, name = LINES[line]
-    s = db.settings()
-    taken = {s['panel_port'], s['reality_port'] if proto == 'tcp' else 0,
-             s['hy2_port'] if proto == 'udp' else 0, s['tuic_port'] if proto == 'udp' else 0, 80, 443}
-    lo, hi = system.parse_range(s['hy2_hop_range']) if proto == 'udp' and s['hy2_hop'] else (0, -1)
-    for _ in range(200):
-        p = random.randint(10000, 60000)
-        if p in taken or lo <= p <= hi or not system.port_free(proto, p):
-            continue
-        db.set_settings(**{key: p})
-        with _report_lock:
-            reps = dict(db.settings()['line_reports'] or {})
-            reps.pop(line, None)
-            db.set_settings(line_reports=reps)
-        system.open_firewall(db.settings())
-        log('%s moved from port %s to %d' % (name, s[key], p))
-        return p
-    raise RuntimeError('no free port found')
+    with _port_lock:
+        s = db.settings()
+        taken = {s['panel_port'], s['reality_port'] if proto == 'tcp' else 0,
+                 s['hy2_port'] if proto == 'udp' else 0, s['tuic_port'] if proto == 'udp' else 0,
+                 s.get('traffic_api_port', 10085), s.get('hy2_stats_port', 10086), s.get('tuic_api_port', 10087),
+                 80, 443}
+        lo, hi = system.parse_range(s['hy2_hop_range']) if proto == 'udp' and s['hy2_hop'] else (0, -1)
+        for _ in range(200):
+            p = random.randint(10000, 60000)
+            if p in taken or lo <= p <= hi or not system.port_free(proto, p):
+                continue
+            db.set_settings(**{key: p})
+            with _report_lock:
+                cur_s = db.settings()
+                local_h = _local_hosts(cur_s)
+                reps = dict(cur_s['line_reports'] or {})
+                if line in reps and isinstance(reps[line], dict):
+                    kept = {k: v for k, v in reps[line].items()
+                            if _norm_host(v[1]) and _norm_host(v[1]) not in local_h}
+                    if kept:
+                        reps[line] = kept
+                    else:
+                        reps.pop(line, None)
+                    db.set_settings(line_reports=reps)
+            system.open_firewall(db.settings())
+            log('%s moved from port %s to %d' % (name, s[key], p))
+            return p
+        raise RuntimeError('no free port found')
 
 
 def backup(keep=14):
@@ -267,6 +353,10 @@ def watchdog(s):
             notify.send('%s was down; restart %s / %s 挂了，已%s' % (unit, 'worked' if ok else 'FAILED', unit,
                                                                  '自动重启' if ok else '重启失败，请登录面板体检'),
                         key='down-' + unit, every=3600)
+    if paths.LIVE and s['hy2_enabled'] and s['hy2_hop'] and shutil.which('nft'):
+        if system.run(['nft', 'list', 'table', 'inet', system.NFT_TABLE]).returncode != 0:
+            res = system.port_hopping(s)
+            log('port hopping table missing; restored (%s)' % res)
 
 
 DEVICE_PAUSE = 600
@@ -304,14 +394,16 @@ class History:
 
     KEEP = 1440
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, load=True):
         self.path = path or os.path.join(paths.VAR, 'history.json')
+        self._lock = threading.Lock()
         self.points, self.cpu_last, self.saved = [], None, 0
-        try:
-            with open(self.path) as f:
-                self.points = [p for p in json.load(f) if isinstance(p, list) and len(p) == 5][-self.KEEP:]
-        except (OSError, ValueError):
-            pass
+        if load:
+            try:
+                with open(self.path) as f:
+                    self.points = [p for p in json.load(f) if isinstance(p, list) and len(p) == 5][-self.KEEP:]
+            except (OSError, ValueError):
+                pass
 
     @staticmethod
     def _cpu_times():
@@ -324,29 +416,38 @@ class History:
         now = int(now or time.time())
         h = health or system.health()
         cpu = None
-        try:
-            total, idle = self._cpu_times()
-            if self.cpu_last and total > self.cpu_last[0]:
-                cpu = round(100 * (1 - (idle - self.cpu_last[1]) / (total - self.cpu_last[0])), 1)
-            self.cpu_last = (total, idle)
-        except (OSError, ValueError, IndexError):
-            pass
         mem = round(h['mem_used'] * 100 / h['mem_total'], 1) if h.get('mem_total') else None
-        self.points.append([now, cpu, mem, h.get('rx_rate'), h.get('tx_rate')])
-        del self.points[:-self.KEEP]
-        if now - self.saved >= 600:
+        should_save = False
+        with self._lock:
+            try:
+                total, idle = self._cpu_times()
+                if self.cpu_last and total > self.cpu_last[0]:
+                    cpu = round(100 * (1 - (idle - self.cpu_last[1]) / (total - self.cpu_last[0])), 1)
+                self.cpu_last = (total, idle)
+            except (OSError, ValueError, IndexError):
+                pass
+            self.points.append([now, cpu, mem, h.get('rx_rate'), h.get('tx_rate')])
+            del self.points[:-self.KEEP]
+            if now - self.saved >= 600:
+                self.saved = now
+                should_save = True
+        if should_save:
             self.save()
-            self.saved = now
+
+    def snapshot(self, n=None):
+        with self._lock:
+            return list(self.points[-n:]) if n is not None else list(self.points)
 
     def save(self):
+        with self._lock:
+            data = json.dumps(self.points)
         try:
-            paths.write_atomic(self.path, json.dumps(self.points), 0o600)
+            paths.write_atomic(self.path, data, 0o600)
         except OSError:
             pass
 
 
-HISTORY = History.__new__(History)      # replaced with a loaded one when the scheduler starts
-HISTORY.points = []
+HISTORY = History(load=False)           # replaced with a loaded one when the scheduler starts
 
 
 def tg_status(s):
@@ -459,10 +560,10 @@ class IpWatch:
     CONFIRM_AFTER = 600
 
     def __init__(self):
-        self.seen, self.seen_at = None, 0
+        self.seen, self.seen_at = None, 0.0
 
     def check(self, s):
-        if self.seen and time.time() - self.seen_at < self.CONFIRM_AFTER:
+        if self.seen and time.monotonic() - self.seen_at < self.CONFIRM_AFTER:
             return None                   # wait before looking again, so a brief glitch is not acted on
         host = s['public_host']
         if not certs.is_ip(host) or s['domain'] or _local(host):
@@ -472,7 +573,7 @@ class IpWatch:
             self.seen = None
             return None
         if self.seen != now:              # must be seen twice, 10 minutes apart, before we act
-            self.seen, self.seen_at = now, time.time()
+            self.seen, self.seen_at = now, time.monotonic()
             return None
         db.set_settings(public_host=now)
         certs.ensure_self_signed(now)
@@ -487,13 +588,15 @@ class IpWatch:
 class Scheduler:
     def __init__(self):
         self.last = {}
-        self.cert_backoff_until = 0
+        self.cert_backoff_until = 0.0
         self.stop = threading.Event()
         self.ipwatch = IpWatch()
+        self._threads = []
 
     def due(self, name, every):
-        if time.time() - self.last.get(name, 0) >= every:
-            self.last[name] = time.time()
+        now = time.monotonic()
+        if name not in self.last or now - self.last[name] >= every:
+            self.last[name] = now
             return True
         return False
 
@@ -515,13 +618,17 @@ class Scheduler:
         if s['abuse_guard'] and self.due('abuse', 60) and paths.LIVE:
             abuse.check(s, log)
         if s['monitor_enabled'] and paths.LIVE and self.due('monitor', 300):
-            monitor.run_in_background(log)
-        if paths.LIVE and self.due('cert', 3600) and time.time() >= self.cert_backoff_until:
+            with_speed = self.due('monitor_speed', 3600)
+            try:
+                monitor.run_in_background(log, with_speed=with_speed)
+            except TypeError:
+                monitor.run_in_background(log)
+        if paths.LIVE and self.due('cert', 3600) and time.monotonic() >= self.cert_backoff_until:
             cert_host = s['domain'] or s['public_host']
             before = certs.current(cert_host)
             res = certs.renew_if_needed(s, log=log)
             if res and res != 'ok':
-                self.cert_backoff_until = time.time() + 6 * 3600    # stay well under Let's Encrypt's failure limits
+                self.cert_backoff_until = time.monotonic() + 6 * 3600    # stay well under Let's Encrypt's failure limits
                 db.set_settings(cert_status='failed: ' + res[:200])
                 if certs.trusted(cert_host) and not certs.acme_valid(36):
                     notify.send('certificate renewal failing: %s / 证书续期失败' % res[:200], key='cert', every=12 * 3600)
@@ -573,7 +680,20 @@ class Scheduler:
     def start(self):
         global HISTORY
         HISTORY = History()
-        threading.Thread(target=notify.bot_loop, args=(self.stop, tg_command, log), daemon=True, name='tg-bot').start()
-        threading.Thread(target=self.run, daemon=True, name='jobs').start()
-        threading.Thread(target=self.tuic_sampler, daemon=True, name='tuic-meter').start()
-        threading.Thread(target=cluster.loop, args=(self.stop, log), daemon=True, name='servers').start()
+        self._threads = [
+            threading.Thread(target=notify.bot_loop, args=(self.stop, tg_command, log), daemon=True, name='tg-bot'),
+            threading.Thread(target=self.run, daemon=True, name='jobs'),
+            threading.Thread(target=self.tuic_sampler, daemon=True, name='tuic-meter'),
+            threading.Thread(target=cluster.loop, args=(self.stop, log), daemon=True, name='servers'),
+        ]
+        for t in self._threads:
+            t.start()
+
+    def stop_all(self, timeout=5):
+        self.stop.set()
+        cluster.sync_soon()
+        deadline = time.monotonic() + timeout
+        for t in self._threads:
+            rem = max(0.0, deadline - time.monotonic())
+            t.join(rem)
+        HISTORY.save()

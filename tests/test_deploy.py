@@ -22,7 +22,8 @@ import deploy  # noqa: E402
 
 class QuickSetup(tu.Base):
     def test_finishes_setup_and_returns_login(self):
-        open(web.SETUP_TOKEN_FILE, 'w').write('tok')
+        with open(web.SETUP_TOKEN_FILE, 'w') as f:
+            f.write('tok')
         a = cli.quick_setup()
         s = db.settings()
         self.assertTrue(s['setup_done'])
@@ -78,35 +79,44 @@ class PortCheck(unittest.TestCase):
         srv.listen(1)
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udp.bind(('127.0.0.1', 0))
+        udp.settimeout(5)
         seen = []
 
         def answer():               # what a QUIC server does with an unknown version
-            d, addr = udp.recvfrom(2048)
-            seen.append(len(d))
-            udp.sendto(bytes([0x80]) + b'\0\0\0\0' + d[5:23] + b'\0\0\0\1', addr)
-        threading.Thread(target=answer, daemon=True).start()
+            try:
+                d, addr = udp.recvfrom(2048)
+                seen.append(len(d))
+                udp.sendto(bytes([0x80]) + b'\0\0\0\0' + d[5:23] + b'\0\0\0\1', addr)
+            except OSError:
+                pass
+        t = threading.Thread(target=answer, daemon=True)
+        t.start()
         try:
             out = deploy.check_ports('127.0.0.1', [['tcp', srv.getsockname()[1], 'panel'],
                                                    ['udp', udp.getsockname()[1], 'hy2']], tries=1)
             self.assertEqual([c['ok'] for c in out], [True, True])
             self.assertEqual(seen, [1200])               # QUIC needs a full-size first packet
-            closed = socket.socket()
-            closed.bind(('127.0.0.1', 0))
-            port = closed.getsockname()[1]
-            closed.close()
+            with socket.socket() as closed:
+                closed.bind(('127.0.0.1', 0))
+                port = closed.getsockname()[1]
             self.assertFalse(deploy.tcp_open('127.0.0.1', port, timeout=2))
         finally:
             srv.close()
             udp.close()
+            t.join(2)
 
 
 class JoinMain(tu.Base):
     """The deployer logs in to the first server's panel (pinned certificate) and adds the second one."""
     def test_login_and_add(self):
+        web._fails.clear()
         a = cli.quick_setup()
         s = db.settings()
         srv = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        orig_apply = web.apply_async
+        web.apply_async = lambda force=False: None
         try:
             port = srv.server_address[1]
             rec = cli.result_info(s)
@@ -125,8 +135,10 @@ class JoinMain(tu.Base):
             with self.assertRaises(deploy.PanelError):
                 deploy.join_main(dict(main, admin_password='wrong-one'), {'join_code': 'x'}, 'y')
         finally:
+            web.apply_async = orig_apply
             srv.shutdown()
             srv.server_close()
+            t.join(5)
 
 
 class AICheck(tu.Base):
@@ -247,6 +259,38 @@ class ServerNames(tu.Base):
         self.assertEqual(cluster.unique_name('东京', s), '东京 2')
         self.assertEqual(cluster.unique_name('东京', s, skip='b2'), '东京')      # renaming a server to its own name
         self.assertEqual(cluster.unique_name('首尔', s), '首尔')
+
+
+class DeploySecurity(unittest.TestCase):
+    def test_safe_url_blocks_unsafe_and_allows_valid(self):
+        for bad in ('javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'file:///etc/passwd',
+                    'file:///C:/Windows/System32/calc.exe', r'\\evil\share\x.exe',
+                    '-flag', '--option=https://example.com', 'https://example.com\nfoo', ''):
+            self.assertEqual(deploy.safe_url(bad), '', bad)
+        self.assertTrue(deploy.safe_url('clash://install-config?url=https%3A%2F%2Fexample.com%2Fs%2Ftok'))
+        self.assertTrue(deploy.safe_url('https://example.com/path?x=1'))
+        self.assertEqual(deploy.safe_url('http://example.com/', ('https',)), '')
+        with self.assertRaises(ValueError):
+            deploy.open_link('file:///etc/passwd')
+
+    def test_new_job_validates_port_and_host(self):
+        self.assertIsNone(deploy.new_job('-oProxyCommand=id', 'root', '22')[0])
+        self.assertIsNone(deploy.new_job('203.0.113.10', 'root', '0')[0])
+        self.assertIsNone(deploy.new_job('203.0.113.10', 'root', '70000')[0])
+        job, err = deploy.new_job('203.0.113.10', 'root', '2222')
+        self.assertEqual((job['port'], err), (2222, ''))
+
+    def test_recheck_requires_passing_panel_check(self):
+        opened = []
+        orig = deploy.open_link
+        deploy.open_link = lambda u, schemes=deploy.LINK_SCHEMES: opened.append(u)
+        try:
+            job = {'host': '127.0.0.1', 'rec': {'checks': [], 'links': {'clash': 'clash://x'}},
+                   'client': {'name': 'Clash Verge', 'link': 'clash'}}
+            deploy.recheck(job)
+            self.assertEqual(opened, [])
+        finally:
+            deploy.open_link = orig
 
 
 if __name__ == '__main__':

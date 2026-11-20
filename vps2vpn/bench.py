@@ -58,8 +58,9 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15):
                         b = read(65536)
                         if not b:
                             break
-                        now = time.perf_counter()
                         with lock:
+                            # sample the clock under the lock so marks['last'] is monotonic across threads
+                            now = max(time.perf_counter(), marks.get('last', (0.0, 0))[0])
                             total[0] += len(b)
                             if 'warm' not in marks and now > stop - seconds:
                                 marks['warm'] = (now, total[0])
@@ -72,10 +73,11 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15):
         t.start()
     for t in ts:
         t.join(seconds + timeout + 5)
-    if 'warm' not in marks:
-        return 0.0
-    t0, b0 = marks['warm']
-    end, b1 = marks.get('last', (time.perf_counter(), total[0]))
+    with lock:
+        if 'warm' not in marks:
+            return 0.0
+        t0, b0 = marks['warm']
+        end, b1 = marks.get('last', (time.perf_counter(), total[0]))
     return round(max(0, b1 - b0) * 8 / max(0.001, end - t0) / 1e6, 1)
 
 
