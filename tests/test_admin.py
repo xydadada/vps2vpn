@@ -232,6 +232,13 @@ class AdminWeb(tu.Base):
             status, _, _ = self.req('POST', '/adm/api/users-bulk',
                                     {'ids': bad, 'action': 'add_gb', 'value': 99})
             self.assertEqual(status, 400)
+        # Even inside a correctly typed array, lossy int(True/1.9) must not
+        # silently edit user #1. Parse and validate the complete target list
+        # before touching any account.
+        for bad_id in (True, False, 1.5, -1, 0, '1e0', {'id': uid}):
+            status, _, _ = self.req('POST', '/adm/api/users-bulk',
+                                    {'ids': [uid, bad_id], 'action': 'add_gb', 'value': 99})
+            self.assertEqual(status, 400, bad_id)
         self.assertEqual(db.user(uid)['quota_gb'], 13)
 
     def test_two_step_sign_in_and_history(self):
