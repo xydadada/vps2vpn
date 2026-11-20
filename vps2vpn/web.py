@@ -688,7 +688,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 with rules._refresh_lock:
                     if not os.path.exists(f):
                         try:
-                            paths.write_atomic(f, rules.fetch_converted(name, fmt), 0o644)
+                            converted = rules.fetch_converted(name, fmt)
+                            # A successful HTTP response can still contain no
+                            # convertible rules (e.g. a CDN's HTML error page).
+                            # Do not make this empty result a persistent 200
+                            # cache entry on the first anonymous request.
+                            rows = converted.splitlines()
+                            prefixes = (b'DOMAIN,', b'DOMAIN-SUFFIX,', b'IP-CIDR,', b'IP-CIDR6,')
+                            if not rows or any(not row.startswith(prefixes) or row.endswith(b',') for row in rows):
+                                return self.send(503, 'rule set not available yet')
+                            paths.write_atomic(f, converted, 0o644)
                         except OSError:
                             return self.send(503, 'rule set not available yet')
             else:
