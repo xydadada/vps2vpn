@@ -407,6 +407,12 @@ class RuleMirrorDownloads(tu.Base):
         corrupt[-1] ^= 0xff              # bad Adler-32 checksum
         with mock.patch.object(rules, '_fetch', side_effect=[bytes(corrupt), valid]):
             self.assertEqual(rules.fetch_converted('private', 'singbox'), valid)
+        # A valid highly compressible rule set can require several
+        # decompress(..., max_length=1MiB) calls from ONE tiny input chunk.
+        # Do not mistake the shortened unconsumed_tail for trailing garbage.
+        expanded = b'SRS\x05' + zlib.compress(b'x' * (3 << 20))
+        with mock.patch.object(rules, '_fetch', return_value=expanded):
+            self.assertEqual(rules.fetch_converted('private', 'singbox'), expanded)
         bomb = b'SRS\x05' + zlib.compress(b'x' * 10000)
         with mock.patch.object(rules, 'MAX_SRS_DECODE_BYTES', 1024), \
              mock.patch.object(rules, '_fetch', side_effect=[bomb, valid]) as fetch:
