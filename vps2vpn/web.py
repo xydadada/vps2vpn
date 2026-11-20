@@ -1146,10 +1146,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         raw_ids = d.get('ids', [])
         if not isinstance(raw_ids, list):
             return self.json({'error': 'ids must be an array'}, 400)
+        def user_id(raw):
+            # bool and fractional float are accepted by int() but do not
+            # identify the account the caller intended.
+            if type(raw) is int:
+                uid = raw
+            elif isinstance(raw, str) and re.fullmatch(r'[0-9]{1,19}', raw):
+                uid = int(raw)
+            else:
+                raise ValueError('invalid user ID')
+            if not 0 < uid < (1 << 63):
+                raise ValueError('invalid user ID')
+            return uid
+
         try:
             # A repeated account must not have its quota or expiry extended
             # twice. Preserve the order of the first 2000 requested IDs.
-            ids = list(dict.fromkeys(int(i) for i in raw_ids[:2000]))
+            ids = list(dict.fromkeys(user_id(i) for i in raw_ids[:2000]))
             value = float(d.get('value') or 0)
         except (TypeError, ValueError):
             return self.json({'error': 'invalid number'}, 400)
