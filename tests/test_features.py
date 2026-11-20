@@ -12,6 +12,7 @@ import ssl
 import threading
 import time
 import unittest
+import unittest.mock
 from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
@@ -210,6 +211,43 @@ class Abuse(tu.Base):
         self.assertEqual(rep[4]['flags'], ['shared'])
         self.assertEqual(abuse.split_addr('[2001:db8::1]:443'), ('2001:db8::1', 443))
         self.assertIsNone(abuse.split_addr('nonsense'))
+
+    def test_invalid_stream_addresses_are_not_ports(self):
+        for value in ('host:' + '9' * 5000, 'host:４４３', 'host:0',
+                      'host:65536', '[::1]:' + '1' * 10000, 'host:+80'):
+            self.assertIsNone(abuse.split_addr(value))
+        self.assertEqual(abuse.split_addr('host:65535'), ('host', 65535))
+
+    def test_malformed_hysteria_stream_does_not_discard_valid_records(self):
+        s = dict(db.settings(), hy2_enabled=True, tuic_enabled=False, reality_enabled=False)
+        records = [
+            None, {'auth': 42, 'req_addr': 'wrong.example:443'},
+            {'auth': 'u' + '9' * 5000, 'req_addr': 'wrong.example:443'},
+            {'auth': 'u2', 'req_addr': 'wrong.example:' + '8' * 5000},
+            {'auth': 'u7', 'req_addr': 'valid.example:443'},
+        ]
+        with unittest.mock.patch.object(abuse, '_hy2_streams', return_value=records), \
+             unittest.mock.patch.object(abuse.cores, 'online_detail', return_value={}):
+            report = abuse.scan(s)
+        self.assertEqual(report[7]['streams'], 1)
+        self.assertEqual(report[7]['targets'], 1)
+        self.assertEqual(abuse.latest()['coverage'], ['hy2'])
+
+    def test_malformed_tuic_connection_does_not_discard_valid_records(self):
+        s = dict(db.settings(), hy2_enabled=False, tuic_enabled=True, reality_enabled=False)
+        records = [
+            None, {'metadata': {'destinationPort': '443'}, 'chains': [5]},
+            {'metadata': {'destinationPort': '４４３'}, 'chains': ['u7']},
+            {'metadata': {'destinationPort': '443'}, 'chains': ['u' + '9' * 5000]},
+            {'metadata': {'destinationPort': 443, 'host': 'valid.example'}, 'chains': ['u7']},
+        ]
+        with unittest.mock.patch.object(abuse.cores.TuicMeter, 'poll', return_value={'connections': records}), \
+             unittest.mock.patch.object(abuse.cores, 'online_detail', return_value={}):
+            report = abuse.scan(s)
+        self.assertEqual(report[7]['streams'], 1)
+        self.assertEqual(report[7]['targets'], 1)
+        self.assertEqual(abuse.latest()['coverage'], ['tuic'])
+
 
 
 class Monitor(tu.Base):
