@@ -228,6 +228,64 @@ class Monitor(tu.Base):
             self.assertEqual(len(json.load(f)), 3)
 
 
+class MonitorSpeed(unittest.TestCase):
+    def measure(self, packet):
+        class FakeSocket:
+            def __init__(self, response):
+                self.response = response
+                self.request = None
+
+            def sendall(self, request):
+                self.request = request
+
+            def makefile(self, mode):
+                return io.BytesIO(self.response)
+
+            def close(self):
+                pass
+
+        class FakeTLS:
+            def wrap_socket(self, conn, server_hostname):
+                return conn
+
+        sock = FakeSocket(packet)
+        with mock.patch.object(monitor.socket, 'create_connection', return_value=sock), \
+             mock.patch.object(monitor.ssl, 'create_default_context', return_value=FakeTLS()), \
+             mock.patch.object(monitor, 'SPEED_BYTES', 32):
+            result = monitor.speed(timeout=1)
+        return result, sock.request
+
+    def test_successful_response_counts_only_exact_entity_body(self):
+        body = b'a' * 32
+        packet = b'HTTP/1.1 200 OK\r\nContent-Length: 32\r\nX-Extra: headers-not-payload\r\n\r\n' + body
+        result, request = self.measure(packet)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['bytes'], len(body))
+        self.assertIn(b'GET /__down?bytes=32 HTTP/1.1', request)
+        self.assertIn(b'Accept-Encoding: identity', request)
+
+    def test_successful_chunked_response_counts_only_entity_body(self):
+        packet = (b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+                  + b'20\r\n' + b'a' * 32 + b'\r\n0\r\n\r\n')
+        result, _ = self.measure(packet)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['bytes'], 32)
+
+    def test_http_errors_bad_lengths_and_partial_responses_fail(self):
+        for label, packet in (
+            ('not found', b'HTTP/1.1 404 Not Found\r\nContent-Length: 32\r\n\r\n' + b'X' * 32),
+            ('wrong length', b'HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n' + b'a' * 64),
+            ('short body', b'HTTP/1.1 200 OK\r\nContent-Length: 32\r\n\r\n' + b'a' * 12),
+            ('compressed', b'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 32\r\n\r\n' + b'a' * 32),
+            ('extra chunk', b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+             + b'21\r\n' + b'a' * 33 + b'\r\n0\r\n\r\n'),
+        ):
+            with self.subTest(case=label):
+                result, _ = self.measure(packet)
+                self.assertFalse(result['ok'])
+                self.assertIn('error', result)
+
+
 class RuleMirrorDownloads(tu.Base):
     def test_oversized_download_rejected_and_old_mirror_retained(self):
         paths.ensure_dirs()
