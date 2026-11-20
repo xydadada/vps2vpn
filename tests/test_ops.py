@@ -249,5 +249,48 @@ class OpsWeb(tf.MemberWeb):
         self.assertEqual(state['client']['found']['version'], '1.10.0')
 
 
+    def test_current_client_release_asset_naming_and_download(self):
+        import os
+        u = tf.mk('release-member', 10)
+        base = '/s/%s/' % u['sub_token']
+        os.makedirs(paths.CLIENT, exist_ok=True)
+        assets = {
+            'vps2vpn-1.10.0-windows-setup.exe': b'legacy',
+            'vps2vpn-dev-1.11.0-nightly.20261120.abcdefg-windows-amd64-setup.exe': b'prerelease',
+            'vps2vpn-rs-1.11.0-windows-arm64-setup.exe': b'arm',
+            'vps2vpn-rs-1.11.0-windows-amd64-portable.zip': b'portable',
+            'vps2vpn-rs-1.11.0-windows-amd64-setup.exe': b'x64 setup',
+            'vps2vpn-rs-1.11.0-android-armv7.apk': b'armv7',
+            'vps2vpn-rs-1.11.0-android-arm64.apk': b'arm64',
+            'vps2vpn-rs-1.11.0-macos-universal.dmg': b'macos',
+        }
+        for filename, payload in assets.items():
+            with open(os.path.join(paths.CLIENT, filename), 'wb') as out:
+                out.write(payload)
+
+        found = web.client_files()
+        self.assertEqual(found['version'], '1.11.0')
+        self.assertEqual(found['files']['windows'], 'vps2vpn-rs-1.11.0-windows-amd64-setup.exe')
+        self.assertEqual(found['files']['android'], 'vps2vpn-rs-1.11.0-android-arm64.apk')
+        self.assertEqual(found['files']['macos'], 'vps2vpn-rs-1.11.0-macos-universal.dmg')
+        self.assertGreater(web._ver('1.11.0'), web._ver('1.11.0-nightly.20261120.abcdefg'))
+        self.assertGreater(web._ver('1.11.0-rs.10'), web._ver('1.11.0-rs.2'))
+        self.assertGreater(web._ver('1.11.0'), web._ver('1.10.0'))
+
+        status, body, _ = self.req('GET', base + 'api/me')
+        self.assertEqual(status, 200, body)
+        client = json.loads(body)['client']
+        self.assertEqual(client['version'], '1.11.0')
+        self.assertTrue(client['url'].endswith(base + 'download/' + found['files']['windows']))
+        for platform, expected in (('windows', b'x64 setup'), ('android', b'arm64'), ('macos', b'macos')):
+            url = base + 'download/' + found['files'][platform]
+            self.assertTrue(client['files'][platform].endswith(url))
+            status, data, _ = self.req('GET', url)
+            self.assertEqual((status, data), (200, expected))
+        # A valid old installer still works, but a crafted filename does not.
+        self.assertEqual(self.req('GET', base + 'download/vps2vpn-1.10.0-windows-setup.exe')[0], 200)
+        self.assertEqual(self.req('GET', base + 'download/vps2vpn-rs-1.11.0-windows-amd64-setup.exe.bak')[0], 404)
+
+
 if __name__ == '__main__':
     unittest.main()
