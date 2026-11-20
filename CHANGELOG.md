@@ -2,19 +2,22 @@
 
 ## 0.2.5
 
-Follow-up on the integrated review of all earlier audit reports, plus review PRs #9, #11 and #12.
+Follow-up on the integrated review of all earlier audit reports, plus review PRs #9, #11, #12, #18, #20, #22 and #24–#26.
 
 **Security**
 - Telegram pairing: the panel shows a one-time `/bind` code; only the private chat whose own user sends it can become the alert and backup recipient (from #11). Bot commands are answered only in that private chat and only when the owner sent them, never from a group that happens to share the id (from #9).
 - Joined servers learn each account's expiry date, so an expired account stops there too, even while the main server is unreachable.
 - A sync round that was in flight while a backup was restored, or while a server was re-added with new credentials, drops its answers instead of billing traffic to whichever accounts the old ids now name.
 - The health check says plainly when subscription links use plain HTTP (self-signed certificate), and how to get them encrypted.
+- Switching the Telegram bot off (or to another chat) also stops commands already in progress: no reply, backup or remaining text goes out under the old setting (from #26).
+- The main server re-checks a joined server's DNS name on every sync and connects only to the public addresses it checked, so a name that later points inside the network is refused; a node's refusal or malformed answer is no longer taken as a successful sync (from #24).
 
 **Reliability**
 - Switching a protocol back on starts its service even when its config did not change, and a service that fails to start is reported and retried instead of shown as fine.
 - TUIC traffic: a missed reading no longer loses the traffic in between, rounding leftovers are carried instead of dropped, and malformed numbers from any core are ignored instead of stopping the count (or billing negative traffic).
 - Certificates: the key and certificate are installed as a pair (the old key is put back if the certificate cannot be written), a certificate from an already-finished ACME order that does not fit the new key is refused, and a self-signed certificate whose key went missing is recreated.
-- Rule mirror: truncated downloads and HTTP-200 error pages are no longer published as rule sets (from #12).
+- Rule mirror: truncated downloads and HTTP-200 error pages are no longer published as rule sets (from #12), and a first Shadowrocket request that converts to nothing is not cached as an empty rule set (from #25).
+- Monitor: the bandwidth probe counts only a complete, uncompressed payload (from #18); a damaged history or AI-check file is skipped row by row instead of breaking the page (from #22); one malformed stream in the abuse scan no longer hides all the others (from #20).
 - QR codes refuse text that does not fit instead of cutting the link short; the invite "revoke" button works again; with no users, configs no longer change (and restart the cores) on every apply; the "server unreachable" alert is sent outside the database transaction.
 
 ## 0.2.4

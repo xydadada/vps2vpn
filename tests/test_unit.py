@@ -78,6 +78,38 @@ class BenchSources(unittest.TestCase):
         r = b.run(quick=True, log=lambda m: None)
         self.assertEqual((r['down_1'], r['down_4']), (30.0, 30.0))
 
+    def test_one_refused_request_does_not_end_a_stream(self):
+        import http.server
+        served = [0]
+
+        class Flaky(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                served[0] += 1
+                if served[0] == 1:                      # a proxy's momentary 502
+                    self.send_error(502)
+                    return
+                self.send_response(200)
+                self.send_header('Content-Length', str(1 << 20))
+                self.end_headers()
+                try:
+                    self.wfile.write(b'x' * (1 << 20))
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Flaky)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            diag, errors = {}, []
+            mbps = self.saved[1](None, 1, 1, size=1 << 20, diagnostics=diag, errors=errors,
+                                 url='http://127.0.0.1:%d/__down?bytes=%%d' % srv.server_address[1])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertGreater(mbps, 0)
+        self.assertEqual((errors, diag['retries']), ([], 1))
+
     def test_explicit_origin_is_never_replaced(self):
         b = self.bench
         b.working_download_url = lambda *a, **k: self.fail('public sources probed for a fixture origin')

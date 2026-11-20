@@ -112,9 +112,12 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagn
     Cloudflare refuses single downloads near 100 MB, so each connection repeats 50 MB requests."""
     op = _opener(proxy)
     lock, total, stop = threading.Lock(), [0], time.perf_counter() + seconds + 1
-    marks, failures = {}, []
+    marks, failures, retried = {}, [], [0]
 
     def one():
+        # One refused request (a proxy's momentary 502, a reset while several streams open at once) must not
+        # end the stream: it is retried twice. Only a stream that keeps failing reports an error.
+        retries = 2
         while time.perf_counter() < stop:
             try:
                 with op.open(urllib.request.Request(url % size if '%d' in url else url, headers=UA),
@@ -129,6 +132,14 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagn
                             if 'warm' not in marks and time.perf_counter() > stop - seconds:
                                 marks['warm'] = (time.perf_counter(), total[0])
             except (OSError, http.client.HTTPException) as exc:
+                if retries and time.perf_counter() < stop:
+                    retries -= 1
+                    with lock:
+                        retried[0] += 1
+                    if isinstance(exc, urllib.error.HTTPError):
+                        exc.close()
+                    time.sleep(0.2)
+                    continue
                 with lock:
                     _record_error(failures, 'download %dx' % streams, exc)
                 return
@@ -142,7 +153,7 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagn
     if errors is not None:
         errors.extend(message for message in failures if message not in errors)
     if diagnostics is not None:
-        diagnostics.update(bytes=total[0], errors=failures, warmup_complete='warm' in marks)
+        diagnostics.update(bytes=total[0], errors=failures, warmup_complete='warm' in marks, retries=retried[0])
     if 'warm' not in marks:
         return 0.0
     t0, b0 = marks['warm']

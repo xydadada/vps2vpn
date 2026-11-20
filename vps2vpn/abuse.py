@@ -70,9 +70,13 @@ def split_addr(addr):
         if addr.count(':') != 1:
             return None
         host, sep, port = addr.partition(':')
-    if not sep or not host or not port.isdigit() or not 1 <= int(port) <= 65535:
+    # A remote stream address is telemetry, not a trusted integer. Reject
+    # Unicode numeric characters and enormous decimal strings before int().
+    if (not sep or not host or not 1 <= len(port) <= 5
+            or not port.isascii() or not port.isdecimal()):
         return None
-    return host, int(port)
+    number = int(port)
+    return (host, number) if 1 <= number <= 65535 else None
 
 
 def scan(s=None):
@@ -81,19 +85,48 @@ def scan(s=None):
     if s['hy2_enabled']:
         try:
             for st in _hy2_streams(s):
-                auth, hp = st.get('auth', ''), split_addr(st.get('req_addr'))
-                if auth[:1] == 'u' and auth[1:].isdigit() and hp:
-                    flows.append((int(auth[1:]), hp[0], hp[1]))
+                if not isinstance(st, dict):
+                    continue
+                auth = st.get('auth')
+                hp = split_addr(st.get('req_addr'))
+                if not isinstance(auth, str) or not auth.startswith('u') or not hp:
+                    continue
+                digits = auth[1:]
+                if not digits or len(digits) > 19 or not digits.isascii() or not digits.isdecimal():
+                    continue
+                uid = int(digits)
+                if 0 < uid <= 9223372036854775807:
+                    flows.append((uid, hp[0], hp[1]))
             coverage.append('hy2')
         except (OSError, ValueError):
             pass
     if s['tuic_enabled']:
         try:
             for c in cores.TuicMeter.poll(s, 3).get('connections') or []:
-                uid, m = cores.TuicMeter.owner(c), c.get('metadata') or {}
+                if not isinstance(c, dict):
+                    continue
+                m = c.get('metadata')
+                if not isinstance(m, dict):
+                    continue
                 port = str(m.get('destinationPort', ''))
-                if uid is not None and port.isdigit():
-                    flows.append((uid, m.get('host') or m.get('destinationIP') or '', int(port)))
+                if not port or len(port) > 5 or not port.isascii() or not port.isdecimal():
+                    continue
+                port_num = int(port)
+                if not 1 <= port_num <= 65535:
+                    continue
+                try:
+                    uid = cores.TuicMeter.owner(c)
+                except (TypeError, ValueError, AttributeError):
+                    # One malformed connection must not discard the whole snapshot.
+                    continue
+                if uid is not None:
+                    # An API response can contain non-string host metadata.
+                    # aggregate() calls .lower(), so one malformed value must
+                    # not discard every otherwise valid connection in the poll.
+                    host = m.get('host') or m.get('destinationIP') or ''
+                    if not isinstance(host, str):
+                        continue
+                    flows.append((uid, host, port_num))
             coverage.append('tuic')
         except (OSError, ValueError):
             pass
