@@ -321,9 +321,22 @@ class TuicMeter:
 
     @staticmethod
     def owner(c):
+        """Decode a bounded, SQLite-compatible account ID from TUIC telemetry."""
+        if not isinstance(c, dict):
+            return None
         chains = c.get('chains')
-        return next((int(x[1:]) for x in (chains if isinstance(chains, list) else ())
-                     if isinstance(x, str) and x[:1] == 'u' and x[1:].isdigit()), None)
+        if not isinstance(chains, list):
+            return None
+        for tag in chains:
+            if not isinstance(tag, str) or not tag.startswith('u'):
+                continue
+            digits = tag[1:]
+            if not (digits and len(digits) <= 19 and digits.isascii() and digits.isdecimal()):
+                continue
+            uid = int(digits)
+            if 0 < uid < (1 << 63):
+                return uid
+        return None
 
     def _add(self, uid, up, down):
         if not (up or down):
@@ -341,8 +354,19 @@ class TuicMeter:
         if not isinstance(d, dict):
             return False
         total = (_count(d.get('uploadTotal', 0)), _count(d.get('downloadTotal', 0)))
-        raw = d.get('connections') or []
-        listed = [c for c in (raw if isinstance(raw, list) else ()) if isinstance(c, dict) and c.get('id') is not None]
+        raw = d.get('connections')
+        # A non-list snapshot is invalid, not a genuine zero-connection poll.
+        # Advancing total/conns here loses the running per-connection baseline
+        # and can double-bill a persistent connection on the next valid poll.
+        if raw is not None and not isinstance(raw, list):
+            return False
+        raw = raw or []
+        # Connection IDs become dictionary keys. A malformed JSON array/object
+        # ID is unhashable and must not abort quota accounting for valid users.
+        listed = [c for c in (raw if isinstance(raw, list) else ())
+                  if isinstance(c, dict) and
+                  ((type(c.get('id')) is int and c['id'] >= 0) or
+                   (isinstance(c.get('id'), str) and 0 < len(c['id']) <= 128))]
         if self.total is None:
             # First reading: only record a baseline. Bytes that open connections carried before we started
             # watching are not credited to anyone a second time.
@@ -400,7 +424,13 @@ class TuicMeter:
 
     def online(self, s):
         try:
-            return {'u%d' % u for u in (self.owner(c) for c in self.poll(s, 1.5).get('connections') or []) if u is not None}
+            data = self.poll(s, 1.5)
+            if not isinstance(data, dict):
+                return None
+            connections = data.get('connections') or []
+            if not isinstance(connections, list):
+                return None
+            return {'u%d' % uid for uid in (self.owner(c) for c in connections) if uid is not None}
         except (OSError, ValueError):
             return None
 
@@ -481,20 +511,47 @@ def _online_detail(s):
                                          headers={'Authorization': s['stats_secret']})
             with urllib.request.urlopen(req, timeout=1.5) as resp:
                 online_map = json.loads(resp.read())
+            if not isinstance(online_map, dict):
+                raise ValueError('invalid Hysteria online response')
             for name, n in online_map.items():
-                if name[:1] == 'u' and name[1:].isdigit():
-                    cnt = int(n or 0)
-                    if cnt > 0:
-                        mark(int(name[1:]), 'hy2', conns=cnt)
+                if not isinstance(name, str) or not name.startswith('u'):
+                    continue
+                digits = name[1:]
+                if not (digits and len(digits) <= 19 and digits.isascii() and digits.isdecimal()):
+                    continue
+                uid = int(digits)
+                if not 0 < uid < (1 << 63):
+                    continue
+                # Hysteria normally reports integer counts. Keep compatible
+                # ASCII decimal strings, but reject arrays, booleans, and huge values.
+                if type(n) is int:
+                    cnt = n
+                elif isinstance(n, str) and 1 <= len(n) <= 10 and n.isascii() and n.isdecimal():
+                    cnt = int(n)
+                else:
+                    continue
+                if 0 < cnt <= 1000000:
+                    mark(uid, 'hy2', conns=cnt)
             known = True
         except (OSError, ValueError):
             pass
     if s['tuic_enabled']:
         try:
-            for c in TuicMeter.poll(s, 1.5).get('connections') or []:
+            snapshot = TuicMeter.poll(s, 1.5)
+            if not isinstance(snapshot, dict):
+                raise ValueError('invalid TUIC online response')
+            connections = snapshot.get('connections') or []
+            if not isinstance(connections, list):
+                raise ValueError('invalid TUIC connection list')
+            for c in connections:
                 uid = TuicMeter.owner(c)
-                if uid is not None:
-                    mark(uid, 'tuic', [(c.get('metadata') or {}).get('sourceIP', '')], 1)
+                if uid is None:
+                    continue
+                metadata = c.get('metadata')
+                source = metadata.get('sourceIP') if isinstance(metadata, dict) else None
+                if not isinstance(source, str):
+                    source = ''
+                mark(uid, 'tuic', [source], 1)
             known = True
         except (OSError, ValueError):
             pass
