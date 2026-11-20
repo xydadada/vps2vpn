@@ -26,6 +26,7 @@ TARGETS = [
 ]
 SPEED_URL = ('speed.cloudflare.com', '/__down?bytes=%d')
 SPEED_BYTES = 4 << 20
+SPEED_EVERY = 3600
 KEEP = 288
 FILE = paths.VAR + '/monitor.json'
 # ChatGPT refuses these regions (OpenAI's list of unsupported countries includes them)
@@ -44,6 +45,7 @@ def probe(host, path, family, timeout=8):
     """One HTTPS request with per-step timings. Never raises."""
     r = {'ok': False}
     t0 = time.perf_counter()
+    sock = tls = None
     try:
         infos = socket.getaddrinfo(host, 443, family, socket.SOCK_STREAM)
         r['dns'] = _ms(t0)
@@ -79,6 +81,13 @@ def probe(host, path, family, timeout=8):
     except (OSError, ValueError, IndexError) as e:
         r['error'] = (type(e).__name__ + ': ' + str(e))[:120]
         r['total'] = _ms(t0)
+    finally:
+        for s_obj in (tls, sock):
+            if s_obj is not None:
+                try:
+                    s_obj.close()
+                except OSError:
+                    pass
     return r
 
 
@@ -86,6 +95,7 @@ def speed(timeout=20):
     host, path = SPEED_URL
     t0 = time.perf_counter()
     got = 0
+    sock = tls = None
     try:
         with socket.create_connection((host, 443), timeout=timeout) as sock:
             with ssl.create_default_context().wrap_socket(sock, server_hostname=host) as tls:
@@ -106,9 +116,16 @@ def speed(timeout=20):
                             break
                         got += len(chunk)
                     dt = max(time.perf_counter() - t1, 0.001)
-        return {'ok': got > SPEED_BYTES // 2, 'bytes': got, 'mbps': round(got * 8 / dt / 1e6, 1)}
+        return {'ok': got > SPEED_BYTES // 2, 'bytes': got, 'mbps': round(got * 8 / dt / 1e6, 1), 'at': int(time.time())}
     except (OSError, http.client.HTTPException) as e:
-        return {'ok': False, 'bytes': got, 'error': str(e)[:120]}
+        return {'ok': False, 'bytes': got, 'error': str(e)[:120], 'at': int(time.time())}
+    finally:
+        for s_obj in (tls, sock):
+            if s_obj is not None:
+                try:
+                    s_obj.close()
+                except OSError:
+                    pass
 
 
 def has_ipv6():
@@ -120,7 +137,18 @@ def has_ipv6():
         return False
 
 
-def run_once():
+def _recent_speed(now):
+    with _lock:
+        h = _load()
+        for item in reversed(h):
+            sp = item.get('speed') or {}
+            at = sp.get('at', item.get('at', 0))
+            if sp and now - at < SPEED_EVERY:
+                return sp
+    return None
+
+
+def run_once(force_speed=False):
     v6 = has_ipv6()
     results = {}
     threads = []
@@ -135,10 +163,13 @@ def run_once():
             th = threading.Thread(target=go, args=(tid, host, path, fam, tid + '/' + tag), daemon=True)
             th.start()
             threads.append(th)
+    deadline = time.monotonic() + 20
     for th in threads:
-        th.join(20)
-    entry = {'at': int(time.time()), 'v6': v6, 'sites': results, 'speed': speed()}
-    loc = (results.get('chatgpt/4') or {}).get('loc')
+        th.join(max(0.1, deadline - time.monotonic()))
+    now = int(time.time())
+    sp = None if force_speed else _recent_speed(now)
+    entry = {'at': now, 'v6': v6, 'sites': results, 'speed': sp or speed()}
+    loc = (results.get('chatgpt/4') or {}).get('loc') or (results.get('chatgpt/6') or {}).get('loc')
     if loc:
         entry['region'] = loc
         entry['chatgpt_region_ok'] = loc.upper() not in BLOCKED_REGIONS

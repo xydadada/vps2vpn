@@ -158,6 +158,14 @@ class Subscriptions(Base):
         self.assertEqual(tu['fingerprint'], hy['fingerprint'])
         self.assertIn('tuic', {o['type'] for o in sb['outbounds']})
         self.assertFalse(any(l.startswith('tuic://') for l in links))        # no pinning in share links -> left out
+        # every rule set named by a sing-box DNS or route rule must be defined, or sing-box refuses the config
+        defined = {r['tag'] for r in sb['route'].get('rule_set', [])}
+        def tags(rules):
+            for r in rules:
+                rs = r.get('rule_set', [])
+                yield from ([rs] if isinstance(rs, str) else rs)
+                yield from tags(r.get('rules', []))
+        self.assertLessEqual(set(tags(sb['dns'].get('rules', []))) | set(tags(sb['route'].get('rules', []))), defined)
         t = cores.tuic_config(s, [u])
         self.assertEqual(t['inbounds'][0]['users'], [{'name': 'u%d' % uid, 'uuid': u['uuid'], 'password': u['hy2_pass']}])
         self.assertIn({'auth_user': ['u%d' % uid], 'outbound': 'u%d' % uid}, t['route']['rules'])
@@ -367,6 +375,34 @@ class Web(Base):
         c.close()
         self.assertEqual(r.status, 200)
         self.assertIn('v2v=', r.getheader('Set-Cookie') or '')
+
+    def test_bad_chunk_size(self):
+        """A negative or garbage chunk size is a 400, not a crash."""
+        import socket
+        db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
+        raw = socket.create_connection(('127.0.0.1', self.port), timeout=10)
+        c = ssl._create_unverified_context().wrap_socket(raw)
+        c.sendall(('POST %s/api/login HTTP/1.1\r\nHost: x\r\nX-V2V: 1\r\nTransfer-Encoding: chunked\r\n'
+                   'Content-Type: application/json\r\n\r\n-5\r\nxx\r\n0\r\n\r\n' % self.pp).encode())
+        data = b''
+        try:
+            while not data.endswith(b'}') and len(data) < 65536:
+                d = c.recv(4096)
+                if not d:
+                    break
+                data += d
+        except socket.timeout:
+            pass
+        c.close()
+        self.assertTrue(data.startswith(b'HTTP/1.1 400') or data.startswith(b'HTTP/1.0 400'), data[:40])
+
+    def test_every_api_handler_is_routed(self):
+        """The panel's endpoint table is a whitelist: a handler left out of it silently 404s."""
+        import inspect, re as _re
+        src = inspect.getsource(web)
+        defined = set(_re.findall(r'def (api_\w+)\(', src))
+        routed = set(_re.findall(r'self\.(api_\w+)[(),]', src))
+        self.assertEqual(defined - routed, set())
 
     def test_doctor_and_telegram(self):
         db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))

@@ -118,10 +118,12 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagn
                         b = read(65536)
                         if not b:
                             break
+                        now = time.perf_counter()
                         with lock:
                             total[0] += len(b)
-                            if 'warm' not in marks and time.perf_counter() > stop - seconds:
-                                marks['warm'] = (time.perf_counter(), total[0])
+                            if 'warm' not in marks and now > stop - seconds:
+                                marks['warm'] = (now, total[0])
+                            marks['last'] = (now, total[0])
             except (OSError, http.client.HTTPException) as exc:
                 with lock:
                     _record_error(failures, 'download %dx' % streams, exc)
@@ -140,7 +142,8 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagn
     if 'warm' not in marks:
         return 0.0
     t0, b0 = marks['warm']
-    return round((total[0] - b0) * 8 / max(0.001, end - t0) / 1e6, 1)
+    end, b1 = marks.get('last', (time.perf_counter(), total[0]))
+    return round(max(0, b1 - b0) * 8 / max(0.001, end - t0) / 1e6, 1)
 
 
 def upload(proxy=None, size=25 << 20, timeout=30, url=UP_URL, errors=None):

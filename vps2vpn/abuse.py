@@ -8,6 +8,7 @@ Short-lived connections and Xray destinations are invisible here, so a quiet res
 innocence and a flag is a reason to look, not a verdict. Flags go to the event log and Telegram.
 """
 import json
+import threading
 import time
 import urllib.request
 
@@ -20,16 +21,18 @@ SHARED_IPS = 8             # this many client addresses on one account at once: 
 MAIL_PORTS = {25, 465, 587}
 
 _last = {'at': 0, 'accounts': {}, 'coverage': []}
+_last_lock = threading.Lock()
 
 
 def _hy2_streams(s):
     req = urllib.request.Request('http://127.0.0.1:%d/dump/streams' % s['hy2_stats_port'],
                                  headers={'Authorization': s['stats_secret']})
-    return json.loads(urllib.request.urlopen(req, timeout=4).read()).get('streams') or []
+    with urllib.request.urlopen(req, timeout=4) as r:
+        return json.loads(r.read()).get('streams') or []
 
 
 def aggregate(flows, online=None):
-    """flows: iterable of (uid, host, port). online: {uid: {'ips': [...]}}. Returns {uid: report}."""
+    """flows: iterable of (uid, host, port). online: {uid: {'ips': [...], 'devices': n}}. Returns {uid: report}."""
     acc = {}
     for uid, host, port in flows:
         a = acc.setdefault(uid, {'streams': 0, 'targets': set(), 'ports': set(), 'mail': 0})
@@ -42,16 +45,18 @@ def aggregate(flows, online=None):
         acc.setdefault(uid, {'streams': 0, 'targets': set(), 'ports': set(), 'mail': 0})
     out = {}
     for uid, a in acc.items():
-        ips = len((online or {}).get(uid, {}).get('ips', []))
+        info = (online or {}).get(uid, {})
+        ips = len(info.get('ips', []))
+        devices = max(ips, int(info.get('devices', 0) or 0))
         flags = []
         if len(a['targets']) >= FANOUT_TARGETS and len(a['ports']) >= FANOUT_PORTS and a['streams'] >= FANOUT_STREAMS:
             flags.append('fanout')
-        if ips >= SHARED_IPS:
+        if devices >= SHARED_IPS:
             flags.append('shared')
         if a['mail'] >= 20:
             flags.append('mail')
         out[uid] = {'streams': a['streams'], 'targets': len(a['targets']), 'ports': len(a['ports']),
-                    'mail': a['mail'], 'ips': ips, 'flags': flags}
+                    'mail': a['mail'], 'ips': ips, 'devices': devices, 'flags': flags}
     return out
 
 
@@ -88,7 +93,8 @@ def scan(s=None):
     if s['reality_enabled']:
         coverage.append('reality-ips')
     rep = aggregate(flows, online)
-    _last.update(at=int(time.time()), accounts=rep, coverage=coverage)
+    with _last_lock:
+        _last.update(at=int(time.time()), accounts=rep, coverage=coverage)
     return rep
 
 
@@ -109,8 +115,8 @@ def check(s=None, log=print):
             if db.q('SELECT 1 FROM events WHERE kind=? AND detail LIKE ?', ('abuse', key + '%')):
                 continue
             name = names.get(uid, '#%d' % uid)
-            db.add_event('abuse', uid, '%s | %s: %s | streams %d, targets %d, ports %d, addresses %d' % (
-                key, name, words[f][0], r['streams'], r['targets'], r['ports'], r['ips']))
+            db.add_event('abuse', uid, '%s | %s: %s | streams %d, targets %d, ports %d, devices %d' % (
+                key, name, words[f][0], r['streams'], r['targets'], r['ports'], r['devices']))
             log('abuse guard: %s %s' % (name, words[f][0]))
             notify.send('%s: %s / %s：%s（不会自动停用，请到面板查看）' % (name, words[f][0], name, words[f][1]),
                         key=key, every=86400)
@@ -119,11 +125,15 @@ def check(s=None, log=print):
 
 def latest():
     names = {u['id']: u['name'] for u in db.users()}
-    rows = [dict(r, id=uid, name=names.get(uid, '#%d' % uid)) for uid, r in _last['accounts'].items()]
+    with _last_lock:
+        snap = dict(_last)
+        accounts = dict(snap['accounts'])
+        coverage = list(snap['coverage'])
+    rows = [dict(r, id=uid, name=names.get(uid, '#%d' % uid)) for uid, r in accounts.items()]
     rows.sort(key=lambda r: (-len(r['flags']), -r['streams']))
     events = []
     for e in db.events('abuse', 50):
         _, _, text = e['detail'].partition(' | ')
         events.append({'at': e['at'], 'user_id': e['user_id'], 'text': text})
-    return {'at': _last['at'], 'coverage': _last['coverage'], 'accounts': rows, 'events': events,
+    return {'at': snap['at'], 'coverage': coverage, 'accounts': rows, 'events': events,
             'thresholds': {'targets': FANOUT_TARGETS, 'ports': FANOUT_PORTS, 'streams': FANOUT_STREAMS, 'ips': SHARED_IPS}}

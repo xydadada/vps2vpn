@@ -116,7 +116,10 @@ def to_shadowrocket(data, kind):
 
 
 def fetch_converted(name, fmt):
-    data = _fetch(upstream_url(name, fmt))
+    try:
+        data = _fetch(upstream_url(name, fmt, cdn=False))
+    except OSError:
+        data = _fetch(upstream_url(name, fmt, cdn=True))
     return to_shadowrocket(data, SETS[name][0]) if fmt == 'shadowrocket' else data
 
 
@@ -165,7 +168,10 @@ def refresh(log=print):
 
 def mirror_age():
     try:
-        return int(time.time() - min(os.path.getmtime(os.path.join(paths.RULES, f)) for f in os.listdir(paths.RULES)))
+        files = [f for f in os.listdir(paths.RULES) if not f.startswith('.') and not f.endswith('.tmp')]
+        if not files:
+            return None
+        return int(time.time() - min(os.path.getmtime(os.path.join(paths.RULES, f)) for f in files))
     except (OSError, ValueError):
         return None
 

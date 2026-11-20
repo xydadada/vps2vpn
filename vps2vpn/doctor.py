@@ -55,8 +55,15 @@ def hysteria_api(s):
         return []
     if system.unit_active(cores.HY2_UNIT) is False:
         return [_check('hysteria_api', None, 'skipped: Hysteria is not running (see above)')]
-    n = cores.online_count(s)
-    return [_check('hysteria_api', n is not None, 'online: %s' % n, 'systemctl restart %s' % cores.HY2_UNIT)]
+    try:
+        req = urllib.request.Request('http://127.0.0.1:%d/online' % s['hy2_stats_port'],
+                                     headers={'Authorization': s['stats_secret']})
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read())
+        n = sum(1 for v in data.values() if int(v or 0) > 0)
+        return [_check('hysteria_api', True, 'online: %d' % n)]
+    except (OSError, ValueError) as e:
+        return [_check('hysteria_api', False, str(e)[:120], 'systemctl restart %s' % cores.HY2_UNIT)]
 
 
 def udp_listening(s):
@@ -113,7 +120,7 @@ def clock():
 
 
 def public_address(s):
-    host = s['public_host']
+    host = s['domain'] or s['public_host']
     if not certs.is_ip(host):
         try:
             ips = {a[4][0] for a in socket.getaddrinfo(host, None)}
@@ -132,7 +139,8 @@ def public_address(s):
 def outbound():
     t0 = time.time()
     try:
-        urllib.request.urlopen('https://www.gstatic.com/generate_204', timeout=8).read()
+        with urllib.request.urlopen('https://www.gstatic.com/generate_204', timeout=8) as r:
+            r.read()
         return [_check('internet', True, '%d ms' % ((time.time() - t0) * 1000))]
     except OSError as e:
         return [_check('internet', False, str(e)[:160], 'this server cannot reach the internet; check its network / DNS')]

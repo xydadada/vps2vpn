@@ -30,6 +30,7 @@ UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 PASS_RE = re.compile(r'^[!-~]{6,128}$')   # printable ASCII, no spaces
 _wake = threading.Event()
 _lock = threading.Lock()
+_node_lock = threading.Lock()
 
 
 # --- node side -------------------------------------------------------------------------
@@ -172,7 +173,7 @@ def _request(server, body, timeout=15):
     """POST to the node's sync endpoint over HTTPS with the pinned certificate. Returns (answer, pin)."""
     url = urllib.parse.urlsplit(server['url'])
     port = url.port or 443
-    pin = server.get('pin', '')
+    pin = (server.get('pin') or '').strip()
     payload = json.dumps(body).encode()
     for attempt in (('pin', 'public') if pin else ('public',)):
         if attempt == 'pin':
@@ -186,7 +187,7 @@ def _request(server, body, timeout=15):
             conn.connect()
             der = conn.sock.getpeercert(True)
             got = hashlib.sha256(der).hexdigest()
-            if attempt == 'pin' and pin and got != pin:
+            if attempt == 'pin' and got != pin:
                 conn.close()
                 continue                             # maybe it renewed to a trusted certificate: try that
             conn.request('POST', url.path + '/api/node/sync', body=payload,

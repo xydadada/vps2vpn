@@ -185,6 +185,13 @@ def clash(s, u, base_url):
     pn = [p['name'] for p in proxies]
     per = server_groups(ns)
     many = len(per) > 1
+    if pn:
+        auto_group = {'name': g['auto'], 'type': 'fallback' if not many else 'url-test',
+                      'proxies': pn if not many else [x[0] for x in per], 'url': 'https://www.gstatic.com/generate_204',
+                      'interval': 300, 'lazy': True, **({'tolerance': 80} if many else {})}
+    else:
+        # Disabled accounts carry no proxies; keep a valid non-empty group so mihomo still loads Subscription-Userinfo.
+        auto_group = {'name': g['auto'], 'type': 'select', 'proxies': ['REJECT']}
     groups = [
         {'name': g['proxy'], 'type': 'select', 'proxies': [g['auto']] + ([x[0] for x in per] if many else []) + pn},
         # Hysteria 2 first: it copes best with lossy routes; Reality takes over when UDP is blocked.
@@ -218,6 +225,9 @@ def clash(s, u, base_url):
         else:
             rule_lines.append('MATCH,%s' % t)
     cn_dns = ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query']
+    ns_policy = {'rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private': cn_dns}
+    for d in list(rules.CN_DIRECT_SUFFIX) + list(s.get('custom_direct') or []):
+        ns_policy['+.' + d] = cn_dns
     return {
         'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule', 'log-level': 'warning', 'ipv6': True,
         'unified-delay': True, 'tcp-concurrent': True, 'find-process-mode': 'strict',
@@ -235,7 +245,7 @@ def clash(s, u, base_url):
             'proxy-server-nameserver': cn_dns,
             # Foreign lookups go through the proxy, so neither the ISP nor a Chinese resolver sees them.
             'nameserver': ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
-            'nameserver-policy': {'rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private': cn_dns},
+            'nameserver-policy': ns_policy,
         },
         'proxies': proxies,
         'proxy-groups': groups,
@@ -294,10 +304,14 @@ def singbox(s, u, base_url):
         }
     per = server_groups(ns)
     many = len(per) > 1
+    if tags:
+        auto_group = {'type': 'urltest', 'tag': g['auto'], 'outbounds': tags, 'url': 'https://www.gstatic.com/generate_204',
+                      'interval': '5m', 'tolerance': 150}
+    else:
+        auto_group = {'type': 'selector', 'tag': g['auto'], 'outbounds': ['direct'], 'default': 'direct'}
     groups = [{'type': 'selector', 'tag': g['proxy'], 'outbounds': [g['auto']] + ([x[0] for x in per] if many else []) + tags,
                'default': g['auto']},
-              {'type': 'urltest', 'tag': g['auto'], 'outbounds': tags, 'url': 'https://www.gstatic.com/generate_204',
-               'interval': '5m', 'tolerance': 150}]
+              auto_group]
     if many:
         groups += [{'type': 'urltest', 'tag': label, 'outbounds': members, 'url': 'https://www.gstatic.com/generate_204',
                     'interval': '5m', 'tolerance': 150} for label, members in per]
@@ -325,7 +339,11 @@ def singbox(s, u, base_url):
             rule_sets.append({'type': 'remote', 'tag': value, 'format': 'binary',
                               'url': '%s/rules/%s.srs' % (base_url, value), 'download_detour': 'direct',
                               'update_interval': '1d'})
-    cn_sets = ['cn', 'cn-download', 'steam-cn', 'apple-cn', 'microsoft-cn']
+    cn_sets = ['private', 'cn', 'cn-download', 'steam-cn', 'apple-cn', 'microsoft-cn']
+    direct_suffixes = list(rules.CN_DIRECT_SUFFIX) + list(s.get('custom_direct') or [])
+    dns_rules = [{'rule_set': cn_sets, 'server': 'local'}]
+    if direct_suffixes:
+        dns_rules.append({'domain_suffix': direct_suffixes, 'server': 'local'})
     return {
         'log': {'level': 'warn'},
         'dns': {
@@ -333,7 +351,7 @@ def singbox(s, u, base_url):
                 {'type': 'https', 'tag': 'remote', 'server': '1.1.1.1', 'detour': g['proxy']},
                 {'type': 'https', 'tag': 'local', 'server': '223.5.5.5'},
             ],
-            'rules': [{'rule_set': cn_sets, 'server': 'local'}],
+            'rules': dns_rules,
             'final': 'remote', 'strategy': 'prefer_ipv4',
         },
         'inbounds': [
@@ -362,8 +380,12 @@ def _sr_pin(fp):
     return ':'.join(fp[i:i + 2] for i in range(0, 64, 2)) if len(fp) == 64 else ''
 
 
+def _sr_label(text):
+    return str(text).replace(',', ' ').replace('=', '-')
+
+
 def _sr_name(n):
-    return n['name'].replace(',', ' ').replace('=', '-')
+    return _sr_label(n['name'])
 
 
 def shadowrocket_proxy(n):
@@ -403,7 +425,8 @@ def shadowrocket(s, u, base_url, sub_url=''):
             lines.append(line)
             ok.append(n)
     pn = [_sr_name(n) for n in ok]
-    per = [(label, [_sr_name(n) for n in ok if n['group'] == label]) for label, _ in server_groups(ok)]
+    raw_per = server_groups(ok)
+    per = [(_sr_label(label), [_sr_name(n) for n in ok if n['group'] == label]) for label, _ in raw_per]
     many = len(per) > 1
     test = 'url=http://www.gstatic.com/generate_204, interval=120, timeout=5'
     groups = ['%s = select, %s' % (g['proxy'], ', '.join([g['auto']] + ([p[0] for p in per] if many else []) + pn))]
@@ -413,7 +436,8 @@ def shadowrocket(s, u, base_url, sub_url=''):
     else:
         groups.append('%s = fallback, %s, %s' % (g['auto'], ', '.join(pn) or 'REJECT', test))
     if s.get('ai_group', True):
-        groups.append('%s = select, %s' % (g['ai'], ', '.join((ai_servers(ok, per) if many else []) + [g['proxy']] + pn)))
+        ai_labels = [_sr_label(l) for l in ai_servers(ok, raw_per)] if many else []
+        groups.append('%s = select, %s' % (g['ai'], ', '.join(ai_labels + [g['proxy']] + pn)))
     groups += ['%s = select, DIRECT, %s' % (g['cn'], g['proxy']), '%s = select, %s, DIRECT' % (g['final'], g['proxy'])]
     target = {'proxy': g['proxy'], 'direct': 'DIRECT', 'reject': 'REJECT', 'ai': g['ai'], 'cn': g['cn'],
               'final': g['final']}
@@ -488,7 +512,7 @@ def import_links(sub_url, name):
     """One-tap import URLs for common apps."""
     q = urllib.parse.quote(sub_url, safe='')
     qn = urllib.parse.quote(name, safe='')
-    b64 = base64.urlsafe_b64encode(sub_url.encode()).decode().rstrip('=')
+    b64 = base64.b64encode(sub_url.encode()).decode()
     return {
         'clash': 'clash://install-config?url=%s&name=%s' % (urllib.parse.quote(sub_url + '?format=clash', safe=''), qn),
         'shadowrocket': 'shadowrocket://add/sub://%s?remark=%s' % (b64, qn),

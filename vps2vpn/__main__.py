@@ -51,7 +51,8 @@ def cmd_init(a):
     s = db.settings()
     if not s['setup_done'] and not web.setup_token():
         paths.write_atomic(web.SETUP_TOKEN_FILE, secure.token(16), 0o600)
-    certs.ensure_self_signed(s['public_host'] or 'vps2vpn.local')
+    cert_host = s['domain'] or s['public_host']
+    certs.ensure_self_signed(cert_host or 'vps2vpn.local')
     warnings = []
     if not s['setup_done']:
         best, _ = system.best_target()
@@ -62,7 +63,7 @@ def cmd_init(a):
     cert_host = s['domain'] or s['public_host']
     if a.acme and s['cert_mode'] == 'auto' and cert_host and not certs.trusted(cert_host):
         try:
-            certs.issue(s['domain'] or s['public_host'], s['acme_email'])
+            certs.issue(cert_host, s['acme_email'])
             db.set_settings(cert_status='ok')
         except Exception as e:      # never fail the install over a certificate
             db.set_settings(cert_status='failed: %s' % str(e)[:200])

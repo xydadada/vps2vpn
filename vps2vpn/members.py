@@ -58,7 +58,11 @@ def _active(u, now):
 
 def deducting(u, now=None):
     """Does this account reserve its full grant from the inviter right now?"""
-    return bool(u.get('invited_by')) and u.get('invite_deduct', 0) > 0 and _active(u, now or time.time())
+    now = now or time.time()
+    not_expired = not (u['expire_at'] and u['expire_at'] <= now)
+    # Keep quota-exhausted invitees charged so their spent quota cannot be recycled infinitely.
+    charged = bool(u['enabled']) or u.get('disabled_reason') == 'quota'
+    return bool(u.get('invited_by')) and u.get('invite_deduct', 0) > 0 and charged and not_expired
 
 
 def _invite_children(rows):
@@ -288,7 +292,7 @@ def request_more(uid, add_gb, reason):
 
 @_serial
 def decide(rid, approve, add_gb=None, answer=''):
-    r = next((x for x in db.requests() if x['id'] == rid), None)
+    r = db.request_by_id(rid)
     if not r or r['status'] != 'pending':
         raise Refused('no pending request with that id')
     u = db.user(r['user_id'])

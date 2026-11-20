@@ -169,6 +169,7 @@ def connect():
             _conn = sqlite3.connect(paths.DB, check_same_thread=False, isolation_level=None)
             _conn.row_factory = sqlite3.Row
             _conn.execute('PRAGMA journal_mode=WAL')
+            _conn.execute('PRAGMA busy_timeout=15000')
             # Keys and password hashes live here: owner-only, even inside the owner-only data directory.
             # (SQLite gives the -wal/-shm files the same mode as the database.)
             for f in (paths.DB, paths.DB + '-wal', paths.DB + '-shm'):
@@ -421,11 +422,32 @@ def end_member_session(tok, uid=None):
         x('DELETE FROM member_sessions WHERE token=?', (tok,))
 
 
+def end_other_member_sessions(uid, keep):
+    x('DELETE FROM member_sessions WHERE user_id=? AND token<>?', (uid, keep or ''))
+
+
+def end_all_member_sessions():
+    x('DELETE FROM member_sessions')
+
+
 # --- invites, requests, events ---------------------------------------------------
+INVITE_COLS = ('id', 'code', 'kind', 'inviter', 'quota_gb', 'expire_days', 'reset_day',
+               'max_uses', 'uses', 'used_by', 'valid_until', 'status', 'note', 'created_at')
+REQUEST_COLS = ('id', 'user_id', 'add_gb', 'reason', 'status', 'answer', 'created_at', 'decided_at')
+
+
 def invites(inviter=None):
     if inviter is None:
         return [dict(r) for r in q('SELECT * FROM invites ORDER BY id DESC LIMIT 500')]
     return [dict(r) for r in q('SELECT * FROM invites WHERE inviter=? ORDER BY id DESC LIMIT 100', (inviter,))]
+
+
+def member_live_invites(inviter, now=None):
+    """All unused, unexpired invite codes created by `inviter` (without the display LIMIT)."""
+    now = int(time.time()) if now is None else int(now)
+    return [dict(r) for r in q(
+        "SELECT * FROM invites WHERE inviter=? AND status='unused' AND valid_until>? AND uses<max_uses",
+        (inviter, now))]
 
 
 def invite(iid):
@@ -441,11 +463,17 @@ def invite_by_code(code):
 def add_invite(**kv):
     kv.setdefault('created_at', int(time.time()))
     cols = list(kv)
+    bad = [c for c in cols if c not in INVITE_COLS]
+    if bad:
+        raise KeyError(bad[0])
     return x('INSERT INTO invites(%s) VALUES(%s)' % (','.join(cols), ','.join('?' * len(cols))), [kv[c] for c in cols])
 
 
 def update_invite(iid, **kv):
     if kv:
+        bad = [k for k in kv if k not in INVITE_COLS or k == 'id']
+        if bad:
+            raise KeyError(bad[0])
         x('UPDATE invites SET %s WHERE id=?' % ','.join(k + '=?' for k in kv), list(kv.values()) + [iid])
 
 
@@ -458,6 +486,11 @@ def requests(user_id=None, status=None):
         sql += ' AND status=?'
         args.append(status)
     return [dict(r) for r in q(sql + ' ORDER BY id DESC LIMIT 200', args)]
+
+
+def request_by_id(rid):
+    rows = q('SELECT * FROM requests WHERE id=?', (rid,))
+    return dict(rows[0]) if rows else None
 
 
 def add_request(user_id, add_gb, reason):

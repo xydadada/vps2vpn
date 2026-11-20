@@ -129,10 +129,6 @@ class JoinMain(tu.Base):
             srv.server_close()
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class AICheck(tu.Base):
     """The AI availability check, with the network replaced by canned answers."""
     def fake(self, answers):
@@ -262,3 +258,7 @@ class ServerNames(tu.Base):
         self.assertEqual(cluster.unique_name('东京', s), '东京 2')
         self.assertEqual(cluster.unique_name('东京', s, skip='b2'), '东京')      # renaming a server to its own name
         self.assertEqual(cluster.unique_name('首尔', s), '首尔')
+
+
+if __name__ == '__main__':
+    unittest.main()
