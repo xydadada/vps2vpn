@@ -2,6 +2,18 @@
 
 ## 0.2.6 (unreleased)
 
+**Fewer disconnects**
+- Adding a user (or switching one back on) no longer restarts Xray: the new users are handed to the running core through its API, so nobody else is disconnected. Any other change, a failed call, or removing/disabling a user still restarts it — Xray has no way to close a removed user's open connections, and a cut-off must really cut off.
+- Traffic counted since the last reading is saved right before a core restarts instead of being lost, and counters are read every 20 s instead of every 60 s.
+- A renewed certificate no longer restarts Hysteria 2 or TUIC: both pick up the new files for new connections by themselves (Hysteria re-reads them per handshake, sing-box watches the files).
+- Hysteria 2 and TUIC restart only when their own config changed. (A non-ASCII certificate path no longer made TUIC restart on every apply.)
+
+**Subscriptions**
+- Apps the panel does not know by name (Happ, Streisand, V2Box…) get the share-link list instead of the web page; the page is shown only to clients that ask for HTML.
+- Subscriptions carry `Profile-Title`, `Profile-Web-Page-Url` (the user's own page), an optional `Support-Url` (new setting: http(s) or tg:// link) and, for a stopped account, an `Announce` line saying why.
+- A stopped account (quota used up, expired, paused for too many devices, or disabled) shows one dead entry named with the reason in every format, so the person sees why it stopped; traffic stays blocked and no server details are in it.
+- The admin user list shows when each subscription was last downloaded and by which app.
+
 **Install and upgrade**
 - `install.sh` installs the latest tagged release instead of the tip of `main`, and checks the release's SHA-256 file before unpacking anything (a mismatch stops the install). Each release now carries a reproducible source tarball and its checksum. `V2V_REF=main` is the explicit, unverified development path.
 - Every upgrade first saves a consistent copy of the database (SQLite online backup, integrity-checked) and the previous panel code; the last three are kept, and the one-line rollback command is printed. An upgrade never silently downgrades.
