@@ -9,6 +9,7 @@ import os
 import threading
 import time
 import urllib.request
+import zlib
 
 from . import paths
 
@@ -93,6 +94,85 @@ FORMATS = ('clash', 'singbox', 'shadowrocket')
 MAX_RULE_DOWNLOAD_BYTES = 50 << 20
 MRS_ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'  # outer zstd frame; Mihomo's MRS marker is inside
 
+MAX_SRS_DECODE_BYTES = 256 << 20   # bounded streaming validation, not a rule-set decode
+
+
+def _valid_mrs_zstd_frame(data):
+    """Check the complete outer Zstandard frame boundaries without needing a zstd dependency.
+
+    This cannot verify the compressed contents or its checksum; those remain
+    the rule client's job. It does reject truncated frames, reserved block
+    types and HTTP-200 error bodies that merely start with the magic bytes.
+    """
+    if len(data) < 9:
+        return False
+    pos, blocks = 0, 0
+    while pos < len(data):
+        if data[pos:pos + 4] != MRS_ZSTD_MAGIC:
+            return False
+        pos += 4
+        if pos >= len(data):
+            return False
+        descriptor = data[pos]
+        pos += 1
+        if descriptor & 0x08:       # reserved frame-header bit
+            return False
+        single = bool(descriptor & 0x20)
+        dict_bytes = (0, 1, 2, 4)[descriptor & 3]
+        flag = descriptor >> 6
+        fcs_bytes = (1 if single else 0) if flag == 0 else (2, 4, 8)[flag - 1]
+        hdr = dict_bytes + fcs_bytes + (0 if single else 1)
+        if pos + hdr > len(data):
+            return False
+        pos += hdr
+        while True:
+            if pos + 3 > len(data) or blocks >= 100000:
+                return False
+            block = int.from_bytes(data[pos:pos + 3], 'little')
+            pos += 3
+            blocks += 1
+            kind = (block >> 1) & 3
+            if kind == 3:          # reserved block type
+                return False
+            payload_size = 1 if kind == 1 else block >> 3  # RLE has only one stored byte
+            if pos + payload_size > len(data):
+                return False
+            pos += payload_size
+            if block & 1:          # last block
+                break
+        if descriptor & 4:         # optional 4-byte content checksum
+            if pos + 4 > len(data):
+                return False
+            pos += 4
+    return pos == len(data)
+
+
+def _valid_srs_zlib_stream(data):
+    """Check SRS version and zlib checksum without allocating its expanded rule set."""
+    if len(data) <= 6 or not data.startswith(b'SRS') or not 1 <= data[3] <= 5:
+        return False
+    try:
+        decoder = zlib.decompressobj()
+        total = 0
+        for offset in range(4, len(data), 65536):
+            chunk = memoryview(data)[offset:offset + 65536]
+            chunk_end = offset + len(chunk)
+            while chunk:
+                before = len(chunk)
+                decoded = decoder.decompress(chunk, 1 << 20)
+                total += len(decoded)
+                if total > MAX_SRS_DECODE_BYTES:
+                    return False
+                if decoder.eof:
+                    return not decoder.unused_data and chunk_end == len(data)
+                chunk = decoder.unconsumed_tail
+                if len(chunk) == before and not decoded:
+                    return False
+        return decoder.eof and not decoder.unused_data
+    except zlib.error:
+        return False
+
+
 
 def ext(fmt):
     return {'clash': 'mrs', 'singbox': 'srs', 'shadowrocket': 'list'}[fmt]
@@ -138,10 +218,10 @@ def _rule_payload(url, fmt):
     # written via zstd.NewWriter and is NOT the on-disk file prefix.
     # sing-box writes 'SRS' + version directly before its zlib payload.
     # These are framing checks, not substitutes for full client-side parsing.
-    if fmt == 'clash' and not data.startswith(MRS_ZSTD_MAGIC):
-        raise OSError('invalid MRS Zstandard frame header')
-    if fmt == 'singbox' and not data.startswith(b'SRS'):
-        raise OSError('invalid SRS file header')
+    if fmt == 'clash' and not _valid_mrs_zstd_frame(data):
+        raise OSError('invalid or truncated MRS Zstandard frame')
+    if fmt == 'singbox' and not _valid_srs_zlib_stream(data):
+        raise OSError('invalid or truncated SRS zlib stream')
     return data
 
 

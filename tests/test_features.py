@@ -382,6 +382,57 @@ class RuleMirrorDownloads(tu.Base):
             self.assertEqual(rules.fetch_converted('private', 'singbox'), valid)
             self.assertEqual(fetch.call_count, 1)
 
+    def test_binary_magic_prefix_alone_never_wins_the_rule_mirror_fallback(self):
+        srs = b'SRS\x05' + zlib.compress(b'\x00')
+        malformed = {
+            'clash': [rules.MRS_ZSTD_MAGIC + b'Gateway timeout' * 4,
+                      MRS_ZSTD_FRAME[:-1],
+                      MRS_ZSTD_FRAME + b'<html>trailing error</html>'],
+            'singbox': [b'SRS' + b'502 Bad Gateway' * 4,
+                        b'SRS\x00' + zlib.compress(b'\x00'),
+                        srs[:-1],
+                        srs + b'<html>trailing error</html>'],
+        }
+        for fmt, broken_list in malformed.items():
+            good = MRS_ZSTD_FRAME if fmt == 'clash' else srs
+            for broken in broken_list:
+                with self.subTest(fmt=fmt, broken=broken[:16]):
+                    with mock.patch.object(rules, '_fetch', side_effect=[broken, good]) as fetch:
+                        self.assertEqual(rules.fetch_converted('private', fmt), good)
+                        self.assertEqual(fetch.call_count, 2)
+
+    def test_srs_rejects_invalid_checksum_and_decompression_bombs(self):
+        valid = b'SRS\x05' + zlib.compress(b'\x00')
+        corrupt = bytearray(valid)
+        corrupt[-1] ^= 0xff              # bad Adler-32 checksum
+        with mock.patch.object(rules, '_fetch', side_effect=[bytes(corrupt), valid]):
+            self.assertEqual(rules.fetch_converted('private', 'singbox'), valid)
+        # A valid highly compressible rule set can require several
+        # decompress(..., max_length=1MiB) calls from ONE tiny input chunk.
+        # Do not mistake the shortened unconsumed_tail for trailing garbage.
+        expanded = b'SRS\x05' + zlib.compress(b'x' * (3 << 20))
+        with mock.patch.object(rules, '_fetch', return_value=expanded):
+            self.assertEqual(rules.fetch_converted('private', 'singbox'), expanded)
+        bomb = b'SRS\x05' + zlib.compress(b'x' * 10000)
+        with mock.patch.object(rules, 'MAX_SRS_DECODE_BYTES', 1024), \
+             mock.patch.object(rules, '_fetch', side_effect=[bomb, valid]) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'singbox'), valid)
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_invalid_binary_frames_never_replace_working_rule_files(self):
+        paths.ensure_dirs()
+        old = {'clash': MRS_ZSTD_FRAME,
+               'singbox': b'SRS\x05' + zlib.compress(b'\x00')}
+        for fmt, payload in old.items():
+            paths.write_atomic(rules.local_file('private', fmt), payload, 0o644)
+        with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
+             mock.patch.object(rules, 'FORMATS', ('clash', 'singbox')), \
+             mock.patch.object(rules, '_fetch', return_value=b'SRS\x05broken' + b'x' * 20):
+            self.assertEqual(rules.refresh(), 0)
+        for fmt, payload in old.items():
+            with open(rules.local_file('private', fmt), 'rb') as source:
+                self.assertEqual(source.read(), payload)
+
     def test_plaintext_200_errors_never_replace_cached_mrs_or_srs(self):
         paths.ensure_dirs()
         old = {
