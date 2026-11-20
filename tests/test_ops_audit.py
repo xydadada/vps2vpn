@@ -584,5 +584,33 @@ class DeploySafety(unittest.TestCase):
             self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
 
 
+class MonitorWorker(unittest.TestCase):
+    def test_thread_start_failure_releases_single_flight_for_retry(self):
+        lock = threading.Lock()
+        workers = []
+
+        def create_worker(**kwargs):
+            worker = threading.Thread(**kwargs)
+            workers.append(worker)
+            return worker
+
+        with patch.object(monitor, '_run_lock', lock), \
+                patch.object(monitor, 'run_once', return_value={'sites': {}}) as run, \
+                patch.object(monitor, 'threading') as threads:
+            threads.Thread.return_value.start.side_effect = RuntimeError('cannot start new thread')
+            with self.assertRaisesRegex(RuntimeError, 'cannot start new thread'):
+                monitor.run_in_background()
+            self.assertFalse(lock.locked())
+            run.assert_not_called()
+
+            threads.Thread.side_effect = create_worker
+            monitor.run_in_background()
+            self.assertEqual(len(workers), 1)
+            workers[0].join(timeout=5)
+            self.assertFalse(workers[0].is_alive())
+            self.assertFalse(lock.locked())
+            run.assert_called_once_with()
+
+
 if __name__ == '__main__':
     unittest.main()

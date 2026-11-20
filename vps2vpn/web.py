@@ -175,7 +175,7 @@ class Server(http.server.ThreadingHTTPServer):
             return
         try:
             super().process_request(request, client_address)
-        except BaseException:
+        except Exception:
             self._slots.release()
             raise
 

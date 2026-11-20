@@ -210,7 +210,11 @@ def run_in_background(log=print):
             log('monitor error: %r' % ex)
         finally:
             _run_lock.release()
-    threading.Thread(target=go, daemon=True, name='monitor').start()
+    try:
+        threading.Thread(target=go, daemon=True, name='monitor').start()
+    except Exception:
+        _run_lock.release()
+        raise
 
 
 if __name__ == '__main__':
