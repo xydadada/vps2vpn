@@ -198,10 +198,59 @@ class SyncError(RuntimeError):
     pass
 
 
+def _resolve_public_node_targets(host, port):
+    """Reject every non-global DNS answer before opening an outbound connection."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError) as e:
+        raise SyncError('cannot resolve node: %s' % e)
+    if not infos:
+        raise SyncError('node has no DNS answers')
+    targets = []
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0].split('%', 1)[0])
+        except (IndexError, TypeError, ValueError):
+            raise SyncError('node DNS returned an invalid address')
+        if not ip.is_global:
+            raise SyncError('node DNS resolved to a non-public address')
+        endpoint = (str(ip), port)
+        if endpoint not in targets:
+            targets.append(endpoint)
+    return targets
+
+
+def _connect_node_targets(targets, timeout, source_address=None):
+    """Connect to checked numeric addresses, never re-resolve the hostname."""
+    last_error = None
+    for endpoint in targets:
+        try:
+            return socket.create_connection(endpoint, timeout, source_address)
+        except OSError as e:
+            last_error = e
+    raise last_error or OSError('node has no reachable public address')
+
+
+def _validate_sync_answer(ans):
+    """Refuse an HTTP 200 conflict or malformed snapshot before any state change."""
+    if not isinstance(ans, dict):
+        raise SyncError('node sync response is not an object')
+    if ans.get('conflict') or ans.get('error') or ans.get('ok', True) is not True:
+        raise SyncError('node sync refused: %s' % str(ans.get('error') or 'unknown error')[:200])
+    for key in ('info', 'idmap', 'traffic'):
+        if not isinstance(ans.get(key), dict):
+            raise SyncError('node sync response has invalid %s' % key)
+    if 'health' in ans and not isinstance(ans['health'], dict):
+        raise SyncError('node sync response has invalid health')
+    return ans
+
+
 def _request(server, body, timeout=15):
     """POST to the node's sync endpoint over HTTPS with the pinned certificate. Returns (answer, pin)."""
     url = urllib.parse.urlsplit(server['url'])
     port = url.port or 443
+    # DNS can rebind after the node was added. Re-check on every live sync.
+    targets = _resolve_public_node_targets(url.hostname, port) if paths.LIVE else None
     pin = (server.get('pin') or '').strip().lower()
     payload = json.dumps(body).encode()
     attempts = ('pin', 'public') if pin else ('public',)
@@ -213,6 +262,10 @@ def _request(server, body, timeout=15):
         else:
             ctx = ssl.create_default_context()      # a certificate any browser would trust
         conn = http.client.HTTPSConnection(url.hostname, port, context=ctx, timeout=timeout)
+        if targets is not None:
+            # Retain the original hostname for SNI and CA hostname verification.
+            conn._create_connection = lambda _address, dial_timeout, source_address=None: (
+                _connect_node_targets(targets, dial_timeout, source_address))
         try:
             conn.connect()
             der = conn.sock.getpeercert(True)
@@ -231,7 +284,7 @@ def _request(server, body, timeout=15):
                 except ValueError:
                     why = data[:120].decode('utf-8', 'replace')
                 raise SyncError('node answered %d: %s' % (r.status, why[:200]))
-            return json.loads(data), got
+            return _validate_sync_answer(json.loads(data)), got
         except ssl.SSLError as e:
             if attempt == 'public':
                 raise SyncError('certificate changed and is not publicly trusted (%s); remove and re-add the server'
@@ -250,6 +303,7 @@ def push_users():
 
 def _apply_sync_answer(server, ans, got_pin, log=print):
     """Apply a node's sync response to `server` and record traffic deltas in DB."""
+    _validate_sync_answer(ans)
     known = {u['id'] for u in db.users()}
     old_seen = server.get('seen') or {}
     seen = {}
@@ -318,10 +372,10 @@ def sync_one(server, s=None, log=print):
     try:
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
                                          'users': push_users()})
+        _apply_sync_answer(server, ans, got_pin, log)
     except SyncError as e:
         _record_sync_error(server, e)
         return False
-    _apply_sync_answer(server, ans, got_pin, log)
     return True
 
 
@@ -340,6 +394,7 @@ def sync_all(log=print):
             continue
         try:
             ans, got_pin = _request(srv, payload)
+            _validate_sync_answer(ans)
             results.append((srv['id'], srv.get('url'), ans, got_pin, None))
         except SyncError as e:
             results.append((srv['id'], srv.get('url'), None, '', e))

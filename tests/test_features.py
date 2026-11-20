@@ -3,10 +3,12 @@ per-user history, server monthly traffic, site monitor, abuse watch, Shadowrocke
 
     python -m unittest tests.test_unit tests.test_features
 """
+import hashlib
 import http.client
 import io
 import json
 import os
+import socket
 import sqlite3
 import ssl
 import threading
@@ -410,6 +412,69 @@ class Servers(tu.Base):
         # paused user: no entries anywhere
         self.assertEqual(subscription.nodes(dict(db.settings(), reality_enabled=False, hy2_enabled=False,
                                                  tuic_enabled=False, servers=[]), db.user(u['id'])), [])
+
+    def test_sync_rejects_malformed_http_200_without_losing_previous_state(self):
+        node = {'id': 'abc12345', 'name': 'Tokyo', 'url': 'https://node.example/adm',
+                'key': 'secret', 'pin': 'ab' * 32, 'info': {'node_name': 'Tokyo'},
+                'idmap': {'7': 12}, 'seen': {'7': [100, 200]}, 'fail_count': 0}
+        for response in ({'error': 'another master', 'conflict': True},
+                         {'ok': False, 'info': {}, 'idmap': {}, 'traffic': {}},
+                         {'info': [], 'idmap': {}, 'traffic': {}},
+                         {'info': {}, 'idmap': [], 'traffic': {}},
+                         {'info': {}, 'idmap': {}, 'traffic': []},
+                         ['not a mapping']):
+            node['fail_count'] = 0
+            with mock.patch.object(cluster, '_request', return_value=(response, 'cd' * 32)):
+                self.assertFalse(cluster.sync_one(node))
+            self.assertEqual(node['fail_count'], 1)
+            self.assertEqual(node['info'], {'node_name': 'Tokyo'})
+            self.assertEqual(node['idmap'], {'7': 12})
+            self.assertEqual(node['seen'], {'7': [100, 200]})
+            self.assertEqual(node['pin'], 'ab' * 32)
+
+    def test_sync_dns_rebinding_rejected_before_tcp_connection(self):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443)),
+                   (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 443))]
+        with mock.patch.object(paths, 'LIVE', True):
+            with mock.patch.object(cluster.socket, 'getaddrinfo', return_value=answers):
+                with mock.patch.object(cluster.http.client, 'HTTPSConnection') as factory:
+                    with self.assertRaisesRegex(cluster.SyncError, 'non-public'):
+                        cluster._request({'url': 'https://node.example/adm', 'key': 'token'},
+                                         {'users': []})
+                    factory.assert_not_called()
+
+    def test_sync_keeps_tls_hostname_but_only_dials_vetted_ip(self):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443))]
+        conn = mock.Mock()
+        conn.sock.getpeercert.return_value = b'fixture cert'
+        conn.getresponse.return_value.status = 200
+        conn.getresponse.return_value.read.return_value = (
+            b'{"ok":true,"info":{},"idmap":{},"traffic":{}}')
+        marker = object()
+        with mock.patch.object(paths, 'LIVE', True):
+            with mock.patch.object(cluster.socket, 'getaddrinfo', return_value=answers):
+                with mock.patch.object(cluster.http.client, 'HTTPSConnection', return_value=conn) as maker:
+                    with mock.patch.object(cluster.socket, 'create_connection', return_value=marker) as dial:
+                        value, pin = cluster._request(
+                            {'url': 'https://node.example/adm', 'key': 'token'}, {'users': []})
+                        self.assertTrue(value['ok'])
+                        self.assertEqual(pin, hashlib.sha256(b'fixture cert').hexdigest())
+                        self.assertIs(conn._create_connection(('node.example', 443), 4), marker)
+                        dial.assert_called_once_with(('8.8.8.8', 443), 4, None)
+                        self.assertEqual(maker.call_args[0][:2], ('node.example', 443))
+
+    def test_http_200_conflict_is_a_sync_error(self):
+        conn = mock.Mock()
+        conn.sock.getpeercert.return_value = b'fixture cert'
+        conn.getresponse.return_value.status = 200
+        conn.getresponse.return_value.read.return_value = (
+            b'{"error":"wrong master","conflict":true}')
+        with mock.patch.object(cluster.http.client, 'HTTPSConnection', return_value=conn):
+            with self.assertRaisesRegex(cluster.SyncError, 'wrong master'):
+                cluster._request({'url': 'https://node.example/adm', 'key': 'token'},
+                                 {'users': []})
+            conn.close.assert_called()
+
 
     def test_join_code(self):
         db.set_settings(panel_path='pp', node_name='Osaka')
