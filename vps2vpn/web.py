@@ -698,7 +698,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.json({'error': 'too long for a QR code; copy the link instead'}, 413)
             return self.send(200, image, 'image/svg+xml',
                              {'Cache-Control': 'no-store', 'Content-Security-Policy': _SVG_CSP})
-        fmt = subscription.detect_format(self.headers.get('User-Agent'), self.query.get('format', ''))
+        ua = self.headers.get('User-Agent')
+        fmt = subscription.detect_format(ua, self.query.get('format', ''), self.headers.get('Accept') or '')
         if not fmt:
             if self.secure_ok():          # the person's own page (usage, import buttons, requests, invites)
                 return self.member_page('/s/%s/' % token)
@@ -709,6 +710,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not u['enabled']:
             s = dict(s, reality_enabled=False, hy2_enabled=False, tuic_enabled=False, servers=[])   # usage header still sent
         ctype, body, headers = subscription.render(fmt, s, u, base)
+        if self.command == 'GET':
+            try:
+                db.record_sub_fetch(u, ua)
+            except Exception as e:      # bookkeeping only: never fail the subscription itself over it
+                jobs.log('could not record a subscription fetch: %r' % e)
         return self.send(200, body, ctype, headers)
 
     def rule_file(self, name, ext):
@@ -1057,7 +1063,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             sub = '%s/s/%s' % (base, u['sub_token'])
             row = {k: u[k] for k in ('id', 'name', 'quota_gb', 'expire_at', 'reset_day', 'used_up', 'used_down',
                                      'enabled', 'disabled_reason', 'note', 'last_seen', 'created_at', 'invited_by',
-                                     'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days')}
+                                     'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
+                                     'sub_fetched_at', 'sub_ua')}
             row['sub_url'] = sub
             row['quota_eff'] = members.effective_quota(u, all_users)
             row['shared_gb'] = members.given_away(u['id'], all_users)
@@ -1868,6 +1875,11 @@ def validate_settings(d, s):
         out['client_url'] = v
     if 'client_notes' in d:
         out['client_notes'] = str(d['client_notes'] or '').strip()[:300]
+    if 'support_url' in d:
+        v = str(d['support_url'] or '').strip()
+        if v and not re.fullmatch(subscription.SUPPORT_URL_RE, v):
+            return 'support link must start with http://, https:// or tg:// (one line, no spaces)'
+        out['support_url'] = v
     if 'vps_renew_note' in d:
         out['vps_renew_note'] = str(d['vps_renew_note'] or '').strip()[:40]
     if 'hy2_hop_range' in d:

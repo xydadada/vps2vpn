@@ -602,11 +602,11 @@ class Web(Base):
         self.assertEqual(len(clash['proxies']), 3)
         st, body, _ = self.req('GET', '/s/%s' % token, headers={'User-Agent': 'Shadowrocket/1.0'})
         self.assertTrue(base64.b64decode(body).startswith(b'hysteria2://'))
-        st, body, _ = self.req('GET', '/s/%s' % token, headers={'User-Agent': 'Mozilla/5.0'})
+        st, body, _ = self.req('GET', '/s/%s' % token, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html,*/*;q=0.8'})
         self.assertIn(('<base href="/s/%s/">' % token).encode(), body)   # the person's own page (member centre UI)
         web.paths.DEV = False
         try:      # plain HTTP (clients refusing self-signed certs): a self-contained page instead
-            st, body, _ = self.req('GET', '/s/%s' % token, tls=False, headers={'User-Agent': 'Mozilla/5.0'})
+            st, body, _ = self.req('GET', '/s/%s' % token, tls=False, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html,*/*;q=0.8'})
             self.assertIn('Shadowrocket'.encode(), body)
         finally:
             web.paths.DEV = True
@@ -618,7 +618,11 @@ class Web(Base):
         uid = db.users()[1]['id']
         self.req('POST', self.pp + '/api/users/%d/save' % uid, {'enabled': False})
         st, body, _ = self.req('GET', '/s/%s?format=clash' % token)
-        self.assertEqual(json.loads(body.decode().split('\n', 1)[1])['proxies'], [])
+        paused = json.loads(body.decode().split('\n', 1)[1])
+        # only the dead entry that names the reason; every rule still rejects
+        self.assertEqual([(p['server'], p['port']) for p in paused['proxies']], [('0.0.0.0', 1)])
+        self.assertIn('Disabled', paused['proxies'][0]['name'])
+        self.assertEqual(paused['rules'], ['MATCH,REJECT'])
         # rule file falls back to the CDN until the mirror has it
         st, _, r = self.req('GET', '/rules/cn.mrs')
         self.assertEqual(st, 302)
