@@ -124,24 +124,35 @@ _trust_cache = {}
 
 
 def trusted(host):
-    """A publicly trusted certificate for `host` is in place. Cached per file version and per minute."""
+    """Require a valid matching leaf, OS-trusted CA chain and matching private key."""
     h = _norm_host(host)
     if not h:
         return False
     try:
-        stamp = os.path.getmtime(paths.ACME_CRT)
+        stamp = (os.stat(paths.ACME_CRT).st_mtime_ns, os.stat(paths.ACME_KEY).st_mtime_ns)
     except OSError:
         return False
-    key = (h, stamp, int(time.monotonic() // 60))
+    cache_key = (h, stamp, int(time.monotonic() // 60))
     with _trust_lock:
-        val = _trust_cache.get(key)
-    if val is None:
-        val = acme_valid(1) and h in acme_names()
-        with _trust_lock:
-            if len(_trust_cache) > 16:
-                _trust_cache.clear()
-            _trust_cache[key] = val
-    return val
+        cached = _trust_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    valid = acme_valid(1) and h in acme_names()
+    if valid:
+        try:
+            # SAN+expiry alone also accept self-signed and staging certificates.
+            # Verify the leaf and attached intermediate chain against OS roots.
+            _openssl('verify', '-purpose', 'sslserver', '-untrusted', paths.ACME_CRT, paths.ACME_CRT)
+            # A trusted chain is unusable unless the server also owns its key.
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(paths.ACME_CRT, paths.ACME_KEY)
+        except (OSError, RuntimeError, ValueError):
+            valid = False
+    with _trust_lock:
+        if len(_trust_cache) > 16:
+            _trust_cache.clear()
+        _trust_cache[cache_key] = valid
+    return valid
 
 
 def current(host=None):

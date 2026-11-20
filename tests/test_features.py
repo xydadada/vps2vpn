@@ -4,6 +4,7 @@ per-user history, server monthly traffic, site monitor, abuse watch, Shadowrocke
     python -m unittest tests.test_unit tests.test_features
 """
 import http.client
+import io
 import json
 import os
 import sqlite3
@@ -11,9 +12,10 @@ import ssl
 import threading
 import time
 import unittest
+from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from vps2vpn import abuse, certs, cluster, db, jobs, members, monitor, paths, rules, secure, subscription, web
+from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, system, web
 
 GIB = 1 << 30
 
@@ -23,6 +25,43 @@ def mk(name, quota=0, **kv):
     if kv:
         db.update_user(uid, **kv)
     return db.user(uid)
+
+
+class TrustAndRouting(tu.Base):
+    def test_untrusted_chain_does_not_satisfy_public_ca_predicate(self):
+        paths.ensure_dirs()
+        with open(paths.ACME_CRT, 'wb') as out:
+            out.write(b'placeholder certificate')
+        with open(paths.ACME_KEY, 'wb') as out:
+            out.write(b'placeholder private key')
+        certs._trust_cache.clear()
+        self.addCleanup(certs._trust_cache.clear)
+        with mock.patch.object(certs, 'acme_valid', return_value=True), \
+             mock.patch.object(certs, 'acme_names', return_value=['vpn.example']), \
+             mock.patch.object(certs, '_openssl', side_effect=RuntimeError('not CA trusted')) as verify:
+            self.assertFalse(certs.trusted('vpn.example'))
+            self.assertFalse(certs.trusted('vpn.example'))
+            self.assertEqual(verify.call_count, 1)
+
+    def test_public_ip_probe_rejects_private_answers(self):
+        def answer(text):
+            return io.BytesIO(('ip=' + text + '\n').encode())
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: answer('127.0.0.1')):
+            self.assertEqual(system.public_ip(), '')
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: answer('8.8.8.8')):
+            self.assertEqual(system.public_ip(), '8.8.8.8')
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: answer('2001:4860:4860::8888')):
+            self.assertEqual(system.public_ip(v6=True), '2001:4860:4860::8888')
+
+    def test_xray_routing_ignores_spoofed_sni_for_actual_private_ip(self):
+        config = cores.xray_config(db.settings(), [])
+        self.assertEqual(config['routing']['domainStrategy'], 'IPOnDemand')
+        self.assertEqual(config['inbounds'][0]['sniffing']['destOverride'], [])
+        self.assertEqual(config['routing']['rules'][0]['ip'], ['geoip:private'])
+        self.assertEqual(config['routing']['rules'][0]['outboundTag'], 'block')
 
 
 class Invites(tu.Base):

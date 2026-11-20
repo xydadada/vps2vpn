@@ -49,12 +49,11 @@ def email(u):
 
 def xray_config(s, users):
     clients = [{'id': u['uuid'], 'flow': 'xtls-rprx-vision', 'email': email(u)} for u in users]
-    # Private destinations are blocked by IP and by name. Sniffing is not routeOnly, so a sniffed (possibly
-    # spoofed) SNI/Host replaces the destination and is resolved here (IPIfNonMatch) before geoip:private
-    # is checked: a client cannot reach 127.0.0.1 / LAN addresses by sending a fake domain.
+    # Routing is based on the actual destination IP, never an untrusted
+    # sniffed HTTP Host or TLS SNI that could mask a private address.
     rules = [{'ip': ['geoip:private'], 'outboundTag': 'block'}]
     # geosite.dat ships with Xray and install.sh puts it next to the binary; without it Xray would refuse the
-    # whole config, so the name rule is only added when the file is there (IPIfNonMatch still covers names).
+    # whole config, so the name rule is only added when the file is there.
     if not paths.LIVE or os.path.exists(os.path.join(os.path.dirname(paths.XRAY_BIN), 'geosite.dat')):
         rules.append({'domain': ['geosite:private'], 'outboundTag': 'block'})
     if s['block_bt']:
@@ -78,14 +77,14 @@ def xray_config(s, users):
                     'show': False, 'target': '%s:443' % s['reality_target'], 'xver': 0,
                     'serverNames': [s['reality_target']],
                     'privateKey': s['reality_private_key'], 'shortIds': [s['reality_short_id']]}},
-            'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic']},
+            'sniffing': {'enabled': True, 'destOverride': []},
         }],
         'outbounds': [
             {'protocol': 'freedom', 'tag': 'direct', 'streamSettings': {'sockopt': {'domainStrategy': 'UseIP'}}},
             {'protocol': 'blackhole', 'tag': 'block'},
         ],
-        # IPIfNonMatch resolves domain destinations before evaluating geoip:private, blocking DNS-based SSRF.
-        'routing': {'domainStrategy': 'IPIfNonMatch', 'rules': rules},
+        # IPOnDemand resolves destination names before the geoip:private rule.
+        'routing': {'domainStrategy': 'IPOnDemand', 'rules': rules},
     }
 
 
