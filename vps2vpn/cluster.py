@@ -258,7 +258,7 @@ def _validate_sync_answer(ans):
     """Refuse an HTTP 200 conflict or malformed snapshot before any state change."""
     if not isinstance(ans, dict):
         raise SyncError('node sync response is not an object')
-    if ans.get('conflict') or ans.get('error') or ans.get('ok', True) is not True:
+    if ans.get('conflict') or ans.get('error') or ans.get('ok') is not True:
         raise SyncError('node sync refused: %s' % str(ans.get('error') or 'unknown error')[:200])
     for key in ('info', 'idmap', 'traffic'):
         if not isinstance(ans.get(key), dict):
