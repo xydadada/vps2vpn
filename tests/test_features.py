@@ -476,6 +476,20 @@ class Servers(tu.Base):
             conn.close.assert_called()
 
 
+    def test_invalid_join_code_port_is_rejected_before_sync(self):
+        for uri in ('https://node.example:0/adm', 'https://node.example:65536/adm',
+                    'https://node.example:notanumber/adm'):
+            code = 'v2v1.' + secure.b64url(
+                json.dumps({'u': uri, 'k': 'node-secret', 'p': ''}).encode())
+            with self.subTest(uri=uri), self.assertRaisesRegex(ValueError, 'damaged'):
+                cluster.parse_join_code(code)
+        # Old imported settings may still contain an invalid port: turn it
+        # into a regular sync error rather than crashing scheduled jobs.
+        with self.assertRaisesRegex(cluster.SyncError, 'invalid node port'):
+            cluster._request({'url': 'https://node.example:65536/adm', 'key': 'k'},
+                             {'users': []})
+
+
     def test_join_code(self):
         db.set_settings(panel_path='pp', node_name='Osaka')
         code = cluster.join_code(db.settings(), 'https://203.0.113.7:9443')
