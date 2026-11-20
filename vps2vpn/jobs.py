@@ -61,7 +61,14 @@ def enforce(now=None):
             pass_changed = False
             for u in users:
                 if u['remote_id']:
-                    continue                 # an account of a main server: it decides about limits
+                    # an account of a main server: it decides about limits. Only expiry is applied here as well,
+                    # so an expired account stops even while the main server is unreachable.
+                    if u['enabled'] and u['expire_at'] and t_now >= u['expire_at']:
+                        db.update_user(u['id'], enabled=0, disabled_reason='expired')
+                        u.update(enabled=0, disabled_reason='expired')
+                        log('disabled %s (expired; main server account)' % u['name'])
+                        pass_changed = True
+                    continue
                 if u['expire_after_days'] and not u['expire_at'] and u['used_up'] + u['used_down'] > 0:
                     # "N days from first use": the clock starts with the first traffic
                     days = u['expire_after_days']

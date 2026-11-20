@@ -98,10 +98,14 @@ def certificate(s):
     if certs.trusted(host):
         return [_check('certificate', certs.acme_valid(24), "Let's Encrypt for %s" % host,
                        'expires within a day and renewal is failing: open TCP 80, then run  vps2vpn cert')]
+    # Apps other than the vps2vpn client cannot pin a self-signed certificate, so subscription links fall back
+    # to plain HTTP and the account credentials in them cross the network readable. Say so.
     if s['cert_mode'] == 'self':
-        return [_check('certificate', True, 'self-signed (chosen in Settings)')]
+        return [_check('certificate', None, 'self-signed (chosen in Settings): subscription links use plain HTTP',
+                       'switch the certificate to automatic so subscriptions are encrypted')]
     st = s['cert_status'] or 'not requested yet'
-    return [_check('certificate', None, 'self-signed; Let\'s Encrypt: %s' % st[:160],
+    return [_check('certificate', None, 'self-signed, so subscription links use plain HTTP; '
+                                        'Let\'s Encrypt: %s' % st[:160],
                    'open TCP 80 in the provider firewall, then press "Get certificate now"')]
 
 

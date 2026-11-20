@@ -99,13 +99,6 @@ def _norm_host(host):
         return h.lower().rstrip('.')
 
 
-def _trunc_utf8(text, max_bytes=900):
-    raw = text.encode('utf-8')
-    if len(raw) <= max_bytes:
-        return text
-    return raw[:max_bytes].decode('utf-8', 'ignore')
-
-
 def _is_private_ip(addr):
     return (addr.is_private or addr.is_loopback or addr.is_link_local
             or addr.is_multicast or addr.is_reserved or addr.is_unspecified)
@@ -663,7 +656,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if target == 'links':
                 nodes = subscription.nodes(s, u) if u['enabled'] else []
                 text = subscription.share_link(nodes[0]) if nodes else sub_url
-            return self.send(200, qr.svg(_trunc_utf8(text, 900), scale=5), 'image/svg+xml',
+            try:          # a cut-off link would scan "fine" and then not work: refuse instead
+                image = qr.svg(text, scale=5)
+            except ValueError:
+                return self.json({'error': 'too long for a QR code; copy the link instead'}, 413)
+            return self.send(200, image, 'image/svg+xml',
                              {'Cache-Control': 'no-store', 'Content-Security-Policy': _SVG_CSP})
         fmt = subscription.detect_format(self.headers.get('User-Agent'), self.query.get('format', ''))
         if not fmt:
@@ -1545,10 +1542,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.json({'ok': True, 'started': host})
 
     def api_qr(self, method, s):
-        text = self.query.get('text', '')[:900]
+        text = self.query.get('text', '')
         if not text:
             return self.json({'error': 'text required'}, 400)
-        return self.send(200, qr.svg(text, scale=5), 'image/svg+xml', {'Cache-Control': 'no-store'})
+        try:
+            image = qr.svg(text, scale=5)
+        except ValueError:
+            return self.json({'error': 'too long for a QR code; copy the link instead'}, 413)
+        return self.send(200, image, 'image/svg+xml', {'Cache-Control': 'no-store'})
 
     def api_user_links(self, method, s):
         try:
@@ -1576,7 +1577,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.json({'results': doctor.run_all()})
 
     def api_telegram(self, method, s):
-        """POST {token?} -> find the chat that messaged the bot, save both, send a test message."""
+        """POST {token?, challenge} -> verify a private chat pairing code before saving."""
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
         d = self.body_json()
@@ -1586,8 +1587,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         token = str(d.get('token') or s['tg_token']).strip()
         if not re.fullmatch(r'\d{5,15}:[A-Za-z0-9_-]{30,64}', token):
             return self.json({'error': 'bad_token'}, 400)
+        challenge = str(d.get('challenge') or '').strip()
+        if not re.fullmatch(r'[0-9a-f]{32}', challenge):
+            return self.json({'error': 'pairing_required'}, 400)
         try:
-            chat, who = notify.find_chat(token)
+            chat, who = notify.find_chat(token, challenge)
         except urllib.error.HTTPError as e:
             return self.json({'error': 'bad_token' if e.code in (401, 404) else 'telegram %d' % e.code}, 400)
         except OSError as e:
@@ -1608,7 +1612,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
         try:
-            db.import_all(self.body_json(limit=32 << 20))
+            body = self.body_json(limit=32 << 20)
+            with cluster.restoring():
+                db.import_all(body)
         except (ValueError, KeyError, TypeError, sqlite3.Error) as e:
             return self.json({'error': 'restore failed: %s' % e}, 400)
         db.end_all_sessions()

@@ -2,6 +2,7 @@
 import base64
 import http.client
 import json
+import subprocess
 import os
 import shutil
 import ssl
@@ -231,6 +232,24 @@ class Subscriptions(Base):
         m.sample(s, {'uploadTotal': 10, 'downloadTotal': 10, 'connections': []})
         self.assertEqual(m.collect(dict(s, tuic_api_port=1)), {})
 
+    def test_tuic_meter_survives_a_missed_reading_and_bad_values(self):
+        from vps2vpn import cores
+        s = db.settings()
+        m = cores.TuicMeter()
+        conn = lambda cid, up, down: {'id': cid, 'chains': ['u1'], 'upload': up, 'download': down}
+        m.sample(s, {'uploadTotal': 0, 'downloadTotal': 0, 'connections': [conn('a', 0, 0)]})
+        orig = m.poll
+        m.poll = lambda *a, **k: (_ for _ in ()).throw(OSError('busy'))
+        self.assertFalse(m.sample(s))                              # sing-box did not answer this time ...
+        m.poll = orig
+        m.sample(s, {'uploadTotal': 50, 'downloadTotal': 500, 'connections': [conn('a', 50, 500)]})
+        self.assertEqual(m.acc, {1: (50, 500)})                    # ... the bytes in between are still billed
+        m.sample(s, {'uploadTotal': None, 'downloadTotal': 'x', 'connections': [
+            {'id': 'b', 'chains': [7, 'u1'], 'upload': -5, 'download': None}, 'junk', {'chains': ['u1']}]})
+        self.assertEqual(m.acc, {1: (50, 500)})                    # malformed values: nothing negative, no crash
+        self.assertEqual(cores._count('12'), 12)
+        self.assertEqual([cores._count(v) for v in (-1, None, 'x', float('inf'), 1 << 70)], [0] * 5)
+
     def test_detect(self):
         self.assertEqual(subscription.detect_format('clash-verge/v2.0'), 'clash')
         self.assertEqual(subscription.detect_format('FlClash/0.8 clash.meta'), 'clash')
@@ -333,15 +352,31 @@ class Ops(Base):
         finally:
             notify._call = orig
 
-    def test_telegram_binding_prefers_a_private_chat_over_a_group(self):
-        orig = notify._call
-        notify._call = lambda token, method, params: {'result': [
-            {'message': {'chat': {'id': 5, 'type': 'private', 'username': 'owner'}}},
-            {'message': {'chat': {'id': -9, 'type': 'group', 'title': 'friends'}}}]}
+    def test_bot_commands_only_from_the_owner_in_a_private_chat(self):
+        ok = notify._owner_private_message
+        self.assertTrue(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 5}}, '5'))
+        self.assertFalse(ok({'chat': {'id': -9, 'type': 'group'}, 'from': {'id': 7}}, '-9'))   # a group member
+        self.assertFalse(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 6}}, '5'))
+        self.assertFalse(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 5, 'is_bot': True}}, '5'))
+        self.assertFalse(ok(None, '5'))
+
+    def test_apply_starts_a_reenabled_service_and_reports_a_failed_start(self):
+        from vps2vpn import cores, system
+        calls = []
+        orig = (system.systemctl, system.unit_active, cores.write_configs, system.port_hopping)
+        system.systemctl = lambda *a: (calls.append(a), subprocess.CompletedProcess(a, 1 if a[0] == 'restart' else 0,
+                                                                                    '', 'bad config'))[1]
+        system.unit_active = lambda unit: False                    # switched back on, config file unchanged
+        cores.write_configs = lambda s, errors: set()
+        system.port_hopping = lambda s: None
         try:
-            self.assertEqual(notify.find_chat('t'), ('5', 'owner'))
+            db.set_settings(reality_enabled=True, hy2_enabled=False, tuic_enabled=False)
+            with self.assertRaises(RuntimeError) as e:
+                cores.apply()
+            self.assertIn(('restart', cores.XRAY_UNIT), calls)
+            self.assertIn('did not start', str(e.exception))
         finally:
-            notify._call = orig
+            system.systemctl, system.unit_active, cores.write_configs, system.port_hopping = orig
 
     def test_failed_apply_is_retried(self):
         timers = []
@@ -536,12 +571,29 @@ class Web(Base):
         st, body, _ = self.req('POST', self.pp + '/api/telegram', {'token': 'not-a-token'})
         self.assertEqual((st, json.loads(body)['error']), (400, 'bad_token'))
         orig = notify.find_chat
-        notify.find_chat = lambda tok: (None, None)
+        notify.find_chat = lambda tok, challenge: (None, None)
         try:
             st, body, _ = self.req('POST', self.pp + '/api/telegram', {'token': '123456:' + 'A' * 35})
+            self.assertEqual((st, json.loads(body)['error']), (400, 'pairing_required'))
+            st, body, _ = self.req('POST', self.pp + '/api/telegram',
+                                   {'token': '123456:' + 'A' * 35, 'challenge': 'x' * 32})
+            self.assertEqual((st, json.loads(body)['error']), (400, 'pairing_required'))
+            st, body, _ = self.req('POST', self.pp + '/api/telegram',
+                                   {'token': '123456:' + 'A' * 35, 'challenge': 'a' * 32})
             self.assertEqual((st, json.loads(body)['error']), (400, 'no_chat'))
+            self.assertFalse(db.settings()['tg_chat'])
         finally:
             notify.find_chat = orig
+        orig_send = notify.send
+        notify.find_chat = lambda tok, challenge: ('42', 'Owner') if challenge == 'a' * 32 else (None, None)
+        notify.send = lambda *args, **kwargs: True
+        try:
+            st, body, _ = self.req('POST', self.pp + '/api/telegram',
+                                   {'token': '123456:' + 'A' * 35, 'challenge': 'a' * 32})
+            self.assertEqual(st, 200)
+            self.assertEqual(db.settings()['tg_chat'], '42')
+        finally:
+            notify.find_chat, notify.send = orig, orig_send
         # the token never leaves the server
         db.set_settings(tg_token='123456:' + 'B' * 35, tg_chat='42')
         st, body, _ = self.req('GET', self.pp + '/api/state')

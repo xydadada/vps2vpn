@@ -114,7 +114,10 @@ class TelegramCommands(tu.Base):
         stop = threading.Event()
         batches = [{'result': [{'update_id': 1, 'message': {'chat': {'id': 42}, 'text': '/old'}}]},   # before start
                    {'result': [{'update_id': 2, 'message': {'chat': {'id': 7}, 'text': '/status'}},  # stranger
-                               {'update_id': 3, 'message': {'chat': {'id': 42}, 'text': '/help'}}]}]
+                               {'update_id': 3, 'message': {'chat': {'id': 42, 'type': 'group'}, 'from': {'id': 9},
+                                                            'text': '/backup'}},       # a group that took the id
+                               {'update_id': 4, 'message': {'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42},
+                                                            'text': '/help'}}]}]
 
         def fake_call(token, method, params=None, timeout=10):
             calls.append((method, dict(params or {})))

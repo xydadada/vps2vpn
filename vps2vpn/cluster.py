@@ -13,6 +13,7 @@ node's panel, authenticated with the key and pinned to the node's certificate (a
 certificate is accepted as well, so routine renewals never break the link).
 """
 import base64
+import contextlib
 import hashlib
 import http.client
 import ipaddress
@@ -35,6 +36,17 @@ ROLLBACK_CAP = 64 << 20                   # cap counter-drop recovery when idmap
 _wake = threading.Event()
 _lock = threading.Lock()
 _node_lock = threading.Lock()
+_round_lock = threading.Lock()
+_generation = [0]          # bumped by a restore: sync answers asked for before it belong to other data
+
+
+@contextlib.contextmanager
+def restoring():
+    """Hold while a backup replaces the database. A sync round in flight then drops its answers instead of
+    billing their traffic to whichever accounts the restored ids now name (or reviving removed servers)."""
+    with _lock, _node_lock:
+        _generation[0] += 1
+        yield
 
 
 # --- node side -------------------------------------------------------------------------
@@ -136,15 +148,25 @@ def _validated_sync_snapshot(body):
             raise ValueError('invalid remote user credential')
         if type(enabled) not in (int, bool) or enabled not in (0, 1):
             raise ValueError('invalid remote enabled state')
+        expire_at = u.get('expire_at', 0)          # absent from main servers older than 0.2.4: never
+        if type(expire_at) is not int or not 0 <= expire_at < (1 << 40):
+            raise ValueError('invalid remote expiry')
         uuids.add(uuid.lower())
         wanted[rid] = {'name': _clean_label(name, 24) or 'u%d' % rid, 'uuid': uuid,
-                       'hy2_pass': secret, 'enabled': int(enabled)}
+                       'hy2_pass': secret, 'enabled': int(enabled), 'expire_at': expire_at}
     return master, master_id, wanted, uuids
 
 
 def handle_sync(s, body, base_url=''):
     """Apply an authenticated snapshot atomically; never treat malformed rows as deletions."""
     master, master_id, wanted, uuids = _validated_sync_snapshot(body)
+    now = time.time()
+    for w in wanted.values():
+        # An account past its expiry stays off here even if the main server has not noticed yet (its job runs
+        # once a minute, clocks differ a little); jobs.enforce applies the same rule while the main is away.
+        w['reason'] = 'remote' if not w['enabled'] else ''
+        if w['enabled'] and w['expire_at'] and now >= w['expire_at']:
+            w['enabled'], w['reason'] = 0, 'expired'
     with _node_lock, db.transaction():
         s = db.settings()
         if s['node_master_id'] and master_id != s['node_master_id']:
@@ -159,18 +181,19 @@ def handle_sync(s, body, base_url=''):
             u = mine.get(rid)
             if u is None:
                 name = _remote_name(w['name'], master, rid)
-                uid = db.add_user(name, note='from main server %s' % master, remote_id=rid, uuid=w['uuid'],
-                                  hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                                  disabled_reason='' if w['enabled'] else 'remote')
+                uid = db.add_user(name, expire_at=w['expire_at'], note='from main server %s' % master,
+                                  remote_id=rid, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
+                                  disabled_reason=w['reason'])
                 mine[rid] = db.user(uid)
                 changed = True
             else:
                 new_name = _remote_name(w['name'], master, rid, skip_uid=u['id'])
                 core_changed = (u['uuid'], u['hy2_pass'], u['enabled']) != (w['uuid'], w['hy2_pass'], w['enabled'])
-                if core_changed or u['name'] != new_name:
+                if core_changed or u['name'] != new_name or u['expire_at'] != w['expire_at']:
                     db.update_user(u['id'], name=new_name, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                                   disabled_reason='' if w['enabled'] else 'remote')
-                    u.update(name=new_name, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'])
+                                   disabled_reason=w['reason'], expire_at=w['expire_at'])
+                    u.update(name=new_name, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
+                             expire_at=w['expire_at'])
                     if core_changed:
                         changed = True
         for rid, u in list(mine.items()):
@@ -244,7 +267,8 @@ def _request(server, body, timeout=15):
 
 
 def push_users():
-    return [{'id': u['id'], 'name': u['name'], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'], 'enabled': bool(u['enabled'])}
+    return [{'id': u['id'], 'name': u['name'], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'], 'enabled': bool(u['enabled']),
+             'expire_at': int(u['expire_at'] or 0)}
             for u in db.users() if not u['remote_id']]
 
 
@@ -307,10 +331,18 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
 
 
 def _record_sync_error(server, e):
+    """Returns the alert to send (or None). The caller sends it after releasing its locks: a slow Telegram
+    must not hold the database write transaction or block panel edits."""
     server.update(error=str(e)[:200], fail_count=server.get('fail_count', 0) + 1)
     if server['fail_count'] == 5:
-        notify.send('server %s unreachable: %s / 子服务器 %s 连不上了' % (server['name'], e, server['name']),
-                    key='node-down-' + server['id'], every=6 * 3600)
+        return ('server %s unreachable: %s / 子服务器 %s 连不上了' % (server['name'], e, server['name']),
+                'node-down-' + server['id'])
+    return None
+
+
+def _alert(pending):
+    for text, key in pending:
+        notify.send(text, key=key, every=6 * 3600)
 
 
 def sync_one(server, s=None, log=print):
@@ -319,22 +351,28 @@ def sync_one(server, s=None, log=print):
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
                                          'users': push_users()})
     except SyncError as e:
-        _record_sync_error(server, e)
+        _alert([a for a in [_record_sync_error(server, e)] if a])
         return False
     _apply_sync_answer(server, ans, got_pin, log)
     return True
 
 
 def sync_all(log=print):
+    with _round_lock:          # one round at a time: answers are applied in the order they were asked for
+        _sync_all(log)
+
+
+def _sync_all(log):
     with _lock:
         s = db.settings()
         servers = [dict(x) for x in s['servers']]
         if not servers:
             return
         before = json.dumps([(x.get('info'), x.get('idmap')) for x in servers], sort_keys=True)
+        gen = _generation[0]
         payload = {'master': s['node_name'] or 'main', 'master_id': s['install_id'], 'users': push_users()}
     # Perform network I/O outside _lock so panel edits/restores never block on slow nodes.
-    results = []
+    results, keys = [], {x['id']: x.get('key') for x in servers}
     for srv in servers:
         if not srv.get('enabled', True):
             continue
@@ -345,18 +383,28 @@ def sync_all(log=print):
             results.append((srv['id'], srv.get('url'), None, '', e))
     # Persist traffic + updated server state atomically per-server so a crash never double-counts
     # and concurrent removals/restores are never clobbered.
+    alerts = []
     for sid, surl, ans, got_pin, err in results:
         with _lock:
+            if _generation[0] != gen:
+                log('server sync answers dropped: the data was restored meanwhile')
+                alerts = []
+                break
             cur_servers = db.settings()['servers']
-            target = next((x for x in cur_servers if x['id'] == sid and x.get('url') == surl), None)
+            # same server, same credentials: a re-added server (new key) must not take the old one's answer
+            target = next((x for x in cur_servers if x['id'] == sid and x.get('url') == surl
+                           and x.get('key') == keys.get(sid)), None)
             if target is None:
                 continue
             with db.transaction():
                 if err is not None:
-                    _record_sync_error(target, err)
+                    alert = _record_sync_error(target, err)
+                    if alert:
+                        alerts.append(alert)
                 else:
                     _apply_sync_answer(target, ans, got_pin, log)
                 db.set_settings(servers=cur_servers)
+    _alert(alerts)
     final_servers = db.settings()['servers']
     if json.dumps([(x.get('info'), x.get('idmap')) for x in final_servers], sort_keys=True) != before:
         log('servers synced: %s' % ', '.join('%s %s' % (x['name'], 'ok' if not x.get('error') else 'FAILED')

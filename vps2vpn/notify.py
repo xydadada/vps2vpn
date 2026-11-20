@@ -61,18 +61,45 @@ def send(text, key=None, every=6 * 3600, s=None):
         return False
 
 
-def find_chat(token):
-    """The chat id of whoever last messaged the bot. A private chat wins over a group the bot was added to,
-    so a group member writing at the wrong moment cannot become the alert (and backup) recipient."""
-    res = _call(token, 'getUpdates', {'limit': 20})
-    chats = []
-    for upd in reversed(res.get('result', [])):
-        msg = upd.get('message') or upd.get('my_chat_member') or {}
-        chat = msg.get('chat', {})
-        if chat.get('id'):
-            chats.append(chat)
-    for chat in sorted(chats, key=lambda c: c.get('type') != 'private'):     # stable: newest private first
-        return str(chat['id']), chat.get('username') or chat.get('title') or ''
+def _owner_private_message(message, chat_id):
+    """A command counts only from the owner's private chat, sent by the owner. A group's chat id names the
+    group, not its admin: without the sender check any member could ask for /backup."""
+    if not isinstance(message, dict):
+        return False
+    chat, sender = message.get('chat') or {}, message.get('from') or {}
+    return (isinstance(chat, dict) and isinstance(sender, dict) and chat.get('type') == 'private'
+            and chat.get('id') is not None and str(chat['id']) == str(chat_id)
+            and str(sender.get('id')) == str(chat_id) and not sender.get('is_bot', False))
+
+
+def find_chat(token, challenge):
+    """Bind only a private chat whose user sent this panel's random pairing challenge.
+
+    Telegram returns the oldest unconfirmed updates by default. A negative offset
+    looks at the newest 100, so a busy bot's old backlog cannot conceal the
+    fresh pairing command. The user explicitly initiates this operation.
+    """
+    if not re.fullmatch(r'[0-9a-f]{32}', str(challenge or '')):
+        return None, None
+    res = _call(token, 'getUpdates', {'limit': 100, 'offset': -100, 'allowed_updates': '["message"]'})
+    if not isinstance(res, dict) or not res.get('ok', True):
+        return None, None
+    updates = res.get('result')
+    if not isinstance(updates, list):
+        return None, None
+    for upd in reversed(updates):
+        if not isinstance(upd, dict):
+            continue
+        msg = upd.get('message')
+        if not isinstance(msg, dict) or msg.get('text') != '/bind ' + challenge:
+            continue
+        chat, sender = msg.get('chat') or {}, msg.get('from') or {}
+        if not isinstance(chat, dict) or not isinstance(sender, dict):
+            continue
+        if (chat.get('type') != 'private' or not chat.get('id')
+                or str(sender.get('id')) != str(chat['id']) or sender.get('is_bot')):
+            continue
+        return str(chat['id']), chat.get('username') or chat.get('first_name') or ''
     return None, None
 
 
@@ -145,7 +172,7 @@ def bot_loop(stop, handle, log):
                 continue              # old messages from before the panel started: do not act on them
             msg = upd.get('message') or {}
             text = (msg.get('text') or '').strip()
-            if str((msg.get('chat') or {}).get('id')) != str(s['tg_chat']) or not text.startswith('/'):
+            if not text.startswith('/') or not _owner_private_message(msg, s['tg_chat']):
                 continue
             try:
                 out = handle(text)

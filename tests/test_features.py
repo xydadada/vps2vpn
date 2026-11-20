@@ -228,6 +228,47 @@ class Monitor(tu.Base):
             self.assertEqual(len(json.load(f)), 3)
 
 
+class RuleMirrorDownloads(tu.Base):
+    def test_oversized_download_rejected_and_old_mirror_retained(self):
+        paths.ensure_dirs()
+        old = b'MRS!previous-valid-rule-data'
+        dst = rules.local_file('private', 'clash')
+        paths.write_atomic(dst, old, 0o644)
+        logs = []
+        with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
+             mock.patch.object(rules, 'FORMATS', ('clash',)), \
+             mock.patch.object(rules, 'MAX_RULE_DOWNLOAD_BYTES', 16), \
+             mock.patch.object(rules.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: io.BytesIO(b'x' * 17)):
+            self.assertEqual(rules.refresh(log=logs.append), 0)
+        with open(dst, 'rb') as f:
+            self.assertEqual(f.read(), old)
+        self.assertTrue(any('download failed' in line for line in logs))
+
+    def test_http_200_html_upstream_falls_back_to_cdn(self):
+        valid = b'MRS!controlled-rule-payload'
+        with mock.patch.object(rules, '_fetch',
+                               side_effect=[b'<!DOCTYPE html><html>error</html>', valid]) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'clash'), valid)
+            self.assertEqual(fetch.call_count, 2)
+            self.assertIn('github.com', fetch.call_args_list[0].args[0])
+            self.assertIn('jsdelivr.net', fetch.call_args_list[1].args[0])
+
+    def test_both_mirrors_error_pages_do_not_overwrite_existing_rules(self):
+        paths.ensure_dirs()
+        dst = rules.local_file('private', 'clash')
+        old = b'MRS!the-existing-good-rule-file'
+        paths.write_atomic(dst, old, 0o644)
+        logs = []
+        with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
+             mock.patch.object(rules, 'FORMATS', ('clash',)), \
+             mock.patch.object(rules, '_fetch', return_value=b'<html><body>blocked</body></html>'):
+            self.assertEqual(rules.refresh(log=logs.append), 0)
+        with open(dst, 'rb') as f:
+            self.assertEqual(f.read(), old)
+        self.assertTrue(any('download failed' in line for line in logs))
+
+
 class Shadowrocket(tu.Base):
     def test_config(self):
         db.set_settings(hy2_obfs='')
@@ -627,3 +668,84 @@ class MemberWeb(tu.Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AuditFollowUps(tu.Base):
+    """Findings from the 2026-11-20 review rounds that the earlier fixes did not cover yet."""
+
+    def test_child_server_stops_expired_main_accounts_even_while_the_main_is_away(self):
+        db.set_settings(setup_done=True)
+        orig = web.apply_async
+        web.apply_async = lambda force=False: None
+        try:
+            past, future = int(time.time()) - 60, int(time.time()) + 86400
+            users = [{'id': 7, 'name': 'late', 'uuid': '00000000-0000-4000-8000-000000000007', 'hy2_pass': 'pass-seven',
+                      'enabled': True, 'expire_at': past},
+                     {'id': 8, 'name': 'soon', 'uuid': '00000000-0000-4000-8000-000000000008', 'hy2_pass': 'pass-eight',
+                      'enabled': True, 'expire_at': future}]
+            cluster.handle_sync(db.settings(), {'master': 'main', 'users': users})
+            mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
+            self.assertEqual((mine[7]['enabled'], mine[7]['disabled_reason']), (0, 'expired'))
+            self.assertEqual((mine[8]['enabled'], mine[8]['expire_at']), (1, future))
+            jobs.enforce(now=future + 1)                     # main unreachable, the account runs out
+            self.assertFalse(db.user(mine[8]['id'])['enabled'])
+            with self.assertRaises(ValueError):
+                cluster.handle_sync(db.settings(), {'master': 'main', 'users': [dict(users[0], expire_at='soon')]})
+        finally:
+            web.apply_async = orig
+
+    def test_answers_of_a_round_started_before_a_restore_are_dropped(self):
+        server = {'id': 'n1', 'name': 'n', 'url': 'https://203.0.113.5:8443', 'key': 'k', 'pin': '', 'enabled': True,
+                  'info': {}, 'idmap': {}, 'seen': {}}
+        db.set_settings(servers=[server])
+        uid = mk('alice')['id']
+
+        def fake_request(srv, payload, timeout=15):
+            with cluster.restoring():            # a restore lands while the round waits for the node
+                pass
+            return {'idmap': {str(uid): 1}, 'traffic': {str(uid): [500, 500]}}, ''
+        with mock.patch.object(cluster, '_request', fake_request):
+            cluster.sync_all(log=lambda m: None)
+        self.assertEqual(db.user(uid)['used_up'], 0)
+
+    def test_unreachable_alert_is_sent_outside_the_locks(self):
+        server = {'id': 'n2', 'name': 'n', 'url': 'https://203.0.113.6:8443', 'key': 'k', 'pin': '', 'enabled': True,
+                  'info': {}, 'idmap': {}, 'seen': {}, 'fail_count': 4}
+        db.set_settings(servers=[server])
+        held = []
+        with mock.patch.object(cluster, '_request', side_effect=cluster.SyncError('timed out')), \
+                mock.patch.object(cluster.notify, 'send', lambda *a, **k: held.append(cluster._lock.locked())):
+            cluster.sync_all(log=lambda m: None)
+        self.assertEqual(held, [False])
+
+    def test_qr_refuses_instead_of_cutting_the_link(self):
+        from vps2vpn import qr
+        with self.assertRaises(ValueError):
+            qr.svg('x' * 5000)
+
+    def test_placeholder_account_is_stable(self):
+        s = db.settings()
+        self.assertEqual(cores.hysteria_config(s, []), cores.hysteria_config(s, []))
+        self.assertEqual(cores.tuic_config(s, []), cores.tuic_config(s, []))
+
+    def test_self_signed_pair_is_recreated_when_the_key_is_lost(self):
+        certs.ensure_self_signed('192.0.2.1')
+        os.remove(paths.SELF_KEY)
+        certs.ensure_self_signed('192.0.2.1')
+        self.assertTrue(certs._pair_ok(paths.SELF_CRT, paths.SELF_KEY))
+
+    def test_failed_certificate_write_puts_the_old_key_back(self):
+        d = paths.ROOT if hasattr(paths, 'ROOT') else os.path.dirname(paths.SELF_KEY)
+        key, crt = os.path.join(d, 'pair.key'), os.path.join(d, 'pair.crt')
+        with open(key, 'wb') as f:
+            f.write(b'old key')
+        real = paths.write_atomic
+
+        def failing(path, data, *a, **k):
+            if path == crt:
+                raise OSError('disk full')
+            return real(path, data, *a, **k)
+        with mock.patch.object(paths, 'write_atomic', failing), self.assertRaises(OSError):
+            certs._publish_pair(key, b'new key', crt, b'new cert')
+        with open(key, 'rb') as f:
+            self.assertEqual(f.read(), b'old key')

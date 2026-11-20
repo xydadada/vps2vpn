@@ -1,9 +1,9 @@
 """Server-side configs for Xray (VLESS+REALITY), Hysteria 2 and sing-box (TUIC), applying them, and reading
 traffic and who is online."""
+import hashlib
 import json
 import os
 import re
-import secrets
 import socket
 import subprocess
 import threading
@@ -103,7 +103,7 @@ def hysteria_config(s, users):
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
     stream_win, conn_win = _quic_windows()
     # With no enabled user the core must still start, but nobody may log in: one random placeholder account.
-    userpass = {email(u): u['hy2_pass'] for u in users} or {'u0': secrets.token_hex(16)}
+    userpass = {email(u): u['hy2_pass'] for u in users} or {'u0': _placeholder(s)}
     conf = {
         'listen': ':%d' % s['hy2_port'],
         'tls': {'cert': cert, 'key': key},
@@ -136,7 +136,7 @@ def tuic_config(s, users):
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
     # With no enabled user sing-box still needs one user to start: a random placeholder nobody knows.
     tuic_users = ([{'name': email(u), 'uuid': u['uuid'], 'password': u['hy2_pass']} for u in users]
-                  or [{'name': 'u0', 'uuid': str(uuid.uuid4()), 'password': secrets.token_hex(16)}])
+                  or [{'name': 'u0', 'uuid': str(uuid.uuid5(uuid.NAMESPACE_OID, _placeholder(s))), 'password': _placeholder(s)}])
     conf = {
         'log': {'level': 'warn'},
         'experimental': {'clash_api': {'external_controller': '127.0.0.1:%d' % s['tuic_api_port'],
@@ -159,6 +159,12 @@ def tuic_config(s, users):
                                    {'type': 'local', 'tag': 'local'}], 'final': 'doh'}
         conf['route']['default_domain_resolver'] = 'doh'
     return conf
+
+
+def _placeholder(s):
+    """Credential for the no-users placeholder account (a core refuses an empty user list). Nobody is given it,
+    and it is the same on every build, so an unchanged panel does not rewrite the config and restart the core."""
+    return hashlib.sha256(('vps2vpn-placeholder:' + s['stats_secret']).encode()).hexdigest()[:32]
 
 
 def write_configs(s=None, errors=None):
@@ -227,13 +233,26 @@ def apply(s=None, force=False):
         for unit, on in units.items():
             if not on:
                 system.systemctl('disable', '--now', unit)
-            elif unit in restart:
+            # also when the config did not change but the service is down (protocol switched back on, crash)
+            elif unit in restart or system.unit_active(unit) is False:
                 system.systemctl('enable', unit)
-                system.systemctl('restart', unit)
+                r = system.systemctl('restart', unit)
+                if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
+                    errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
         system.port_hopping(s)
         if errors:
             raise RuntimeError('; '.join(errors))
         return changed
+
+
+def _count(v):
+    """A byte counter as a core reported it: a non-negative int, or 0 when the value is malformed. A broken
+    stats reply must neither stop the collection for everyone nor bill (or refund) a user a negative amount."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return n if 0 <= n < 1 << 60 else 0
 
 
 def collect_traffic(s=None):
@@ -249,10 +268,13 @@ def collect_traffic(s=None):
         try:
             r = subprocess.run([paths.XRAY_BIN, 'api', 'statsquery', '--server=127.0.0.1:%d' % s['traffic_api_port'],
                                 '-pattern', 'user>>>', '-reset'], capture_output=True, text=True, timeout=15)
-            for st in json.loads(r.stdout or '{}').get('stat', []):
+            stats = json.loads(r.stdout or '{}')
+            for st in (stats.get('stat') if isinstance(stats, dict) else None) or []:
+                if not isinstance(st, dict) or not isinstance(st.get('name'), str):
+                    continue
                 parts = st['name'].split('>>>')        # user>>>u12>>>traffic>>>uplink
                 if len(parts) == 4 and parts[1].startswith('u') and parts[1][1:].isdigit():
-                    v = int(st.get('value', 0))
+                    v = _count(st.get('value', 0))
                     add(int(parts[1][1:]), v if parts[3] == 'uplink' else 0, v if parts[3] == 'downlink' else 0)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
@@ -262,10 +284,10 @@ def collect_traffic(s=None):
                                          headers={'Authorization': s['stats_secret']})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
-            for name, t in data.items():
-                if name.startswith('u') and name[1:].isdigit():
+            for name, t in (data.items() if isinstance(data, dict) else ()):
+                if isinstance(name, str) and name.startswith('u') and name[1:].isdigit() and isinstance(t, dict):
                     # Hysteria reports tx = bytes from the client (upload), rx = bytes to the client (download)
-                    add(int(name[1:]), int(t.get('tx', 0)), int(t.get('rx', 0)))
+                    add(int(name[1:]), _count(t.get('tx', 0)), _count(t.get('rx', 0)))
         except (OSError, ValueError):
             pass
     if s['tuic_enabled']:
@@ -299,9 +321,13 @@ class TuicMeter:
 
     @staticmethod
     def owner(c):
-        return next((int(x[1:]) for x in c.get('chains') or [] if x[:1] == 'u' and x[1:].isdigit()), None)
+        chains = c.get('chains')
+        return next((int(x[1:]) for x in (chains if isinstance(chains, list) else ())
+                     if isinstance(x, str) and x[:1] == 'u' and x[1:].isdigit()), None)
 
     def _add(self, uid, up, down):
+        if not (up or down):
+            return
         a, b = self.acc.get(uid, (0, 0))
         self.acc[uid] = (a + up, b + down)
 
@@ -309,27 +335,32 @@ class TuicMeter:
         try:
             d = data if data is not None else self.poll(s)
         except (OSError, ValueError):
-            self.total, self.conns = None, {}      # down or restarting: count afresh from the next reading
+            # Keep the last reading: once sing-box answers again the deltas since then are still credited.
+            # (After a restart its connections have new ids and its totals start lower, which is handled below.)
             return False
-        total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
+        if not isinstance(d, dict):
+            return False
+        total = (_count(d.get('uploadTotal', 0)), _count(d.get('downloadTotal', 0)))
+        raw = d.get('connections') or []
+        listed = [c for c in (raw if isinstance(raw, list) else ()) if isinstance(c, dict) and c.get('id') is not None]
         if self.total is None:
-            # First reading (or the first after an error/restart): only record a baseline. Bytes that open
-            # connections carried before we started watching are not credited to anyone a second time.
+            # First reading: only record a baseline. Bytes that open connections carried before we started
+            # watching are not credited to anyone a second time.
             conns = {}
-            for c in d.get('connections') or []:
+            for c in listed:
                 uid = self.owner(c)
                 if uid is not None:
-                    conns[c.get('id')] = (uid, int(c.get('upload', 0)), int(c.get('download', 0)))
+                    conns[c['id']] = (uid, _count(c.get('upload', 0)), _count(c.get('download', 0)))
             self.total, self.conns = total, conns
             return True
         seen, conns = {}, {}
-        for c in d.get('connections') or []:
+        for c in listed:
             uid = self.owner(c)
             if uid is None:
                 continue
-            up, down = int(c.get('upload', 0)), int(c.get('download', 0))
-            _, up0, down0 = self.conns.get(c.get('id'), (uid, 0, 0))
-            conns[c.get('id')] = (uid, up, down)
+            up, down = _count(c.get('upload', 0)), _count(c.get('download', 0))
+            _, up0, down0 = self.conns.get(c['id'], (uid, 0, 0))
+            conns[c['id']] = (uid, up, down)
             a, b = seen.get(uid, (0, 0))
             seen[uid] = (a + max(0, up - up0), b + max(0, down - down0))
         for uid, (a, b) in seen.items():
@@ -348,10 +379,12 @@ class TuicMeter:
         if not weights and users is not None and len(users) == 1:
             weights = {next(iter(users)): 1}
         if any(self.pending) and weights:
-            w = float(sum(weights.values()))
+            w, given = float(sum(weights.values())), [0, 0]
             for uid, v in weights.items():
-                self._add(uid, int(self.pending[0] * v / w), int(self.pending[1] * v / w))
-            self.pending = [0, 0]
+                a, b = int(self.pending[0] * v / w), int(self.pending[1] * v / w)
+                self._add(uid, a, b)
+                given[0], given[1] = given[0] + a, given[1] + b
+            self.pending = [self.pending[0] - given[0], self.pending[1] - given[1]]   # rounding is carried, not lost
         return True
 
     def sample(self, s, data=None, users=None):

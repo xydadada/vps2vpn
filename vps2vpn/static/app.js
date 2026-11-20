@@ -47,8 +47,9 @@ const T = {
     import_to: '一键导入', apps_hint: '电脑用 Clash Verge Rev / FlClash，安卓用 FlClash / Hiddify，苹果用 Shadowrocket / Stash / Karing。',
     ai: 'AI 可用性', ai_tip: '从这台服务器测试能不能用 Claude、ChatGPT、Gemini。结果只作参考，封号还和支付方式、使用习惯有关。', ai_run: '重新检测', ai_never: '还没检测过，点「重新检测」（约 10 秒）。', ai_where: '位置', ai_net: '网络', ai_kind: 'IP 类型', ai_at: '检测时间', ai_others: '其他服务器', ai_ok: '能用', ai_blocked: '地区不支持', ai_unreachable: '连不上', ai_unknown: '不确定',
     doctor: '一键体检', doctor_tip: '连不上、变慢时先点这里，它会逐项检查并告诉你怎么修。', doctor_run: '开始体检', doctor_ok: '全部正常', doctor_bad: '个问题',
-    fix: '怎么修', tg: 'Telegram 告警', tg_tip: '流量快用完、有人被停用、服务挂了、IP 变了时发消息给你。① 在 Telegram 找 @BotFather 发 /newbot 建一个机器人，把它给的 token 贴到下面；② 给你的新机器人随便发一句话；③ 点「连接」。',
-    tg_token: '机器人 token', tg_connect: '连接', tg_off: '关闭告警', tg_on: '告警已开启', tg_no_chat: '还没收到消息：请先在 Telegram 里给你的机器人发一句话，再点连接。', tg_bad: 'token 不对，请从 @BotFather 重新复制。',
+    fix: '怎么修', tg: 'Telegram 告警', tg_tip: '流量快用完、有人被停用、服务挂了、IP 变了时发消息给你。① 在 Telegram 找 @BotFather 发 /newbot 建一个机器人，把它给的 token 贴到下面；② 将下面的配对命令发给你与机器人的私聊；③ 点「连接」。',
+    tg_token: '机器人 token', tg_connect: '连接', tg_off: '关闭告警', tg_on: '告警已开启', tg_no_chat: '找不到匹配的私聊配对消息：发送下面的完整命令后再点连接。', tg_bad: 'token 不对，请从 @BotFather 重新复制。',
+    tg_pair: '请把下面这行命令发送到与机器人的私聊（不要发送到群组）：',
     refresh: '刷新', syncing: '正在同步…', synced: '已同步', theme_auto: '跟随系统', theme_light: '浅色', theme_dark: '深色',
     no_users: '还没有使用者，点右上角添加。', proto_one: '至少要开一种协议',
     copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
@@ -149,8 +150,9 @@ const T = {
     import_to: 'Import', apps_hint: 'Desktop: Clash Verge Rev / FlClash. Android: FlClash / Hiddify. iPhone: Shadowrocket / Stash / Karing.',
     ai: 'AI availability', ai_tip: 'Tests from this server whether Claude, ChatGPT and Gemini work. For reference only: bans also depend on payment and usage.', ai_run: 'Check again', ai_never: 'Not checked yet. Click "Check again" (about 10 s).', ai_where: 'Location', ai_net: 'Network', ai_kind: 'IP type', ai_at: 'Checked', ai_others: 'Other servers', ai_ok: 'works', ai_blocked: 'region blocked', ai_unreachable: 'unreachable', ai_unknown: 'unsure',
     doctor: 'Health check', doctor_tip: 'Not connecting or slow? Run this first: it checks everything and tells you how to fix it.', doctor_run: 'Run check', doctor_ok: 'All good', doctor_bad: 'problem(s)',
-    fix: 'Fix', tg: 'Telegram alerts', tg_tip: 'Get a message when quota runs low, a user is paused, a service is down or the IP changes. 1) In Telegram, message @BotFather with /newbot and paste the token below. 2) Send your new bot any message. 3) Press Connect.',
-    tg_token: 'Bot token', tg_connect: 'Connect', tg_off: 'Turn off', tg_on: 'Alerts are on', tg_no_chat: 'No message yet: send your bot any message in Telegram, then press Connect.', tg_bad: 'That token is not valid; copy it again from @BotFather.',
+    fix: 'Fix', tg: 'Telegram alerts', tg_tip: 'Get a message when quota runs low, a user is paused, a service is down or the IP changes. 1) In Telegram, message @BotFather with /newbot and paste the token below. 2) Send the pairing command below to the bot in a private chat. 3) Press Connect.',
+    tg_token: 'Bot token', tg_connect: 'Connect', tg_off: 'Turn off', tg_on: 'Alerts are on', tg_no_chat: 'No matching private-chat pairing message: send the full command below, then press Connect.', tg_bad: 'That token is not valid; copy it again from @BotFather.',
+    tg_pair: 'Send this command to your bot in a private chat (not a group):',
     refresh: 'Refresh', syncing: 'Syncing…', synced: 'Synced', theme_auto: 'System', theme_light: 'Light', theme_dark: 'Dark',
     no_users: 'No users yet. Add one with the button above.', proto_one: 'Turn on at least one protocol',
     copy_btn: 'Copy', nav_members: 'Members & invites', nav_servers: 'Servers', nav_monitor: 'Monitor & abuse', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
@@ -910,7 +912,7 @@ async function drawMembers() {
       (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + (i.note ? ' · ' + i.note : '') + ' · ' + fmt.time(i.valid_until)),
     h('span', {class: 'tl-acts'}, chip(i.status === 'unused' ? 'ok' : 'off', t('st_' + i.status)),
       i.status === 'unused' ? h('button', {class: 'btn sm', title: t('copy_link'), onclick: () => copyText(i.register_url || i.code, t('copy_link'))}, icon('link')) : null,
-      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async e => { if (await confirmBox(t('revoke'), i.code)) { const b = e.currentTarget; b.disabled = true; try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (er) { err(er); b.disabled = false; } } }}, t('revoke')) : null)));
+      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('revoke'), i.code)) { b.disabled = true; try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (er) { err(er); b.disabled = false; } } }}, t('revoke')) : null)));
   const cb = k => { const e = h('input', {type: 'checkbox', checked: !!s[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
   view.replaceChildren(h('section', {class: 'page'},
     h('div', {class: 'grid g-2-1'},
@@ -1227,19 +1229,24 @@ function drawSystem() {
   const docBox = h('div', null, h('div', {class: 'empty-state'}, h('span', {class: 'es-ic'}, icon('pulse')), h('p', null, t('doctor_tip')))),
     docBtn = h('button', {class: 'btn primary'}, icon('pulse'), t('doctor_run'));
   docBtn.onclick = () => runDoctor(docBtn, docBox);
-  const tgTok = h('input', {type: 'text', placeholder: '123456789:AA…', autocomplete: 'off'});
+  const tgTok = h('input', {type: 'password', placeholder: '123456789:AA…', autocomplete: 'off'});
+  const tgPairCode = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+  const tgPairCommand = '/bind ' + tgPairCode;
   const tgCb = k => { const e = h('input', {type: 'checkbox', checked: !!d.settings[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
   const tgOffBtn = h('button', {class: 'btn sm'}, t('tg_off'));
   tgOffBtn.onclick = async () => { tgOffBtn.disabled = true; try { await api('telegram', {off: true}); await load(); drawSystem(); } catch (e) { err(e); tgOffBtn.disabled = false; } };
   const tgConnBtn = h('button', {class: 'btn'}, t('tg_connect'));
   tgConnBtn.onclick = async () => {
     tgConnBtn.disabled = true;
-    try { await api('telegram', {token: tgTok.value.trim()}); toast(t('tg_on')); await load(); drawSystem(); }
+    try { await api('telegram', {token: tgTok.value.trim(), challenge: tgPairCode}); toast(t('tg_on')); await load(); drawSystem(); }
     catch (e) { toast(e.message === 'no_chat' ? t('tg_no_chat') : e.message === 'bad_token' ? t('tg_bad') : e.message, 'err'); tgConnBtn.disabled = false; }
   };
   const tgBody = tg ? h('div', {class: 'stack'}, h('div', null, chip('ok', t('tg_on'))), h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_cmds')),
       tgCb('tg_bot'), tgCb('tg_backup'), h('div', null, tgOffBtn))
-    : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_tip')), field(t('tg_token'), tgTok), h('div', null, tgConnBtn));
+    : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_tip')), field(t('tg_token'), tgTok),
+      h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_pair')),
+      h('code', {style: 'display:block;padding:12px;overflow-wrap:anywhere;user-select:all'}, tgPairCommand),
+      h('div', null, tgConnBtn));
   const pw = {user: h('input', {type: 'text', value: d.settings.admin_user}), old: h('input', {type: 'password', autocomplete: 'current-password'}), nw: h('input', {type: 'password', autocomplete: 'new-password'})};
   const pwBtn = h('button', {class: 'btn'}, icon('lock'), t('save'));
   pwBtn.onclick = async () => {

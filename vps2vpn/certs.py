@@ -71,6 +71,37 @@ def _san(host):
     return ('IP:' if is_ip(h) else 'DNS:') + h
 
 
+def _pair_ok(crt, key):
+    """The certificate's public key belongs to this private key (what a TLS server needs to start)."""
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(crt, key)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _publish_pair(key_dst, key_data, crt_dst, crt_data):
+    """Install a key and its certificate. They are two files: if the second write fails the old key is put
+    back, so the server is never left holding a key that does not fit its certificate."""
+    try:
+        with open(key_dst, 'rb') as f:
+            old_key = f.read()
+    except OSError:
+        old_key = None
+    paths.write_atomic(key_dst, key_data, 0o640, 'vps2vpn')
+    try:
+        paths.write_atomic(crt_dst, crt_data, 0o644, 'vps2vpn')
+    except BaseException:
+        try:
+            if old_key is None:
+                os.remove(key_dst)
+            else:
+                paths.write_atomic(key_dst, old_key, 0o640, 'vps2vpn')
+        except OSError:
+            pass
+        raise
+
+
 # --- self-signed ----------------------------------------------------------------
 def ensure_self_signed(host):
     """Create (or recreate for a new host) a 10-year self-signed ECDSA certificate."""
@@ -82,7 +113,8 @@ def ensure_self_signed(host):
     if not h or any(c in h for c in '/\n\r,\x00'):
         raise ValueError('invalid host for self-signed certificate: %r' % (host,))
     marker = paths.SELF_CRT + '.host'
-    if os.path.exists(paths.SELF_CRT) and os.path.exists(marker):
+    # a lost or damaged key is not "already there": make a new pair
+    if os.path.exists(paths.SELF_CRT) and os.path.exists(marker) and _pair_ok(paths.SELF_CRT, paths.SELF_KEY):
         try:
             with open(marker, encoding='utf-8') as f:
                 if f.read() == h:
@@ -95,8 +127,7 @@ def ensure_self_signed(host):
         _openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
                  '-keyout', key, '-out', crt, '-days', '3650', '-subj', subj,
                  '-addext', 'subjectAltName=' + _san(h))
-        paths.write_atomic(paths.SELF_KEY, _pem(key), 0o640, 'vps2vpn')
-        paths.write_atomic(paths.SELF_CRT, _pem(crt), 0o644, 'vps2vpn')
+        _publish_pair(paths.SELF_KEY, _pem(key), paths.SELF_CRT, _pem(crt))
     paths.write_atomic(marker, h, 0o644)
 
 
@@ -380,10 +411,15 @@ def issue(host, email='', staging=False, log=print):
                 chain = chain.decode()
             if '-----BEGIN CERTIFICATE-----' not in chain:
                 raise AcmeError('unexpected certificate response')
+            got = os.path.join(d, 'chain')
+            with open(got, 'w') as f:
+                f.write(chain.replace('\r', ''))
+            if not _pair_ok(got, key):
+                # an order that was already finished (by an earlier run) carries a certificate for another key
+                raise AcmeError('the issued certificate does not match this key; run it again for a fresh order')
             key_dst = paths.ACME_KEY + '.staging' if staging else paths.ACME_KEY
             crt_dst = paths.ACME_CRT + '.staging' if staging else paths.ACME_CRT
-            paths.write_atomic(key_dst, _pem(key), 0o640, 'vps2vpn')
-            paths.write_atomic(crt_dst, chain.replace('\r', ''), 0o644, 'vps2vpn')
+            _publish_pair(key_dst, _pem(key), crt_dst, chain.replace('\r', ''))
             if not staging:
                 with _trust_lock:
                     _trust_cache.clear()
