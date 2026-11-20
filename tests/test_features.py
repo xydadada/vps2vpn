@@ -224,6 +224,13 @@ class ProtocolSecurity(tu.Base):
         self.assertEqual(active, {'u%d' % account['id']: account['hy2_pass']})
         self.assertNotIn('_v2v_no_active_users', active)
 
+    def test_xray_route_checks_actual_private_destination(self):
+        conf = cores.xray_config(db.settings(), [])
+        self.assertEqual(conf['routing']['domainStrategy'], 'IPOnDemand')
+        self.assertEqual(conf['inbounds'][0]['sniffing']['destOverride'], [])
+        self.assertEqual(conf['routing']['rules'][0]['ip'], ['geoip:private'])
+        self.assertEqual(conf['routing']['rules'][0]['outboundTag'], 'block')
+
     def test_tuic_resolves_hostnames_before_rejecting_private_answers(self):
         conf = cores.tuic_config(db.settings(), [])
         actions = conf['route']['rules']

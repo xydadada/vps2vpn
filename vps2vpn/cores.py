@@ -52,14 +52,17 @@ def xray_config(s, users):
                     'show': False, 'target': '%s:443' % s['reality_target'], 'xver': 0,
                     'serverNames': [s['reality_target']],
                     'privateKey': s['reality_private_key'], 'shortIds': [s['reality_short_id']]}},
-            'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'routeOnly': True},
+            # Sniff application protocols for BT checks, but never use attacker-controlled
+            # HTTP Host/TLS SNI as a substitute for the actual destination address.
+            'sniffing': {'enabled': True, 'destOverride': []},
         }],
         'outbounds': [
             {'protocol': 'freedom', 'tag': 'direct', 'streamSettings': {'sockopt': {'domainStrategy': 'UseIP'}}},
             {'protocol': 'blackhole', 'tag': 'block'},
         ],
-        # IPIfNonMatch resolves domain destinations before evaluating geoip:private, blocking DNS-based SSRF.
-        'routing': {'domainStrategy': 'IPIfNonMatch', 'rules': rules},
+        # Evaluate the real destination IP before accepting a route. Sniffed
+        # Host/SNI must not override the private-address rule.
+        'routing': {'domainStrategy': 'IPOnDemand', 'rules': rules},
     }
 
 
