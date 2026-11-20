@@ -3,11 +3,17 @@ check from the outside, and adding a second server to the first through the pane
 
     python -m unittest tests.test_deploy
 """
+import hashlib
+import io
 import json
 import os
+import re
 import shutil
 import socket
+import sqlite3
+import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -291,6 +297,255 @@ class DeploySecurity(unittest.TestCase):
             self.assertEqual(opened, [])
         finally:
             deploy.open_link = orig
+
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+INSTALL_SH = os.path.join(ROOT_DIR, 'install.sh')
+# Windows' own bash.exe is WSL, not a POSIX shell for this checkout: there, set V2V_TEST_BASH to Git's bash.
+TEST_BASH = os.environ.get('V2V_TEST_BASH') or (shutil.which('bash') if os.name != 'nt' else None)
+
+CURL_STUB = r"""#!/bin/bash
+# offline curl: serves $FIX/api.json for GitHub's API and $FIX/files/<basename of the URL> for downloads
+out=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -H|--connect-timeout|--max-time|--retry) shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+echo "$url" >> "$FIX/curl.log"
+case "$url" in
+  https://api.github.com/*) f="$FIX/api.json" ;;
+  *) f="$FIX/files/${url##*/}" ;;
+esac
+[ -f "$f" ] || exit 22
+if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi
+"""
+
+
+def _posix(path):
+    """A path bash understands. Git bash on Windows: C:\\x -> /c/x (a drive colon breaks PATH and GNU tar)."""
+    path = path.replace('\\', '/')
+    if os.name == 'nt' and re.match(r'^[A-Za-z]:/', path):
+        path = '/' + path[0].lower() + path[2:]
+    return path
+
+
+def _code_tarball(version, prefix):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+        data = ("VERSION = '%s'\n" % version).encode()
+        info = tarfile.TarInfo(prefix + '/vps2vpn/__init__.py')
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+@unittest.skipUnless(TEST_BASH, 'needs bash (on Windows set V2V_TEST_BASH to Git bash)')
+class Installer(unittest.TestCase):
+    """install.sh: verified release by default, explicit unverified dev refs, snapshot + rollback."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.fix = os.path.join(self.tmp, 'fix')
+        self.files = os.path.join(self.fix, 'files')
+        self.root = os.path.join(self.tmp, 'root')
+        self.stubs = os.path.join(self.tmp, 'stubs')
+        for d in (self.files, self.root, self.stubs):
+            os.makedirs(d)
+        stub = {'curl': CURL_STUB,
+                'python3': '#!/bin/sh\nexec "%s" "$@"\n' % _posix(sys.executable),
+                'id': '#!/bin/sh\necho 0\n',
+                'chown': '#!/bin/sh\nexit 0\n',
+                'systemctl': '#!/bin/sh\necho "$*" >> "$FIX/systemctl.log"\n'}
+        for name, body in stub.items():
+            with open(os.path.join(self.stubs, name), 'w', encoding='utf-8', newline='\n') as f:
+                f.write(body)
+            os.chmod(os.path.join(self.stubs, name), 0o755)
+        with open(INSTALL_SH, encoding='utf-8') as f:
+            self.pinned = re.search(r'^PINNED_TAG="([^"]+)"', f.read(), re.M).group(1)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def sh(self, body, **env):
+        script = ('export PATH="$STUBS:$PATH"\nsource "$INSTALL"\n'
+                  'LIB="$ROOTDIR/lib"; VAR="$ROOTDIR/var"; SNAPS="$VAR/upgrade-snapshots"\n' + body)
+        e = dict(os.environ, FIX=_posix(self.fix), STUBS=_posix(self.stubs), INSTALL=_posix(INSTALL_SH),
+                 ROOTDIR=_posix(self.root))
+        for k in ('V2V_REF', 'V2V_BRANCH', 'V2V_ALLOW_DOWNGRADE'):
+            e.pop(k, None)
+        e.update(env)
+        p = subprocess.run([TEST_BASH, '-c', script], env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=120)
+        return p.returncode, p.stdout.decode('utf-8', 'replace')
+
+    def put(self, name, data):
+        with open(os.path.join(self.files, name), 'wb') as f:
+            f.write(data)
+
+    def release(self, tag, version, good=True):
+        data = _code_tarball(version, 'vps2vpn-' + tag)
+        name = 'vps2vpn-%s.tar.gz' % tag
+        self.put(name, data)
+        digest = hashlib.sha256(data if good else b'other').hexdigest()
+        self.put(name + '.sha256', ('%s  %s\n' % (digest, name)).encode())
+
+    def api(self, tag):
+        with open(os.path.join(self.fix, 'api.json'), 'w') as f:
+            json.dump({'tag_name': tag}, f)
+
+    FETCH = 'rm -rf "$ROOTDIR/t"; mkdir -p "$ROOTDIR/t" && fetch_panel_code "$ROOTDIR/t" && cat "$ROOTDIR/t/vps2vpn/__init__.py"'
+
+    def urls(self):
+        with open(os.path.join(self.fix, 'curl.log')) as f:
+            return f.read().split()
+
+    def test_latest_release_is_verified(self):
+        self.api('v9.9.9')
+        self.release('v9.9.9', '9.9.9')
+        rc, out = self.sh(self.FETCH)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("VERSION = '9.9.9'", out)
+        self.assertIn('checksum OK', out)
+        self.assertNotIn('UNVERIFIED', out)
+        self.assertIn('https://github.com/xydadada/vps2vpn/releases/download/v9.9.9/vps2vpn-v9.9.9.tar.gz.sha256',
+                      self.urls())
+
+    def test_checksum_mismatch_or_missing_is_refused(self):
+        self.api('v9.9.9')
+        self.release('v9.9.9', '9.9.9', good=False)
+        self.put('v9.9.9.tar.gz', _code_tarball('9.9.9', 'x'))          # must not be used as a way around
+        rc, out = self.sh(self.FETCH)
+        self.assertNotEqual(rc, 0)
+        self.assertIn('checksum mismatch', out)
+        self.assertFalse(os.path.exists(os.path.join(self.root, 't', 'vps2vpn')))     # never unpacked
+        os.unlink(os.path.join(self.files, 'vps2vpn-v9.9.9.tar.gz.sha256'))
+        rc, out = self.sh(self.FETCH)
+        self.assertNotEqual(rc, 0)
+        self.assertIn('download failed', out)
+        self.assertFalse(os.path.exists(os.path.join(self.root, 't', 'vps2vpn')))
+
+    def test_release_without_tarball_uses_the_tag_archive(self):
+        # releases made before the release workflow (e.g. v0.2.5) have no vps2vpn-<tag>.tar.gz
+        self.api('v9.9.9')
+        self.put('v9.9.9.tar.gz', _code_tarball('9.9.9', 'vps2vpn-9.9.9'))
+        self.put('main.tar.gz', _code_tarball('0.0.1', 'vps2vpn-main'))
+        rc, out = self.sh(self.FETCH)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("VERSION = '9.9.9'", out)
+        self.assertIn('UNVERIFIED', out)
+        self.assertIn('https://github.com/xydadada/vps2vpn/archive/refs/tags/v9.9.9.tar.gz', self.urls())
+
+    def test_api_unreachable_uses_pinned_tag_then_main(self):
+        self.release(self.pinned, self.pinned[1:])
+        rc, out = self.sh(self.FETCH)
+        self.assertEqual(rc, 0, out)
+        self.assertIn('pinned release ' + self.pinned, out)
+        self.assertIn('checksum OK', out)
+        # nothing published at all: the old behaviour (main), loudly unverified
+        shutil.rmtree(self.files)
+        os.makedirs(self.files)
+        self.put('main.tar.gz', _code_tarball('0.0.1', 'vps2vpn-main'))
+        rc, out = self.sh(self.FETCH)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("VERSION = '0.0.1'", out)
+        self.assertIn('installing the main branch, UNVERIFIED', out)
+
+    def test_dev_ref_is_explicit_and_unverified(self):
+        self.api('v9.9.9')
+        self.release('v9.9.9', '9.9.9')
+        self.put('dev.tar.gz', _code_tarball('9.9.10', 'vps2vpn-dev'))
+        rc, out = self.sh(self.FETCH, V2V_REF='dev')
+        self.assertEqual(rc, 0, out)
+        self.assertIn("VERSION = '9.9.10'", out)
+        self.assertIn('UNVERIFIED development install', out)
+        self.assertEqual(self.urls(), ['https://github.com/xydadada/vps2vpn/archive/dev.tar.gz'])
+        rc, out = self.sh(self.FETCH, V2V_REF='-o /etc/passwd')
+        self.assertNotEqual(rc, 0)
+        self.assertIn('not a branch', out)
+
+    def test_release_older_than_install_is_not_a_silent_downgrade(self):
+        os.makedirs(os.path.join(self.root, 'lib', 'app', 'vps2vpn'))
+        with open(os.path.join(self.root, 'lib', 'app', 'vps2vpn', '__init__.py'), 'w') as f:
+            f.write("VERSION = '9.10.0'\n")
+        self.api('v9.9.9')
+        self.release('v9.9.9', '9.9.9')
+        rc, out = self.sh(self.FETCH)
+        self.assertNotEqual(rc, 0)
+        self.assertIn('not downgrading', out)
+        rc, out = self.sh(self.FETCH, V2V_ALLOW_DOWNGRADE='1')
+        self.assertEqual(rc, 0, out)
+
+    def test_snapshot_keeps_three_and_restores(self):
+        app = os.path.join(self.root, 'lib', 'app', 'vps2vpn')
+        var = os.path.join(self.root, 'var')
+        snaps = os.path.join(var, 'upgrade-snapshots')
+        os.makedirs(app)
+        with open(os.path.join(app, '__init__.py'), 'w') as f:
+            f.write("VERSION = '1.0.0'\n")
+        for old in ('20200101-000000-v0.1', '20200102-000000-v0.2', '20200103-000000-v0.3'):
+            os.makedirs(os.path.join(snaps, old))
+        dbf = os.path.join(var, 'vps2vpn.db')
+        live = sqlite3.connect(dbf, isolation_level=None)
+        live.execute('PRAGMA journal_mode=WAL')
+        live.execute('PRAGMA wal_autocheckpoint=0')        # the row stays in the -wal file: a plain cp would miss it
+        live.execute('CREATE TABLE t (v TEXT)')
+        live.execute("INSERT INTO t VALUES ('before')")
+        rc, out = self.sh('snapshot_before_upgrade; echo "SNAP=$SNAPSHOT"')
+        live.close()
+        self.assertEqual(rc, 0, out)
+        self.assertIn('to roll back this upgrade later:  sudo bash ', out)
+        kept = sorted(os.listdir(snaps))
+        self.assertEqual(len(kept), 3, kept)
+        self.assertNotIn('20200101-000000-v0.1', kept)
+        new = kept[-1]
+        self.assertTrue(new.endswith('-v1.0.0'), new)
+        if os.name != 'nt':
+            self.assertEqual(os.stat(os.path.join(snaps, new)).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(os.path.join(snaps, new, 'vps2vpn.db')).st_mode & 0o077, 0)
+        snap = sqlite3.connect(os.path.join(snaps, new, 'vps2vpn.db'))
+        self.assertEqual(snap.execute('SELECT v FROM t').fetchall(), [('before',)])
+        snap.close()
+
+        # the upgrade changes code and data; restore.sh puts both back
+        with open(os.path.join(app, '__init__.py'), 'w') as f:
+            f.write("VERSION = '2.0.0'\n")
+        c = sqlite3.connect(dbf, isolation_level=None)
+        c.execute("INSERT INTO t VALUES ('after')")
+        c.close()
+        rc, out = self.sh('bash "$SNAPS/%s/restore.sh"' % new)
+        self.assertEqual(rc, 0, out)
+        c = sqlite3.connect(dbf)
+        self.assertEqual(c.execute('SELECT v FROM t').fetchall(), [('before',)])
+        c.close()
+        with open(os.path.join(app, '__init__.py')) as f:
+            self.assertEqual(f.read(), "VERSION = '1.0.0'\n")
+        with open(os.path.join(self.fix, 'systemctl.log')) as f:
+            self.assertEqual(f.read().split(), ['stop', 'vps2vpn', 'start', 'vps2vpn'])
+
+    def test_fresh_install_makes_no_snapshot(self):
+        rc, out = self.sh('snapshot_before_upgrade; echo "SNAP=[$SNAPSHOT]"')
+        self.assertEqual(rc, 0, out)
+        self.assertIn('SNAP=[]', out)
+
+
+class ReleaseWorkflow(unittest.TestCase):
+    def test_release_workflow_is_minimal_and_reproducible(self):
+        with open(os.path.join(ROOT_DIR, '.github', 'workflows', 'release.yml'), encoding='utf-8') as f:
+            wf = f.read()
+        self.assertIn("tags: ['v*']", wf)
+        self.assertRegex(wf, r'(?m)^permissions:\n  contents: read$')            # nothing more by default
+        self.assertEqual(wf.count('contents: write'), 1)
+        self.assertEqual(set(re.findall(r'uses: (\S+)', wf)), {'actions/checkout@v4'})
+        self.assertIn('git archive --format=tar --prefix="vps2vpn-$TAG/" HEAD | gzip -n -9', wf)
+        self.assertIn('sha256sum "$name" > "$name.sha256"', wf)
+        with open(INSTALL_SH, encoding='utf-8') as f:
+            sh = f.read()
+        self.assertIn('releases/download/$tag/$name.sha256', sh)
+        self.assertNotIn('archive/refs/heads/$BRANCH', sh)            # the tip of main is no longer the default
 
 
 if __name__ == '__main__':

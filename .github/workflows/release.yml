@@ -1,0 +1,50 @@
+name: release
+# On a pushed tag v*, attach the panel source that install.sh installs by default:
+#   vps2vpn-<tag>.tar.gz         git archive of the tag (reproducible: same tag -> same bytes)
+#   vps2vpn-<tag>.tar.gz.sha256  checked by install.sh before anything is unpacked
+# Reproduce locally:  git archive --format=tar --prefix=vps2vpn-<tag>/ <tag> | gzip -n -9 | sha256sum
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches the code version
+        run: |
+          set -eu
+          v=$(sed -n "s/^VERSION = ['\"]\([^'\"]*\)['\"].*/\1/p" vps2vpn/__init__.py | head -1)
+          [ "v$v" = "$TAG" ] || { echo "::error::tag $TAG but vps2vpn/__init__.py says VERSION = '$v'"; exit 1; }
+          pinned=$(sed -n 's/^PINNED_TAG="\([^"]*\)".*/\1/p' install.sh)
+          [ "$pinned" = "$TAG" ] || echo "::warning::install.sh PINNED_TAG is $pinned, not $TAG (bump it on main)"
+      - name: Build the source tarball and its checksum
+        run: |
+          set -eu
+          name="vps2vpn-$TAG.tar.gz"
+          # tar from git archive is byte-stable (mtime = commit time); gzip -n drops name and timestamp
+          git archive --format=tar --prefix="vps2vpn-$TAG/" HEAD | gzip -n -9 > "$name"
+          git archive --format=tar --prefix="vps2vpn-$TAG/" HEAD | gzip -n -9 | cmp - "$name"
+          tar -tzf "$name" "vps2vpn-$TAG/install.sh" "vps2vpn-$TAG/vps2vpn/__init__.py" >/dev/null
+          sha256sum "$name" > "$name.sha256"
+          cat "$name.sha256"
+      - name: Attach to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          name="vps2vpn-$TAG.tar.gz"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$name" "$name.sha256" --clobber
+          elif ! gh release create "$TAG" "$name" "$name.sha256" --verify-tag --title "vps2vpn ${TAG#v}" \
+              --notes "Install or upgrade on a server: \`bash <(curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh)\`"; then
+            # created by hand meanwhile: just add the files
+            gh release upload "$TAG" "$name" "$name.sha256" --clobber
+          fi

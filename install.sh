@@ -5,6 +5,11 @@
 #   bash install.sh info       show the panel link again
 #   bash install.sh uninstall  remove everything vps2vpn added
 #
+# Without a checkout next to it, the panel code is the latest tagged release, checked against the
+# release's SHA256 file before anything is unpacked. Developers can opt in to an unverified branch:
+#   V2V_REF=main bash install.sh
+# Every upgrade first snapshots the database and the previous code (last 3 kept) and prints how to roll back.
+#
 # Supported: Debian 11+, Ubuntu 20.04+, RHEL/Rocky/Alma/CentOS Stream 8+, Fedora, openSUSE, Arch; x86_64 and arm64.
 set -euo pipefail
 
@@ -14,10 +19,13 @@ SINGBOX_VERSION="v1.14.4"   # TUIC v5 server; release hashes pinned below (sing-
 SINGBOX_SHA256_amd64="699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968"
 SINGBOX_SHA256_arm64="436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26"
 REPO="${V2V_REPO:-xydadada/vps2vpn}"          # where the panel code is downloaded from when not run from a checkout
-BRANCH="${V2V_BRANCH:-main}"
+PINNED_TAG="v0.2.5"   # release used when GitHub's API cannot be reached; bump it with every release
+REF="${V2V_REF:-${V2V_BRANCH:-}}"   # development only: install this branch/tag/commit instead, UNVERIFIED
 LIB=/usr/local/lib/vps2vpn
 ETC=/etc/vps2vpn
 VAR=/var/lib/vps2vpn
+SNAPS="$VAR/upgrade-snapshots"     # database + code saved before each upgrade (root only, last 3 kept)
+SNAPSHOT=""                         # the one made by this run
 
 c_ok=$'\e[32m'; c_bad=$'\e[31m'; c_dim=$'\e[2m'; c_b=$'\e[1m'; c_0=$'\e[0m'
 say()  { echo "${c_b}==>${c_0} $*"; }
@@ -79,6 +87,136 @@ install_packages() {
 
 fetch() {  # url dest
   curl -fL --retry 3 --connect-timeout 15 -sS -o "$2" "$1" || die "download failed: $1"
+}
+
+try_fetch() {  # url dest -> non-zero instead of dying (a file that may not exist, e.g. a release asset)
+  rm -f "$2"
+  curl -fL --retry 3 --connect-timeout 15 -sS -o "$2" "$1" 2>/dev/null
+}
+
+warn() { echo "${c_bad}warning:${c_0} $*" >&2; }
+
+pkg_version() {  # path/to/vps2vpn/__init__.py -> its VERSION, or nothing
+  [ -f "$1" ] || return 0
+  sed -n "s/^VERSION = ['\"]\([^'\"]*\)['\"].*/\1/p" "$1" | head -1
+}
+
+version_lt() {  # a b -> 0 if version a is older than b
+  python3 -c 'import re, sys
+v = lambda s: tuple(int(x) for x in re.findall(r"[0-9]+", s))
+sys.exit(0 if v(sys.argv[1]) < v(sys.argv[2]) else 1)' "$1" "$2"
+}
+
+latest_release_tag() {  # -> tag of the newest published release, or nothing if GitHub's API cannot be reached
+  curl -fsS --connect-timeout 10 --max-time 20 -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | python3 -c 'import json, re, sys
+t = json.load(sys.stdin).get("tag_name") or ""
+print(t if re.match(r"^v[0-9][0-9A-Za-z._-]*$", t) else "")' 2>/dev/null || true
+}
+
+fetch_panel_code() {  # tmp -> panel code unpacked under tmp (tmp/vps2vpn)
+  local tmp="$1" tag name want got
+  if [ -n "$REF" ]; then
+    [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || die "V2V_REF is not a branch, tag or commit: $REF"
+    warn "UNVERIFIED development install: panel code from '$REF' of github.com/$REPO, no checksum"
+    fetch "https://github.com/$REPO/archive/$REF.tar.gz" "$tmp/src.tgz"
+  else
+    tag=$(latest_release_tag)
+    if [ -z "$tag" ]; then
+      tag="$PINNED_TAG"
+      say "GitHub's API is unreachable; using the pinned release $tag"
+    fi
+    name="vps2vpn-$tag.tar.gz"
+    say "downloading vps2vpn $tag from github.com/$REPO/releases"
+    if try_fetch "https://github.com/$REPO/releases/download/$tag/$name" "$tmp/src.tgz"; then
+      # a release that has the tarball must have its checksum too, and it must match
+      fetch "https://github.com/$REPO/releases/download/$tag/$name.sha256" "$tmp/src.tgz.sha256"
+      want=$(awk -v f="$name" '{n=$2; sub(/^\*/, "", n); if (NF == 1 || n == f) {print $1; exit}}' "$tmp/src.tgz.sha256")
+      got=$(sha256sum "$tmp/src.tgz" | awk '{print $1}')
+      [ -n "$want" ] && [ "$want" = "$got" ] \
+        || die "vps2vpn $tag checksum mismatch (expected ${want:-nothing}, got $got): refusing to install it"
+      say "checksum OK: $got"
+    elif try_fetch "https://github.com/$REPO/archive/refs/tags/$tag.tar.gz" "$tmp/src.tgz"; then
+      # releases made before the release workflow existed carry no tarball: use GitHub's archive of the same tag
+      warn "release $tag has no $name; installing GitHub's archive of tag $tag, UNVERIFIED (no checksum)"
+    else
+      warn "release $tag cannot be downloaded; installing the main branch, UNVERIFIED (no checksum)"
+      fetch "https://github.com/$REPO/archive/refs/heads/main.tar.gz" "$tmp/src.tgz"
+      tag=""
+    fi
+  fi
+  tar --no-same-owner --no-same-permissions -xzf "$tmp/src.tgz" -C "$tmp" --strip-components=1
+  if [ -z "$REF" ] && [ -n "$tag" ] && [ "${V2V_ALLOW_DOWNGRADE:-}" != 1 ]; then
+    local have new
+    have=$(pkg_version "$LIB/app/vps2vpn/__init__.py"); new=$(pkg_version "$tmp/vps2vpn/__init__.py")
+    if [ -n "$have" ] && [ -n "$new" ] && version_lt "$new" "$have"; then
+      die "the installed version $have is newer than release $tag ($new); not downgrading.
+  To update to the development branch instead:  V2V_REF=main bash install.sh
+  To downgrade anyway:                          V2V_ALLOW_DOWNGRADE=1 bash install.sh"
+    fi
+  fi
+}
+
+snapshot_before_upgrade() {  # -> SNAPSHOT=dir holding a consistent copy of the database and the current code
+  local db="$VAR/vps2vpn.db"
+  [ -d "$LIB/app/vps2vpn" ] || [ -f "$db" ] || return 0      # fresh install: nothing to keep
+  local old stamp dir
+  old=$(pkg_version "$LIB/app/vps2vpn/__init__.py")
+  stamp=$(date -u +%Y%m%d-%H%M%S)
+  dir="$SNAPS/$stamp-v${old:-unknown}"
+  say "saving the current database and code to $dir"
+  (umask 077 && mkdir -p "$dir") || die "could not create $dir (disk full?); nothing was changed"
+  chmod 0700 "$SNAPS" "$dir"
+  if [ -f "$db" ]; then
+    # SQLite's online backup: consistent even while the panel is writing (a plain copy of a WAL database is not)
+    if ! (umask 077 && python3 -c 'import sqlite3, sys
+src = sqlite3.connect(sys.argv[1], timeout=30)
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+ok = dst.execute("PRAGMA quick_check").fetchone()[0]
+dst.close()
+src.close()
+sys.exit(0 if ok == "ok" else "snapshot check failed: " + ok)' "$db" "$dir/vps2vpn.db"); then
+      rm -rf -- "$dir"
+      die "could not snapshot the database (disk full?); nothing was changed"
+    fi
+  fi
+  if [ -d "$LIB/app/vps2vpn" ]; then
+    (umask 077 && tar -czf "$dir/app.tar.gz" --exclude=__pycache__ -C "$LIB/app" vps2vpn) \
+      || { rm -rf -- "$dir"; die "could not snapshot the panel code (disk full?); nothing was changed"; }
+  fi
+  (umask 077 && cat > "$dir/restore.sh") <<EOF
+#!/bin/bash
+# Roll vps2vpn back to the snapshot taken $stamp UTC (version ${old:-unknown}): database and panel code.
+set -euo pipefail
+[ "\$(id -u)" = 0 ] || { echo "please run as root: sudo bash \$0" >&2; exit 1; }
+S=\$(cd "\$(dirname "\$0")" && pwd)
+systemctl stop vps2vpn 2>/dev/null || true
+if [ -f "\$S/vps2vpn.db" ]; then
+  install -m 0600 "\$S/vps2vpn.db" "$VAR/vps2vpn.db.restore"
+  rm -f "$VAR/vps2vpn.db-wal" "$VAR/vps2vpn.db-shm"     # never replay the newer journal onto the old database
+  mv -f "$VAR/vps2vpn.db.restore" "$VAR/vps2vpn.db"
+fi
+if [ -f "\$S/app.tar.gz" ]; then
+  T=\$(mktemp -d); trap 'rm -rf "\$T"' EXIT
+  tar --no-same-owner --no-same-permissions -xzf "\$S/app.tar.gz" -C "\$T"
+  chown -R root:root "\$T/vps2vpn"
+  find "\$T/vps2vpn" \\( -type d -exec chmod 0755 {} + \\) -o \\( -type f -exec chmod 0644 {} + \\)
+  mkdir -p "$LIB/app"
+  rm -rf "$LIB/app/vps2vpn.old"
+  if [ -d "$LIB/app/vps2vpn" ]; then mv "$LIB/app/vps2vpn" "$LIB/app/vps2vpn.old"; fi
+  mv "\$T/vps2vpn" "$LIB/app/vps2vpn"
+fi
+PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force >/dev/null 2>&1 || true
+systemctl start vps2vpn
+echo "vps2vpn is back to the snapshot of $stamp UTC (version ${old:-unknown})."
+EOF
+  # keep the newest 3 (names start with the UTC time, so the glob is in age order)
+  local all=() d i
+  for d in "$SNAPS"/[0-9]*-v*/; do if [ -d "$d" ]; then all+=("${d%/}"); fi; done
+  for ((i = 0; i + 3 < ${#all[@]}; i++)); do rm -rf -- "${all[$i]}"; done
+  SNAPSHOT="$dir"
+  say "to roll back this upgrade later:  sudo bash $SNAPSHOT/restore.sh"
 }
 
 install_cores() {
@@ -145,12 +283,11 @@ install_app() {
     say "using panel code next to this script"
     cp -r "$here/vps2vpn" "$tmp/"
   else
-    say "downloading panel code from github.com/$REPO"
-    fetch "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz" "$tmp/src.tgz"
-    tar --no-same-owner --no-same-permissions -xzf "$tmp/src.tgz" -C "$tmp" --strip-components=1
+    fetch_panel_code "$tmp"
   fi
   [ -f "$tmp/vps2vpn/__init__.py" ] || die "panel code not found in the download"
   python3 -m compileall -q "$tmp/vps2vpn" >/dev/null || die "panel code does not compile with $(python3 --version)"
+  snapshot_before_upgrade
   mkdir -p "$LIB/app"
   rm -rf "$LIB/app/vps2vpn.new"
   cp -r "$tmp/vps2vpn" "$LIB/app/vps2vpn.new"
@@ -409,7 +546,7 @@ do_install() {
     if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade failed during init: put the previous version back
       rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
       systemctl restart vps2vpn 2>/dev/null || true
-      die "the new version failed to initialize, so the previous version was restored"
+      die "the new version failed to initialize, so the previous version was restored${SNAPSHOT:+ (database too: sudo bash $SNAPSHOT/restore.sh)}"
     fi
     die "vps2vpn init failed"
   fi
@@ -425,11 +562,14 @@ do_install() {
     if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade broke the panel: put the previous version back
       rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
       systemctl restart vps2vpn
-      die "the new version failed to start, so the previous version was restored"
+      die "the new version failed to start, so the previous version was restored${SNAPSHOT:+ (database too: sudo bash $SNAPSHOT/restore.sh)}"
     fi
     die "panel failed to start"
   fi
   show_result "$json"
+  if [ -n "$SNAPSHOT" ]; then
+    echo "  ${c_dim}Roll back this upgrade (database + code) / 回滚这次升级:${c_0}  sudo bash $SNAPSHOT/restore.sh"
+  fi
 }
 
 do_uninstall() {
@@ -455,6 +595,9 @@ one_at_a_time() {   # a retried or double-clicked deploy must not run two instal
     flock -w 600 9 || die "another vps2vpn install is still running"
   fi
 }
+
+# sourced (tests): define the functions only
+[ "${BASH_SOURCE[0]:-$0}" = "$0" ] || return 0
 
 case "${1:-install}" in
   install|update|upgrade|uninstall) one_at_a_time ;;
