@@ -367,6 +367,25 @@ def main():
     empty_client.terminate()
     empty_server.terminate()
 
+    # The no-node fail-closed subscriptions must also parse in real clients.
+    # Structural JSON/YAML tests alone cannot catch invalid core schemas.
+    empty_settings = dict(s, reality_enabled=False, hy2_enabled=False,
+                          tuic_enabled=False, servers=[])
+    empty_clash_file = os.path.join(cdir, 'empty.yaml')
+    with open(empty_clash_file, 'w', encoding='utf-8') as f:
+        json.dump(subscription.clash(empty_settings, u, base), f, ensure_ascii=False)
+    r = subprocess.run([MIHOMO, '-t', '-d', cdir, '-f', empty_clash_file],
+                       capture_output=True, text=True, timeout=120)
+    check('mihomo accepts fail-closed empty subscription',
+          r.returncode == 0, (r.stdout + r.stderr).strip()[-600:])
+    empty_sb_file = os.path.join(ROOT, 'singbox-empty.json')
+    with open(empty_sb_file, 'w', encoding='utf-8') as f:
+        json.dump(subscription.singbox(empty_settings, u, base), f)
+    r = subprocess.run([SINGBOX, 'check', '-c', empty_sb_file],
+                       capture_output=True, text=True, timeout=60)
+    check('sing-box accepts fail-closed empty TUN subscription',
+          r.returncode == 0, (r.stdout + r.stderr).strip()[-250:])
+
     # --- real traffic: each protocol through each client
     for p in clash['proxies']:
         mport = free_port()
