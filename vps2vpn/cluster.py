@@ -77,34 +77,65 @@ def parse_join_code(code):
     return {'url': d['u'].rstrip('/'), 'key': d['k'], 'pin': d.get('p', ''), 'name': d.get('n') or url.hostname}
 
 
+def _validate_sync_snapshot(body):
+    """Validate the entire remote snapshot before it can change node accounts."""
+    if not isinstance(body, dict) or not isinstance(body.get('users'), list):
+        raise ValueError('sync requires a user list')
+    if len(body['users']) > 20000:
+        raise ValueError('sync snapshot has too many users')
+    master, master_id = body.get('master') or 'main', body.get('master_id') or ''
+    if not isinstance(master, str) or not isinstance(master_id, str) or len(master_id) > 64:
+        raise ValueError('invalid main server identity')
+    if any(ord(c) < 32 or ord(c) == 127 for c in master + master_id):
+        raise ValueError('invalid main server identity')
+    wanted, uuids = {}, set()
+    for user in body['users']:
+        if not isinstance(user, dict):
+            raise ValueError('invalid sync user')
+        rid = user.get('id')
+        if type(rid) is not int or not 0 < rid < (1 << 63) or rid in wanted:
+            raise ValueError('sync IDs must be unique positive integers')
+        name = user.get('name')
+        uuid = user.get('uuid')
+        password = user.get('hy2_pass')
+        enabled = user.get('enabled')
+        if not isinstance(name, str) or not name or any(ord(c) < 32 or ord(c) == 127 for c in name):
+            raise ValueError('invalid sync user name')
+        if not isinstance(uuid, str) or not UUID_RE.fullmatch(uuid):
+            raise ValueError('invalid sync UUID')
+        if uuid.lower() in uuids:
+            raise ValueError('sync UUIDs must be unique')
+        uuids.add(uuid.lower())
+        if not isinstance(password, str) or not PASS_RE.fullmatch(password):
+            raise ValueError('invalid sync password')
+        if type(enabled) not in (bool, int) or enabled not in (0, 1):
+            raise ValueError('invalid sync user state')
+        wanted[rid] = {'name': name[:24], 'uuid': uuid, 'hy2_pass': password, 'enabled': int(enabled)}
+    return master[:24], master_id, wanted, uuids
+
+
 def handle_sync(s, body, base_url=''):
-    """Called on a node by its main server. Returns the node's answer."""
+    """Apply only complete, well-formed snapshots; never turn bad rows into deletions."""
+    master, master_id, wanted, uuids = _validate_sync_snapshot(body)
     with _node_lock:
         s = db.settings()
-        master = str(body.get('master') or 'main')[:24]
-        master_id = str(body.get('master_id') or '')[:64]
-        if s['node_master_id'] and master_id and master_id != s['node_master_id']:
-            # Two main servers would delete each other's accounts here every minute.
+        if s['node_master_id'] and master_id != s['node_master_id']:
             return {'error': 'this server already belongs to main server "%s"; on it press "New join code" to free it'
                              % s['node_master'], 'conflict': True}
-        wanted = {}
-        for u in body.get('users') or []:
-            try:
-                w = {'name': str(u['name'])[:24], 'uuid': str(u['uuid']), 'hy2_pass': str(u['hy2_pass']),
-                     'enabled': 1 if u.get('enabled') else 0}
-                if UUID_RE.match(w['uuid']) and PASS_RE.match(w['hy2_pass']):   # a bad value would break the cores
-                    wanted[int(u['id'])] = w
-            except (KeyError, TypeError, ValueError):
-                continue
+        all_users = db.users()
+        if any(u['uuid'].lower() in uuids for u in all_users if not u['remote_id']):
+            raise ValueError('sync UUID conflicts with a local account')
         changed = False
-        mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
+        mine = {u['remote_id']: u for u in all_users if u['remote_id']}
         for rid, w in wanted.items():
             u = mine.get(rid)
             if u is None:
-                name = ('%s@%s' % (w['name'], master))[:32]
-                if db.user_by_name(name):
-                    suffix = '#%d' % rid
-                    name = name[:max(1, 32 - len(suffix))] + suffix
+                label = '%s@%s' % (w['name'], master)
+                name, attempt = label[:32], 0
+                while db.user_by_name(name):
+                    attempt += 1
+                    suffix = '#%d%s' % (rid, '-%d' % attempt if attempt > 1 else '')
+                    name = label[:32 - len(suffix)] + suffix
                 uid = db.add_user(name, note='from main server %s' % master, remote_id=rid, uuid=w['uuid'],
                                   hy2_pass=w['hy2_pass'], enabled=w['enabled'],
                                   disabled_reason='' if w['enabled'] else 'remote')
@@ -131,7 +162,6 @@ def handle_sync(s, body, base_url=''):
                 'traffic': {str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()},
                 'health': {k: h.get(k) for k in ('load', 'cpus', 'mem_total', 'mem_used', 'uptime', 'rx_rate', 'tx_rate')},
                 'version': __import__('vps2vpn').VERSION, 'at': int(time.time())}
-
 
 # --- main-server side ---------------------------------------------------------------------
 class SyncError(RuntimeError):

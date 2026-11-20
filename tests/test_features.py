@@ -219,11 +219,10 @@ class Servers(tu.Base):
         web.apply_async = lambda force=False: None
         try:
             users = [{'id': 7, 'name': 'x', 'uuid': '00000000-0000-4000-8000-000000000007', 'hy2_pass': 'pass-seven', 'enabled': True},
-                     {'id': 9, 'name': 'own-user', 'uuid': '00000000-0000-4000-8000-000000000009', 'hy2_pass': 'pass-nine', 'enabled': False},
-                     {'id': 11, 'name': 'bad', 'uuid': '"},{"x', 'hy2_pass': 'pass-eleven', 'enabled': True}]
+                     {'id': 9, 'name': 'own-user', 'uuid': '00000000-0000-4000-8000-000000000009', 'hy2_pass': 'pass-nine', 'enabled': False}]
             ans = cluster.handle_sync(db.settings(), {'master': 'main', 'users': users})
             mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
-            self.assertEqual(set(mine), {7, 9})                 # 11 has a malformed uuid: skipped
+            self.assertEqual(set(mine), {7, 9})
             self.assertEqual(mine[7]['uuid'], '00000000-0000-4000-8000-000000000007')
             self.assertFalse(mine[9]['enabled'])
             self.assertEqual(ans['idmap'], {'7': mine[7]['id'], '9': mine[9]['id']})
@@ -246,6 +245,38 @@ class Servers(tu.Base):
                                                                           'users': users[:1]}))
         finally:
             web.apply_async = orig
+
+    def test_invalid_node_sync_never_deletes_or_rewrites_accounts(self):
+        local = mk('local')
+        orig_apply = web.apply_async
+        web.apply_async = lambda force=False: None
+        valid = {'id': 7, 'name': 'remote', 'uuid': '00000000-0000-4000-8000-000000000007',
+                 'hy2_pass': 'pass-seven', 'enabled': True}
+        try:
+            cluster.handle_sync(db.settings(), {'master': 'main', 'master_id': 'main-one', 'users': [valid]})
+            before = [(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()]
+            scenarios = [
+                {'master': 'main', 'master_id': 'main-one', 'users': [dict(valid, id=8), dict(valid, id=8)]},
+                {'master': 'main', 'master_id': 'main-one', 'users': [valid, dict(valid, id=8)]},
+                {'master': 'main', 'master_id': 'main-one',
+                 'users': [{'id': 8, 'name': 'bad', 'uuid': 'invalid', 'hy2_pass': 'pass', 'enabled': True}]},
+                {'master': 'main', 'master_id': 'main-one', 'users': 'not a list'},
+                {'master': 'main', 'master_id': 'main-one',
+                 'users': [dict(valid, id=8, uuid=db.user(local['id'])['uuid'])]},
+                {'master': 'main', 'master_id': 'main-one',
+                 'users': [dict(valid, id=8, enabled='yes')]},
+            ]
+            for snapshot in scenarios:
+                with self.subTest(snapshot=snapshot), self.assertRaises(ValueError):
+                    cluster.handle_sync(db.settings(), snapshot)
+                self.assertEqual([(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()], before)
+            self.assertEqual(db.settings()['node_master_id'], 'main-one')
+            # A legacy caller with no master_id cannot overwrite a node already bound to main-one.
+            conflict = cluster.handle_sync(db.settings(), {'master': 'legacy', 'users': []})
+            self.assertTrue(conflict['conflict'])
+            self.assertEqual([(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()], before)
+        finally:
+            web.apply_async = orig_apply
 
     def test_main_side_counts_and_subscribes(self):
         u = mk('ann', 10)
