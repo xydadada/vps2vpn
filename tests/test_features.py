@@ -334,13 +334,14 @@ class Servers(tu.Base):
                        {'info': {}, 'idmap': [], 'traffic': {}},
                        {'info': {}, 'idmap': {}, 'traffic': []},
                        ['not a snapshot']):
+            server['fail_count'] = 0
             with mock.patch.object(cluster, '_request', return_value=(answer, 'cd' * 32)):
                 self.assertFalse(cluster.sync_one(server))
+            self.assertEqual(server['fail_count'], 1)
             self.assertEqual(server['info'], before['info'])
             self.assertEqual(server['idmap'], before['idmap'])
             self.assertEqual(server['seen'], before['seen'])
             self.assertEqual(server['pin'], before['pin'])
-        self.assertEqual(server['fail_count'], 5)
 
     def test_node_sync_rejects_mixed_public_and_private_dns(self):
         # A host may be safe when joined but rebinding or split-horizon DNS
