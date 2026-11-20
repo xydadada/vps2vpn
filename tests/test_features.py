@@ -986,6 +986,51 @@ class MemberWeb(tu.Base):
         self.assertEqual(json.loads(body)['base'], '/s/%s/' % new)
         self.assertEqual(self.req('GET', '/s/%s/api/me' % old)[0], 404)
 
+    def test_rotating_leaked_credentials_revokes_prior_member_sessions(self):
+        victim = mk('revoked-member', 5, login_hash=secure.hash_password('correctpassword'))
+        peer = mk('unrelated-member', 5, login_hash=secure.hash_password('peerpassword'))
+        old_link = victim['sub_token']
+        stolen = db.new_member_session(victim['id'])
+        second = db.new_member_session(victim['id'])
+        unaffected = db.new_member_session(peer['id'])
+
+        # A session issued before the rotation can read the member centre.
+        self.cookie = 'v2vm=' + stolen
+        self.assertEqual(self.req('GET', '/mem/api/me')[0], 200)
+        st, body, _ = self.req('POST', '/mem/api/rotate', {})
+        self.assertEqual(st, 200, body)
+        new_link = db.user(victim['id'])['sub_token']
+        self.assertNotEqual(new_link, old_link)
+        self.assertIsNone(db.member_session(stolen))
+        self.assertIsNone(db.member_session(second))
+        self.assertEqual(db.member_session(unaffected), peer['id'])
+        self.assertEqual(self.req('GET', '/mem/api/me')[0], 401)
+        self.assertEqual(self.req('GET', '/s/%s/api/me' % old_link)[0], 404)
+        self.assertEqual(self.req('GET', '/s/%s/api/me' % new_link)[0], 200)
+
+        # Rotation does not delete the password, so the legitimate member
+        # can log in again with fresh credentials and receive a fresh cookie.
+        self.cookie = ''
+        st, body, _ = self.req('POST', '/mem/api/login',
+                                {'name': 'revoked-member', 'password': 'correctpassword'})
+        self.assertEqual(st, 200, body)
+        fresh = self.cookie.split('=', 1)[1]
+        self.assertEqual(db.member_session(fresh), victim['id'])
+
+    def test_admin_and_bulk_rotation_also_revoke_member_sessions(self):
+        first = mk('admin-rotated', 10)
+        second = mk('bulk-rotated', 10)
+        first_cookie = db.new_member_session(first['id'])
+        second_cookie = db.new_member_session(second['id'])
+        self.assertEqual(self.req('POST', '/adm/api/login',
+                                  {'username': 'admin', 'password': 'adminpassword'})[0], 200)
+        self.assertEqual(self.req('POST', '/adm/api/users/%d/rotate' % first['id'], {})[0], 200)
+        self.assertIsNone(db.member_session(first_cookie))
+        self.assertEqual(db.member_session(second_cookie), second['id'])
+        self.assertEqual(self.req('POST', '/adm/api/users-bulk',
+                                  {'action': 'rotate', 'ids': [second['id']]} )[0], 200)
+        self.assertIsNone(db.member_session(second_cookie))
+
     def test_parallel_registrations_respect_uses(self):
         rec = members.create_invite('admin', 1, 7, max_uses=3)
         orig, ok = members.check_password, []
