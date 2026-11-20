@@ -33,12 +33,20 @@ def hash_password(password):
 
 def check_password(password, stored):
     try:
+        # New passwords are capped by the write APIs, but older admin/CLI
+        # versions accepted longer passwords. They must remain usable for login
+        # and migration; HTTP input already has a bounded request size.
+        if not isinstance(password, str):
+            return False
         algo, rounds, salt, digest = stored.split('$')
         if algo != 'pbkdf2_sha256':
             return False
-        calc = hashlib.pbkdf2_hmac('sha256', password.encode(), b64url_decode(salt), int(rounds))
+        iterations = int(rounds)
+        if not 1 <= iterations <= 10_000_000:
+            return False
+        calc = hashlib.pbkdf2_hmac('sha256', password.encode(), b64url_decode(salt), iterations)
         return hmac.compare_digest(calc, b64url_decode(digest))
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError, OverflowError):
         return False
 
 

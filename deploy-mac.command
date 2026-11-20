@@ -30,9 +30,18 @@ read -r -p "登录用户名 / login user [$USER_DEF]: " LUSER
 LUSER=${LUSER:-$USER_DEF}
 read -r -p "SSH 端口 / port [22]: " PORT
 PORT=${PORT:-22}
+if [[ ! "$HOST" =~ ^[A-Za-z0-9.:-]+$ || ! "$LUSER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ || ! "$PORT" =~ ^[0-9]{1,5}$ ]]; then
+  echo "服务器地址、用户名或端口格式不对 / invalid server, user or port"; exit 1
+fi
+if (( 10#$PORT < 1 || 10#$PORT > 65535 )); then
+  echo "端口必须为 1-65535 / port must be 1-65535"; exit 1
+fi
+REC_DIR="$HOME/vps2vpn"
+mkdir -p "$REC_DIR" && chmod 700 "$REC_DIR" || exit 1
+(umask 077; touch "$REC_DIR/known_hosts") && chmod 600 "$REC_DIR/known_hosts" || exit 1
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$WORK/known_hosts"
+OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$REC_DIR/known_hosts"
       -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
 if [ -n "$KEY" ]; then
   [ -f "$KEY" ] || { echo "找不到这个文件 / file not found: $KEY"; exit 1; }
@@ -58,7 +67,6 @@ if [ "$rc" -ne 0 ] || [ -z "$B64" ]; then
 fi
 
 # Save the login next to the other servers (only on this computer), keeping an older password on upgrades.
-REC_DIR="$HOME/vps2vpn"; mkdir -p "$REC_DIR"; chmod 700 "$REC_DIR"
 REC="$REC_DIR/$(printf '%s' "$HOST" | tr -c 'A-Za-z0-9._-' '_').json"
 JSON=$(printf '%s' "$B64" | base64 -d 2>/dev/null || printf '%s' "$B64" | base64 -D)
 OLD="{}"; [ -f "$REC" ] && OLD=$(cat "$REC")

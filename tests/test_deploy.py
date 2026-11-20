@@ -151,7 +151,7 @@ class AICheck(tu.Base):
         'cdn-cgi/trace': (200, {}, b'ip=1.2.3.4\nloc=US\n', ''),
         'ipinfo.io': (200, {}, json.dumps({'country': 'US', 'city': 'Seattle', 'org': 'AS16509 Amazon'}).encode(), ''),
         'ip-api.com': (200, {}, json.dumps({'status': 'success', 'countryCode': 'US', 'hosting': True}).encode(), ''),
-        'claude.ai/': (403, {'cf-mitigated': 'challenge'}, b'Just a moment', 'https://claude.ai/'),
+        'claude.ai/': (200, {}, b'<html>', 'https://claude.ai/'),
         'api.anthropic.com': (401, {}, b'{"type":"error","error":{"type":"authentication_error"}}', ''),
         'api.openai.com': (200, {}, b'{"cookie_requirements":"none"}', ''),
         'gemini.google.com': (200, {}, b'<html>', ''),
@@ -164,12 +164,23 @@ class AICheck(tu.Base):
         self.assertEqual(res['country'], 'US')
         self.assertEqual({k: v['status'] for k, v in res['sites'].items()},
                          {'claude': 'ok', 'claude_api': 'ok', 'chatgpt': 'ok', 'gemini': 'ok'})
-        self.assertIn('人机验证', res['sites']['claude']['note'])
         self.assertEqual(aicheck.summary(res), 'Claude ✓  ChatGPT ✓  Gemini ✓')
         self.assertEqual(aicheck.score(res), 4)
         self.assertEqual(res['ip']['kind'], 'hosting')
         self.assertEqual(aicheck.place_name(res), '西雅图')
         self.assertEqual(aicheck.latest()['at'], res['at'])          # saved for the panel
+        self.assertEqual(os.stat(aicheck.FILE).st_mode & 0o077, 0)
+
+    def test_browser_challenge_is_unknown_until_verified_in_browser(self):
+        from vps2vpn import aicheck
+        answers = dict(self.US_OK)
+        answers['claude.ai/'] = (403, {'cf-mitigated': 'challenge'}, b'Just a moment', 'https://claude.ai/')
+        self.fake(answers)
+        result = aicheck.run()
+        self.assertEqual(result['sites']['claude']['status'], 'unknown')
+        self.assertIn('人机验证', result['sites']['claude']['note'])
+        self.assertEqual(aicheck.summary(result), 'Claude ?  ChatGPT ✓  Gemini ✓')
+        self.assertEqual(aicheck.score(result), 2)
 
     def test_blocked_region(self):
         from vps2vpn import aicheck

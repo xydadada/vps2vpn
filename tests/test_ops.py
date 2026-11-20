@@ -127,6 +127,52 @@ class LineReports(tu.Base):
 
 
 class OpsWeb(MemberWeb):
+    def test_legacy_long_admin_password_can_log_in_and_migrate(self):
+        from vps2vpn import secure
+        legacy_password = 'legacy-' + 'p' * 128
+        old_hash = secure.hash_password(legacy_password)
+        db.set_settings(admin_hash=old_hash)
+        self.assertEqual(self.req('POST', '/adm/api/login',
+                                 {'username': 'admin', 'password': legacy_password[:-1]})[0], 403)
+        self.assertEqual(self.req('POST', '/adm/api/login',
+                                 {'username': 'admin', 'password': legacy_password})[0], 200)
+        self.assertEqual(self.req('POST', '/adm/api/password',
+                                 {'old': legacy_password, 'new': 'x' * 129})[0], 400)
+        self.assertEqual(db.settings()['admin_hash'], old_hash)
+        self.assertEqual(self.req('POST', '/adm/api/password',
+                                 {'old': legacy_password, 'new': 'new-password'})[0], 200)
+        self.assertFalse(secure.check_password(legacy_password, db.settings()['admin_hash']))
+        self.assertTrue(secure.check_password('new-password', db.settings()['admin_hash']))
+
+    def test_line_report_rejects_invalid_fields_without_changing_state(self):
+        u = mk('strict-report')
+        path = '/s/%s/api/report' % u['sub_token']
+        valid = {'line': 'hy2', 'ok': False, 'host': 'a.invalid'}
+        self.assertEqual(self.req('POST', path, valid)[0], 200)
+        before = db.settings()['line_reports']
+        bad = ([dict(valid, ok=value) for value in ('false', 'true', 0, 1, None, [], {})] +
+               [dict(valid, line=value) for value in ([], {}, None, 'ssh')] +
+               [dict(valid, host=value) for value in
+                ([], {}, None, 'a\nb.invalid', '\ta.invalid', 'a.invalid\x00', 'a.invalid\x7f')])
+        for payload in bad:
+            with self.subTest(payload=payload):
+                status, body, _ = self.req('POST', path, payload)
+                self.assertEqual(status, 400, body)
+                self.assertEqual(db.settings()['line_reports'], before)
+
+    def test_line_reports_roundtrip_backup_and_recover_one_host(self):
+        u = mk('report-backup')
+        path = '/s/%s/api/report' % u['sub_token']
+        for host in (' A.Invalid. ', '2001:db8::1'):
+            self.assertEqual(self.req('POST', path, {'line': 'tuic', 'ok': False, 'host': host})[0], 200)
+        before = db.settings()['line_reports']
+        db.import_all(db.export_all())
+        self.assertEqual(db.settings()['line_reports'], before)
+        self.assertEqual(self.req('POST', path, {'line': 'tuic', 'ok': True, 'host': 'A.INVALID.'})[0], 200)
+        trouble = jobs.line_trouble(db.settings())['tuic']
+        self.assertEqual(trouble['users'], [u['id']])
+        self.assertEqual(trouble['hosts'], ['2001:db8::1'])
+
     def test_member_api_failure_contract(self):
         import http.client
         import ssl

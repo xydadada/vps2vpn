@@ -65,8 +65,7 @@ def check_claude(cc):
     if st == 200:
         return {'status': 'ok', 'note': ''}
     if st == 403 and _hdr(h, 'cf-mitigated') == 'challenge':
-        # Data-centre addresses get a human check first; a real browser normally passes it by itself.
-        return {'status': 'ok', 'note': '网页会先做一次人机验证（机房 IP 常见，浏览器里一般自动通过）'}
+        return {'status': 'unknown', 'note': '网页要求人机验证，需要在浏览器确认能否通过'}
     if st == 0:
         return {'status': 'unreachable', 'note': '连不上 claude.ai'}
     return {'status': 'unknown', 'note': '网页返回 %d' % st}
@@ -190,7 +189,7 @@ def run():
     res = {'at': int(time.time()), 'country': cc, 'ip': ip, 'sites': {k: out[k] for k in SITES}}
     res['advice'] = advice(res)
     try:
-        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o644)
+        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False))
     except OSError:
         pass
     return res
@@ -209,14 +208,15 @@ def summary(res):
     if not res:
         return ''
     s = res['sites']
-    claude = 'ok' if s['claude']['status'] == 'ok' and s['claude_api']['status'] == 'ok' else \
-        ('blocked' if 'blocked' in (s['claude']['status'], s['claude_api']['status']) else s['claude_api']['status'])
+    states = (s['claude']['status'], s['claude_api']['status'])
+    claude = next((state for state in ('blocked', 'unreachable', 'unknown') if state in states),
+                  'ok' if all(state == 'ok' for state in states) else 'unknown')
     parts = [('Claude', claude), ('ChatGPT', s['chatgpt']['status']), ('Gemini', s['gemini']['status'])]
     return '  '.join('%s %s' % (n, MARK.get(st, '?')) for n, st in parts)
 
 
 def score(res):
-    """0-3: how many of Claude / ChatGPT / Gemini look usable (Claude counted twice as heavy for ties)."""
+    """0-4: how many checks look usable (Claude counted twice as heavily)."""
     if not res:
         return -1
     s = res['sites']

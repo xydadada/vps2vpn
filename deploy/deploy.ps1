@@ -81,7 +81,11 @@ function Copy-Key([string]$src) {
 }
 
 function Get-SshArgs([string]$keyPath, [bool]$usePassword) {
-  $kh = Join-Path $Work 'known_hosts'
+  if (-not (Test-Path -LiteralPath $Records)) { New-Item -ItemType Directory -Force $Records | Out-Null }
+  Restrict-Path $Records
+  $kh = Join-Path $Records 'known_hosts'
+  if (-not (Test-Path -LiteralPath $kh)) { [IO.File]::WriteAllText($kh, '') }
+  Restrict-Path $kh
   $a = @('-F', 'none', '-p', "$Port", '-o', 'StrictHostKeyChecking=accept-new', '-o', "UserKnownHostsFile=`"$kh`"",
     '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8')
   if ($keyPath) { $a += @('-i', "`"$keyPath`"", '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes') }
@@ -147,7 +151,12 @@ function Get-ShowLines($job, [string]$t, [bool]$final) {
   # Complete lines to show in the log. The result line holds the new admin password, so it is never shown.
   $job.Pending += $t
   $parts = $job.Pending -split "`n"
-  if ($final) { $job.Pending = '' } else { $job.Pending = $parts[-1]; $parts = $parts[0..($parts.Count - 2)] }
+  if ($final) { $job.Pending = '' }
+  else {
+    $job.Pending = $parts[-1]
+    if ($parts.Count -eq 1) { return '' }
+    $parts = $parts[0..($parts.Count - 2)]
+  }
   $keep = @($parts | Where-Object { $_ -notmatch '^V2V_RESULT:' })
   if ($keep.Count -eq 0) { return '' }
   return (($keep -join "`n") + $(if ($final) { '' } else { "`n" }))
@@ -185,6 +194,12 @@ $InstallCmd = {
 }
 
 function Check-Prereqs {
+  $address = $null
+  $validIp = [Net.IPAddress]::TryParse($Server, [ref]$address)
+  $validName = $Server.Length -le 253 -and $Server -cmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$'
+  if ((-not $validIp -and -not $validName) -or $User -cnotmatch '^[a-z_][a-z0-9_.-]{0,31}$' -or $Port -lt 1 -or $Port -gt 65535) {
+    throw '服务器地址、用户名或端口格式不对。'
+  }
   if (-not $SshExe) {
     throw '这台电脑没有 ssh 程序。Windows 10/11：设置 > 应用 > 可选功能 > 添加「OpenSSH 客户端」，然后再试。'
   }
@@ -308,6 +323,9 @@ using System.Security.Cryptography; using System.Security.Cryptography.X509Certi
 public static class V2VHttp {
   // POST to a panel. The certificate must be one any browser trusts, or the one saved at deploy time.
   public static string[] Post(string url, string body, string cookie, string pin) {
+    Uri target = new Uri(url);
+    if (target.Scheme != Uri.UriSchemeHttps || !String.IsNullOrEmpty(target.UserInfo))
+      throw new ArgumentException("Panel URL must use HTTPS without user information");
     ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
     req.ServerCertificateValidationCallback = delegate (object s, X509Certificate c, X509Chain ch, SslPolicyErrors e) {
@@ -316,6 +334,7 @@ public static class V2VHttp {
       byte[] h = SHA256.Create().ComputeHash(c.GetRawCertData());
       return BitConverter.ToString(h).Replace("-", "").ToLowerInvariant() == pin;
     };
+    req.AllowAutoRedirect = false;
     req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 30000;
     req.Headers["X-V2V"] = "1";
     if (!String.IsNullOrEmpty(cookie)) req.Headers["Cookie"] = cookie;

@@ -59,7 +59,8 @@ def cmd_init(a):
         warnings += pick_ports(db.settings())
     elif not os.path.exists(paths.TUIC_CONFIG):     # upgrade from a version without TUIC
         warnings += pick_ports(db.settings(), keys=(('tuic_port', 'udp'),))
-    if a.acme and s['cert_mode'] == 'auto' and s['public_host'] and not certs.trusted(s['public_host']):
+    cert_host = s['domain'] or s['public_host']
+    if a.acme and s['cert_mode'] == 'auto' and cert_host and not certs.trusted(cert_host):
         try:
             certs.issue(s['domain'] or s['public_host'], s['acme_email'])
             db.set_settings(cert_status='ok')
@@ -68,7 +69,7 @@ def cmd_init(a):
             print('Let\'s Encrypt: %s (using a self-signed certificate for now)' % e)
     system.tune_network(db.settings()['tune_network'])
     system.open_firewall(db.settings())
-    if not system.port_free('tcp', 80) and not certs.trusted(db.settings()['public_host']):
+    if not system.port_free('tcp', 80) and not certs.trusted(cert_host):
         owner = system.port_owner('tcp', 80) or 'another program'
         warnings.append("TCP 80 is used by %s, so no free Let's Encrypt certificate yet (self-signed is used, "
                         "still encrypted). / 80 端口被 %s 占用，暂用自签名证书（照样加密）。" % (owner, owner))
@@ -84,6 +85,8 @@ def cmd_init(a):
     done = s['setup_done']
     cloud = system.cloud_provider()
     name, how = system.CLOUD_HINTS.get(cloud, ('', ''))
+    ports = ', '.join('%s/%s' % (p, proto) for proto, p in system.needed_ports(s))
+    how = (how or 'Cloud firewall / 云防火墙：仅开放列出的 TCP/UDP 端口。') + ' Ports / 端口: ' + ports
     out = {'url': panel_url(s, setup=not done), 'setup_done': done, 'ports': system.needed_ports(s),
            'warnings': warnings, 'cloud': name, 'cloud_firewall': how}
     if a.auto:
@@ -128,7 +131,7 @@ def result_info(s):
     host = s['domain'] or s['public_host'] or '<server-ip>'
     h = '[%s]' % host if ':' in host else host
     base = '%s://%s:%d' % ('https' if certs.trusted(host) else 'http', h, s['panel_port'])
-    crt, _ = certs.current(s['public_host'])
+    crt, _ = certs.current(s['domain'] or s['public_host'])
     try:
         pin = certs.fingerprint(crt)
     except OSError:
@@ -196,10 +199,12 @@ def cmd_info(a):
 
 def cmd_reset_password(a):
     pw = a.password or getpass.getpass('new admin password: ')
-    if len(pw) < 8:
-        sys.exit('password must be at least 8 characters')
-    db.set_settings(admin_hash=secure.hash_password(pw), admin_user=a.username or db.settings()['admin_user'])
-    db.end_all_sessions()
+    if not 8 <= len(pw) <= 128:
+        sys.exit('password must be 8 to 128 characters')
+    password_hash = secure.hash_password(pw)
+    with db.transaction():
+        db.set_settings(admin_hash=password_hash, admin_user=a.username or db.settings()['admin_user'])
+        db.end_all_sessions()
     print('password changed, all sessions logged out')
 
 
@@ -210,8 +215,9 @@ def cmd_rules(a):
 def cmd_cert(a):
     s = db.settings()
     certs.issue(s['domain'] or s['public_host'], s['acme_email'], staging=a.staging)
-    db.set_settings(cert_status='ok')
-    cores.apply()
+    if not a.staging:
+        db.set_settings(cert_status='ok')
+        cores.apply(force=True)
 
 
 def cmd_doctor(a):

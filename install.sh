@@ -97,7 +97,11 @@ install_cores() {
     say "downloading sing-box $SINGBOX_VERSION (TUIC)"
     local v=${SINGBOX_VERSION#v} want got
     fetch "https://github.com/SagerNet/sing-box/releases/download/$SINGBOX_VERSION/sing-box-$v-linux-$SB_ARCH.tar.gz" "$tmp/sb.tgz"
-    want=$(eval echo "\$SINGBOX_SHA256_$SB_ARCH")
+    case "$SB_ARCH" in
+      amd64) want=$SINGBOX_SHA256_amd64 ;;
+      arm64) want=$SINGBOX_SHA256_arm64 ;;
+      *) die "unsupported sing-box architecture: $SB_ARCH" ;;
+    esac
     got=$(sha256sum "$tmp/sb.tgz" | awk '{print $1}')
     [ "$want" = "$got" ] || die "sing-box checksum mismatch (expected $want, got $got)"
     mkdir -p "$tmp/sb" && tar -xzf "$tmp/sb.tgz" -C "$tmp/sb" --strip-components=1
@@ -238,11 +242,11 @@ EOF
 }
 
 show_result() {
-  local json url ports done cloud how
+  local json url ports setup_done cloud how
   json="$1"
   url=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
   ports=$(printf '%s' "$json" | python3 -c 'import json,sys; print("  ".join("%s/%s" % (p, t) for t, p in json.load(sys.stdin)["ports"]))')
-  done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
+  setup_done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
   cloud=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud") or "")')
   how=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud_firewall") or "")')
   echo
@@ -255,7 +259,7 @@ show_result() {
     echo "${c_ok}${c_b}vps2vpn is ready. / 已装好，账号已自动建好。${c_0}"
     return
   fi
-  if [ "$done" = 1 ]; then
+  if [ "$setup_done" = 1 ]; then
     echo "${c_ok}${c_b}vps2vpn is up to date. Users and settings are kept.${c_0}"
     echo "  已更新到最新版，用户和设置都保留。面板地址："
     echo
@@ -310,23 +314,35 @@ do_install() {
   local first=1; [ -f "$VAR/vps2vpn.db" ] && first=0
   local json
   local auto=""; [ "${V2V_AUTO:-}" = 1 ] && auto="--auto"
-  json=$(PYTHONPATH="$LIB/app" python3 -m vps2vpn init --acme $auto | tail -1)
-  systemctl enable vps2vpn >/dev/null 2>&1
-  systemctl restart vps2vpn
+  if ! json=$(PYTHONPATH="$LIB/app" python3 -m vps2vpn init --acme $auto | tail -1); then
+    restore_previous_app
+    die "initialization failed; restored the previous panel code when available"
+  fi
+  if ! systemctl enable vps2vpn >/dev/null 2>&1 || ! systemctl restart vps2vpn; then
+    restore_previous_app
+    die "panel service failed; restored the previous panel code when available"
+  fi
   if [ "$first" = 0 ] || [ -n "$auto" ]; then
-    PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force >/dev/null 2>&1 || true
+    if ! PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force; then
+      restore_previous_app
+      die "core configuration failed; restored the previous panel code when available"
+    fi
   fi
   sleep 1
   if ! systemctl is-active --quiet vps2vpn; then
     journalctl -u vps2vpn -n 30 --no-pager
-    if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade broke the panel: put the previous version back
-      rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
-      systemctl restart vps2vpn
-      die "the new version failed to start, so the previous version was restored"
-    fi
-    die "panel failed to start"
+    restore_previous_app
+    die "panel failed to start; restored the previous panel code when available"
   fi
   show_result "$json"
+}
+
+restore_previous_app() {
+  if [ -d "$LIB/app/vps2vpn.old" ]; then
+    rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
+    systemctl restart vps2vpn || true
+    PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force || true
+  fi
 }
 
 do_uninstall() {

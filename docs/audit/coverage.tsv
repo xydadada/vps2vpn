@@ -1,0 +1,62 @@
+path	baseline_sha	review_status	reviewer_scope	changed	notes
+.gitattributes	a0ec0c329aac5a6cacb5ccabc9500a39fcdde5cc	document_review	http_ui_deploy_root	no	Documentation and repository metadata read; historical claims distinguished from current validation
+.github/workflows/test.yml	6faa208ce01414983869307e1a8791e30605d499	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+.gitignore	b6d9a5e4b4e3e6b2efad2704ec93c13003b50744	document_review	http_ui_deploy_root	no	Documentation and repository metadata read; historical claims distinguished from current validation
+CHANGELOG.md	616e76b2553095a73a141686c27052f7ddd1a6db	document_review	http_ui_deploy_root	no	Documentation and repository metadata read; historical claims distinguished from current validation
+LICENSE	b2e6078107b781235be17e97115e8dea60292685	document_review	http_ui_deploy_root	no	Documentation and repository metadata read; historical claims distinguished from current validation
+README.md	fa8e0439992e4623c6773b5fa837bd5fe7fef4b3	document_review	http_ui_deploy_root	yes	Documentation and repository metadata read; historical claims distinguished from current validation
+deploy-mac.command	3c41cc5b8dd64e48695fe878c602ec50273042e4	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+deploy-windows.bat	8046264184c5c509f4babc4bd51fba7aacc2ddde	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+deploy/deploy.ps1	21ae3b588f3ce3a1e1377276f6727b98a05b3691	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+deploy/deploy.py	38b3a6d743ef90d1c658c64de8cbbf2e9b7665c7	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+install.sh	6108f8913d55e8dd6c9b8fb637b1495140b99328	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+tests/dev_seed.py	8b861a62fea6b5bdb96c9da87bf3cf48a97cbd57	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+tests/dev_server.py	059cbd3bdaa7813968c623a7e6dbb8346157aa06	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+tests/e2e_local.py	50aeb14881f58926e068a4da4dc963ee101e75a4	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+tests/test_admin.py	90d9eb7dd21069d2a179cc50a8d22a6d2c200fd2	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+tests/test_deploy.py	9f61f59a8100e19ea11cfc41cf4893a372617fa7	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+tests/test_features.py	4680f2333a2e6519bd001b907b85b9aa8395f63d	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+tests/test_ops.py	a0b3237f9803a39a2e9701dcf2170d32876811fd	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+tests/test_unit.py	1f99740898b48ea9909c8624fde05f7d826c470f	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+tests/vps_acceptance.sh	5fb13b25a18b00a1347984092e2730a7b5ad842e	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+tools/bench.py	d2a75dd0487c3e331f3a3a1994e137bd56728e54	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/__init__.py	9cdc3d7b0dcd8cbcbc4d9e8c82c20a4da8b8b88a	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/__main__.py	be792f4134131e9f3f79bde80653d6f48e91f719	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/abuse.py	e42fe91673d8bbd1150dff7a8e626ccf86ad764a	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/aicheck.py	14ae171691a4c723bd427f8088d25336f91e76fe	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/bench.py	5ede8f725c21f90862df7d955e302e108f2a60ac	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/certs.py	0e63844d69884327dcafea300e0be81f71429ffa	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/cluster.py	b603c5769f4d596d2e55a65c78e55c5e519e0c6e	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/cores.py	ff8a47ad680d4ed3703a7090b263c38025846c26	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/db.py	5abc49a67790ca4a0072a6237d720aaf65c846be	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/doctor.py	65c493fa6367cc23788621dee1763754ba7db0ae	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/jobs.py	9ea2e342a1b39dc337dc448985972912ebc436d6	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/members.py	2fb5ae9db8190d32aae69a1b5f3639680a7c3285	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/monitor.py	77c3b774d4ab300a4a85dc71e6a83e9c4463515f	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/notify.py	81eed651084572ed55350bc36d502209bd788e22	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/paths.py	83f2e98697cc4aa5ca3a8ea6d7ec14c6a9d875e1	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/qr.py	917d81ca89aabee16e91d3cbb61a2abf5a1dbd91	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/rules.py	c8c23456a3adb2e25a6b23e6678d08f749d91f02	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/secure.py	5253da7377f71827e57a557218843c14266ad76d	manual_full	backend	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/static/app.js	684e38ba8148152e7fc80f159b9b7ee83dd7019c	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/static/index.html	b1eaadc884b823044e6acc75b9147fea7cfe7784	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/static/kit.js	8dcbfb8950ff97223095069433c9a80d5bcbae37	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/static/member.html	5c656413eddf47f2df0b9a636cd73c13847ac169	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/static/member.js	47df70a7683bb9fcd6ce377b2baff9acce42e419	manual_full	http_ui_deploy_root	no	Full own-source review; runtime verification is recorded separately
+vps2vpn/static/style.css	c82caa3f8842bd33f9b1f0c746ec492a65c1496b	manual_full	http_ui_deploy_root	no	Full CSS source review; no live browser screenshot/render verification
+vps2vpn/subscription.py	6c32f51be646aec4290492aaf6eba60f94b59116	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/system.py	4753404492be794892f8eb4d756fcfb42518be88	manual_full	backend	yes	Full own-source review; runtime verification is recorded separately
+vps2vpn/web.py	3a23b8a75041086e49b8800c7f166f399fcd33d9	manual_full	http_ui_deploy_root	yes	Full own-source review; runtime verification is recorded separately
+tests/test_audit_backend.py	new	authored_reviewed	backend	yes	Added regression or harness; results tied to the verified commit
+tests/test_audit_tools.py	new	authored_reviewed	backend	yes	Added regression or harness; results tied to the verified commit
+tests/test_audit_web.py	new	authored_reviewed	http_ui_deploy_root	yes	Added regression or harness; results tied to the verified commit
+tests/test_audit_deploy.py	new	authored_reviewed	http_ui_deploy_root	yes	Added regression or harness; results tied to the verified commit
+tests/__init__.py	new	authored_reviewed	http_ui_deploy_root	yes	Added regression or harness; results tied to the verified commit
+tests/test_frontend.js	new	authored_reviewed	http_ui_deploy_root	yes	Added regression or harness; results tied to the verified commit
+tests/test_deploy_powershell.ps1	new	authored_reviewed	http_ui_deploy_root	yes	Added regression or harness; results tied to the verified commit
+tests/test_apply_audit.py	new_after_fbe37818	snapshot_regression_review	completion_server	yes	Reviewed fixed snapshot regression; one apply worker, force propagation, in-flight changes and thread creation failure
+tests/test_audit.py	new_after_fbe37818	snapshot_regression_review	completion_server	yes	Reviewed fixed snapshot regression; transaction, invitation debt, parser and per-attempt authentication boundaries
+tests/test_ops_audit.py	new_after_fbe37818	snapshot_regression_review	completion_server	yes	Reviewed fixed snapshot regression; corrected restored traffic identity fixture and verified confirmed assertions
+tests/test_completion_server.py	new_after_fbe37818	authored_reviewed	completion_server	yes	Credential publication races, all-history invite reservations, Telegram ownership/concurrency and real local CA TLS
+tests/test_ui.js	new_after_fbe37818	snapshot_regression_review	completion_server	yes	Reviewed finite-zero-quota and event/chart lifetime assertions; included in CI
+docs/audit/completion-server.md	new_after_fbe37818	document_review	completion_server	yes	Follow-up report distinguishes inherited full-source review, changed code review and current runtime validation
