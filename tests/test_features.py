@@ -229,6 +229,36 @@ class RuleMirrorDownloads(tu.Base):
         self.assertTrue(any('download failed' in line for line in logs))
 
 
+    def test_binary_magic_rejects_http_200_plaintext_and_uses_fallback(self):
+        bad = b'Access denied: upstream temporarily unavailable; please retry later.'
+        for fmt, valid in (
+                ('clash', b'MRS!' + b'valid-test-rule-data'),
+                ('singbox', b'SRS\x01' + b'valid-test-rule-data')):
+            with self.subTest(fmt=fmt):
+                with mock.patch.object(rules, '_fetch', side_effect=[bad, valid]) as fetch:
+                    self.assertEqual(rules.fetch_converted('private', fmt), valid)
+                    self.assertEqual(fetch.call_count, 2)
+
+    def test_invalid_binary_magic_never_overwrites_both_existing_mirrors(self):
+        paths.ensure_dirs()
+        originals = {
+            'clash': b'MRS!' + b'existing-clash-mirror-data',
+            'singbox': b'SRS\x01' + b'existing-singbox-mirror-data',
+        }
+        for fmt, old in originals.items():
+            paths.write_atomic(rules.local_file('private', fmt), old, 0o644)
+        logs = []
+        with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
+             mock.patch.object(rules, 'FORMATS', ('clash', 'singbox')), \
+             mock.patch.object(rules, '_fetch',
+                               return_value=b'not actually a binary ruleset, despite status 200'):
+            self.assertEqual(rules.refresh(log=logs.append), 0)
+        for fmt, old in originals.items():
+            with open(rules.local_file('private', fmt), 'rb') as source:
+                self.assertEqual(source.read(), old)
+        self.assertEqual(sum('download failed' in line for line in logs), 2)
+
+
 class Shadowrocket(tu.Base):
     def test_config(self):
         db.set_settings(hy2_obfs='')
