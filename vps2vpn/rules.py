@@ -90,6 +90,7 @@ def used_sets(s):
 
 
 FORMATS = ('clash', 'singbox', 'shadowrocket')
+MAX_RULE_DOWNLOAD_BYTES = 50 << 20
 
 
 def ext(fmt):
@@ -123,11 +124,23 @@ def to_shadowrocket(data, kind):
     return ('\n'.join(out) + '\n').encode()
 
 
+def _rule_payload(url):
+    """Download a rule without accepting a CDN's HTTP-200 error document."""
+    data = _fetch(url)
+    # Both mirrors sometimes return a branded error page with HTTP 200. That
+    # is never a valid .mrs/.srs or a MetaCubeX text rule list. Avoid silently
+    # replacing the last working rules with an HTML/JSON error response.
+    head = data[:256].lstrip().lower()
+    if head.startswith((b'<!doctype', b'<html', b'<?xml', b'{"message"', b'{"error"')):
+        raise OSError('rule download returned an error document')
+    return data
+
+
 def fetch_converted(name, fmt):
     try:
-        data = _fetch(upstream_url(name, fmt, cdn=False))
+        data = _rule_payload(upstream_url(name, fmt, cdn=False))
     except OSError:
-        data = _fetch(upstream_url(name, fmt, cdn=True))
+        data = _rule_payload(upstream_url(name, fmt, cdn=True))
     return to_shadowrocket(data, SETS[name][0]) if fmt == 'shadowrocket' else data
 
 
@@ -147,7 +160,13 @@ def mrs_behavior(name):
 def _fetch(url, timeout=60):
     req = urllib.request.Request(url, headers={'User-Agent': 'vps2vpn-rules'})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read(50 << 20)
+        # Reading precisely the limit would silently publish a truncated
+        # binary rule set. A one-byte lookahead makes oversized responses a
+        # recoverable error so the CDN fallback or old mirror remains in use.
+        data = r.read(MAX_RULE_DOWNLOAD_BYTES + 1)
+        if len(data) > MAX_RULE_DOWNLOAD_BYTES:
+            raise OSError('rule download exceeds %d bytes' % MAX_RULE_DOWNLOAD_BYTES)
+        return data
 
 
 def refresh(log=print):
