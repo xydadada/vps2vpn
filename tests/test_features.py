@@ -270,6 +270,37 @@ class Servers(tu.Base):
         finally:
             web.apply_async = orig
 
+    def test_sync_rolls_back_when_later_account_write_fails(self):
+        original = db.add_user
+        attempts = [0]
+        origin = mk('local')
+        expected_users = [(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()]
+        initial = db.settings()['node_master_id']
+        valid = [
+            {'id': i, 'name': 'remote%d' % i,
+             'uuid': '00000000-0000-4000-8000-%012d' % i,
+             'hy2_pass': 'pass-%d' % i, 'enabled': True}
+            for i in (51, 52)
+        ]
+
+        def injected(*args, **kwargs):
+            attempts[0] += 1
+            if attempts[0] == 2:
+                raise RuntimeError('simulated second database write failure')
+            return original(*args, **kwargs)
+
+        db.add_user = injected
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'second database write'):
+                cluster.handle_sync(db.settings(), {'master': 'main', 'master_id': 'new-main',
+                                                    'users': valid})
+        finally:
+            db.add_user = original
+        self.assertEqual([(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()], expected_users)
+        self.assertEqual(db.settings()['node_master_id'], initial)
+        self.assertEqual(db.user(origin['id'])['name'], 'local')
+        self.assertEqual(attempts, [2])
+
     def test_invalid_node_sync_never_deletes_or_rewrites_accounts(self):
         local = mk('local')
         orig_apply = web.apply_async

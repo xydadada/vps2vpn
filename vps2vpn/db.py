@@ -1,4 +1,6 @@
 """SQLite storage: settings, users, sessions, daily traffic, invite codes, quota requests and events."""
+import contextlib
+import itertools
 import json
 import os
 import sqlite3
@@ -9,6 +11,7 @@ from . import paths, secure
 
 _lock = threading.RLock()
 _conn = None
+_savepoints = itertools.count()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -199,6 +202,26 @@ def x(sql, args=()):
         return cur.lastrowid
 
 
+@contextlib.contextmanager
+def transaction():
+    """Serialise compound writes, with savepoints for nested database helpers."""
+    with _lock:
+        c = connect()
+        savepoint = 'v2v_%d' % next(_savepoints) if c.in_transaction else None
+        c.execute('SAVEPOINT ' + savepoint if savepoint else 'BEGIN IMMEDIATE')
+        try:
+            yield c
+            c.execute('RELEASE ' + savepoint if savepoint else 'COMMIT')
+        except BaseException:
+            if c.in_transaction:
+                if savepoint:
+                    c.execute('ROLLBACK TO ' + savepoint)
+                    c.execute('RELEASE ' + savepoint)
+                else:
+                    c.execute('ROLLBACK')
+            raise
+
+
 # --- settings -----------------------------------------------------------------
 def settings():
     out = json.loads(_DEFAULT_SNAPSHOT)
@@ -208,20 +231,12 @@ def settings():
 
 
 def set_settings(**kv):
-    with _lock:
-        c = connect()
-        c.execute('BEGIN')
-        try:
-            for k, v in kv.items():
-                if k not in DEFAULTS:
-                    raise KeyError(k)
-                c.execute('INSERT INTO settings(key, value) VALUES(?, ?) '
-                          'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k, json.dumps(v)))
-            c.execute('COMMIT')
-        except BaseException:
-            c.execute('ROLLBACK')
-            raise
-
+    with transaction() as c:
+        for k, v in kv.items():
+            if k not in DEFAULTS:
+                raise KeyError(k)
+            c.execute('INSERT INTO settings(key, value) VALUES(?, ?) '
+                      'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k, json.dumps(v, allow_nan=False)))
 
 def ensure_secrets():
     """Fill in keys a fresh install needs. Never overwrites existing ones."""
@@ -265,14 +280,14 @@ def user_by_token(token):
 
 
 def add_user(name, quota_gb=0, expire_at=0, reset_day=0, note='', **extra):
-    uid = x('INSERT INTO users(name, uuid, hy2_pass, sub_token, quota_gb, expire_at, reset_day, note, created_at) '
-            'VALUES(?,?,?,?,?,?,?,?,?)',
-            (name, secure.new_uuid(), secure.token(18), secure.token(18), float(quota_gb), int(expire_at),
-             int(reset_day), note, int(time.time())))
-    if extra:
-        update_user(uid, **extra)
-    return uid
-
+    with transaction():
+        uid = x('INSERT INTO users(name, uuid, hy2_pass, sub_token, quota_gb, expire_at, reset_day, note, created_at) '
+                'VALUES(?,?,?,?,?,?,?,?,?)',
+                (name, secure.new_uuid(), secure.token(18), secure.token(18), float(quota_gb), int(expire_at),
+                 int(reset_day), note, int(time.time())))
+        if extra:
+            update_user(uid, **extra)
+        return uid
 
 def user_by_name(name):
     rows = q('SELECT * FROM users WHERE name=? COLLATE NOCASE', (name,))
@@ -309,37 +324,21 @@ def rotate_user(uid):
 
 
 def delete_user(uid):
-    with _lock:
-        c = connect()
-        c.execute('BEGIN')
-        try:
-            c.execute('DELETE FROM users WHERE id=?', (uid,))
-            c.execute('DELETE FROM traffic WHERE user_id=?', (uid,))
-            c.execute('DELETE FROM member_sessions WHERE user_id=?', (uid,))
-            c.execute('DELETE FROM requests WHERE user_id=?', (uid,))
-            c.execute("UPDATE invites SET status='revoked' WHERE inviter=? AND status='unused'", (uid,))
-            c.execute('UPDATE users SET invited_by=0, invite_deduct=0 WHERE invited_by=?', (uid,))
-            c.execute('COMMIT')
-        except BaseException:
-            c.execute('ROLLBACK')
-            raise
-
+    with transaction() as c:
+        c.execute('DELETE FROM users WHERE id=?', (uid,))
+        c.execute('DELETE FROM traffic WHERE user_id=?', (uid,))
+        c.execute('DELETE FROM member_sessions WHERE user_id=?', (uid,))
+        c.execute('DELETE FROM requests WHERE user_id=?', (uid,))
+        c.execute("UPDATE invites SET status='revoked' WHERE inviter=? AND status='unused'", (uid,))
+        c.execute('UPDATE users SET invited_by=0, invite_deduct=0 WHERE invited_by=?', (uid,))
 
 def add_traffic(uid, up, down, now=None):
     day = time.strftime('%Y-%m-%d', time.localtime(now or time.time()))
-    with _lock:
-        c = connect()
-        c.execute('BEGIN')
-        try:
-            c.execute('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
-                      (up, down, int(now or time.time()), uid))
-            c.execute('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
-                      'DO UPDATE SET up=up+excluded.up, down=down+excluded.down', (day, uid, up, down))
-            c.execute('COMMIT')
-        except BaseException:
-            c.execute('ROLLBACK')
-            raise
-
+    with transaction() as c:
+        c.execute('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
+                  (up, down, int(now or time.time()), uid))
+        c.execute('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
+                  'DO UPDATE SET up=up+excluded.up, down=down+excluded.down', (day, uid, up, down))
 
 def traffic_days(days=30):
     since = time.strftime('%Y-%m-%d', time.localtime(time.time() - days * 86400))

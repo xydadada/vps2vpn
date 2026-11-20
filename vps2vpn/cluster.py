@@ -117,7 +117,7 @@ def _validate_sync_snapshot(body):
 def handle_sync(s, body, base_url=''):
     """Apply only complete, well-formed snapshots; never turn bad rows into deletions."""
     master, master_id, wanted, uuids = _validate_sync_snapshot(body)
-    with _node_lock:
+    with _node_lock, db.transaction():
         s = db.settings()
         if s['node_master_id'] and master_id != s['node_master_id']:
             return {'error': 'this server already belongs to main server "%s"; on it press "New join code" to free it'
