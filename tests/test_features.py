@@ -235,6 +235,38 @@ class ProtocolSecurity(tu.Base):
         self.assertTrue(conf['dns']['servers'])
 
 
+class EmptySubscription(tu.Base):
+    def test_disabled_user_never_defaults_to_direct(self):
+        uid = db.add_user('suspended')
+        db.update_user(uid, enabled=0)
+        user = db.user(uid)
+        s = db.settings()
+        base_url = 'https://example.invalid'
+        self.assertEqual(subscription.nodes(s, user), [])
+
+        clash_config = subscription.clash(s, user, base_url)
+        group_name = subscription.names(s)['auto']
+        auto = next(g for g in clash_config['proxy-groups'] if g['name'] == group_name)
+        self.assertEqual(auto['proxies'], ['REJECT'])
+
+        sb = subscription.singbox(s, user, base_url)
+        self.assertFalse(any(o['type'] in ('selector', 'urltest') for o in sb['outbounds']))
+        self.assertEqual(sb['route']['rules'][0]['action'], 'reject')
+        self.assertEqual(len(sb['route']['rules']), 1)
+
+        shadow = subscription.shadowrocket(s, user, base_url)
+        self.assertIn('%s = fallback, REJECT' % group_name, shadow)
+        self.assertNotIn('%s = fallback, DIRECT' % group_name, shadow)
+
+    def test_all_protocols_disabled_still_fail_closed(self):
+        user = mk('no-outbound')
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=False,
+                        tuic_enabled=False, servers=[])
+        self.assertEqual(subscription.nodes(settings, user), [])
+        sb = subscription.singbox(settings, user, 'https://example.invalid')
+        self.assertEqual(sb['route']['rules'], [{'action': 'reject'}])
+
+
 class Servers(tu.Base):
     def test_node_side_sync(self):
         local = mk('own-user')
