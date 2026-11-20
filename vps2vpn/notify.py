@@ -32,13 +32,14 @@ def _target(s):
     s = dict(s or db.settings())
     cur = db.settings()
     s['tg_token'], s['tg_chat'] = cur.get('tg_token'), cur.get('tg_chat')
+    s['tg_verified'] = cur.get('tg_verified', False)
     return s
 
 
 def send(text, key=None, every=6 * 3600, s=None):
     """Send unless the same `key` was sent within `every` seconds. Never raises."""
     s = _target(s)
-    if not (s.get('tg_token') and s.get('tg_chat')):
+    if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True):
         return False
     now = time.monotonic()            # wall-clock jumps (NTP, manual set) must not mute or unmute alerts
     if key:
@@ -106,7 +107,7 @@ def find_chat(token, challenge):
 def send_file(name, data, caption='', s=None):
     """Send a document (e.g. the daily backup) to the owner's chat. Never raises."""
     s = _target(s)
-    if not (s.get('tg_token') and s.get('tg_chat')):
+    if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True):
         return False
     if isinstance(data, str):
         data = data.encode()
@@ -132,6 +133,14 @@ def send_file(name, data, caption='', s=None):
 def reply(s, chat, text):
     text = str(text or '')
     for i in range(0, len(text), MAX_TEXT):
+        # Restoring a backup, disabling alerts or rebinding the bot must
+        # revoke a stale recipient before the next secret-bearing chunk.
+        current = db.settings()
+        if (current.get('tg_verified') is not True or
+                current.get('tg_token') != s.get('tg_token') or
+                str(current.get('tg_chat')) != str(chat) or
+                str(s.get('tg_chat')) != str(chat)):
+            return
         try:
             _call(s['tg_token'], 'sendMessage', {'chat_id': chat, 'text': text[i:i + MAX_TEXT],
                                                  'disable_web_page_preview': 'true'})
@@ -145,7 +154,8 @@ def bot_loop(stop, handle, log):
     offset, token, primed = None, None, False
     while not stop.is_set():
         s = db.settings()
-        if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_bot') and s.get('setup_done')):
+        if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True
+                and s.get('tg_bot') and s.get('setup_done')):
             offset, primed = None, False
             stop.wait(30)
             continue
@@ -172,6 +182,10 @@ def bot_loop(stop, handle, log):
                 continue              # old messages from before the panel started: do not act on them
             msg = upd.get('message') or {}
             text = (msg.get('text') or '').strip()
+            # An admin can import a backup and revoke this binding while the
+            # long-poll call is still in flight. Fail closed on legacy state.
+            if db.settings().get('tg_verified') is not True:
+                break
             if not text.startswith('/') or not _owner_private_message(msg, s['tg_chat']):
                 continue
             try:
