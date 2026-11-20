@@ -127,6 +127,38 @@ class AuditWeb(tu.Base):
         status, _, _ = self.req('POST', self.pp + '/api/settings', [])
         self.assertEqual(status, 400)
 
+    def test_https_redirect_ignores_untrusted_host_and_preserves_path(self):
+        db.set_settings(domain='vpn.example.test', member_enabled=True)
+        configured = 'https://vpn.example.test:%d' % self.port
+        for path in (self.pp + '/?setup=one-time-secret',
+                     '/' + db.settings()['member_path'] + '/?next=profile'):
+            with self.subTest(path=path):
+                h = object.__new__(web.Handler)
+                h.path = path
+                h.headers = Message()
+                h.headers['Host'] = 'attacker.example:8080'
+                h.rfile = io.BytesIO()
+                h.close_connection = False
+                with mock.patch.object(web.Handler, 'secure_ok', return_value=False), mock.patch.object(web.Handler, 'send') as sent:
+                    h.route('GET')
+                self.assertEqual(sent.call_args.args[0], 301)
+                self.assertEqual(sent.call_args.kwargs['headers']['Location'],
+                                 configured + path)
+        db.set_settings(domain='', public_host='')
+        self.assertIsNone(h._https_location(db.settings()))
+
+    def test_https_redirect_validates_ipv6_and_rejects_host_injection(self):
+        h = object.__new__(web.Handler)
+        h.path = self.pp + '/?token=secret'
+        s = dict(db.settings(), domain='', public_host='2001:db8::1')
+        self.assertEqual(h._https_location(s),
+                         'https://[2001:db8::1]:%d%s' % (self.port, h.path))
+        for host in ('evil.example@trusted.example', 'a/b.example',
+                     'bad' + chr(10) + 'Location: https://attacker.example', '[::1]@evil'):
+            with self.subTest(host=host):
+                s['public_host'] = host
+                self.assertIsNone(h._https_location(s))
+
     def test_get_cannot_change_authenticated_state(self):
         cookie = self.cookie
         for endpoint in ('logout', 'password', 'restart', 'rules-refresh'):

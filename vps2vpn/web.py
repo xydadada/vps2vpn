@@ -13,6 +13,7 @@ URL map (paths are secret random prefixes chosen at install time):
 """
 import html
 import http.server
+import ipaddress
 import io
 import json
 import math
@@ -389,6 +390,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
         h = '[%s]' % host if ':' in host and not host.startswith('[') else host
         return '%s://%s:%d' % (scheme, h, s['panel_port'])
 
+    def _https_location(self, s):
+        """Redirect HTTP to this configured server, never to the request's Host header.
+
+        A foreign Host on an initial-setup link could otherwise redirect its
+        one-time query token to an attacker-controlled domain.
+        """
+        host = s.get('domain') or s.get('public_host') or ''
+        if not isinstance(host, str) or not host:
+            return None
+        try:
+            if ':' in host:
+                target = '[%s]' % ipaddress.IPv6Address(host).compressed
+            else:
+                name = host.encode('idna').decode('ascii')
+                parts = name.split('.')
+                if len(name) > 253 or not all(
+                        re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', part)
+                        for part in parts):
+                    return None
+                target = name
+            port = int(s['panel_port'])
+            if not (1 <= port <= 65535):
+                return None
+        except (UnicodeError, ValueError, TypeError, KeyError):
+            return None
+        if any(ord(c) < 32 or ord(c) == 127 for c in self.path):
+            return None
+        return 'https://%s:%d/%s' % (target, port, self.path.lstrip('/'))
+
     # --- routing ----------------------------------------------------------------
     def do_HEAD(self):
         self.do_GET()
@@ -434,8 +464,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             mp = '/' + s['member_path']
             if s['member_path'] and s['member_enabled'] and s['setup_done'] and (path == mp or path.startswith(mp + '/')):
                 if not self.secure_ok():
-                    host = self.headers.get('Host', '')
-                    return self.send(301, '', headers={'Location': 'https://%s%s' % (host, self.path)})
+                    location = self._https_location(s)
+                    return self.send(301, '', headers={'Location': location}) if location else self.not_found()
                 if path == mp:
                     return self.send(301, '', headers={'Location': mp + '/'})
                 uid = db.member_session(self.cookie('v2vm'))
@@ -443,8 +473,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pp = '/' + s['panel_path']
             if s['panel_path'] and (path == pp or path.startswith(pp + '/')):
                 if not self.secure_ok():
-                    host = self.headers.get('Host', '')
-                    return self.send(301, '', headers={'Location': 'https://%s%s' % (host, self.path)})
+                    location = self._https_location(s)
+                    return self.send(301, '', headers={'Location': location}) if location else self.not_found()
                 if path == pp:
                     return self.send(301, '', headers={'Location': pp + '/'})
                 return self.panel(method, path[len(pp):] or '/', s)
