@@ -34,6 +34,9 @@ _fails = {}                    # ip -> admitted authentication attempts in the l
 _fails_lock = threading.Lock()
 _setup_lock = threading.Lock()
 _apply_lock = threading.Lock()
+_apply_thread = None
+_apply_pending = False
+_apply_force = False
 
 
 def setup_token():
@@ -89,16 +92,36 @@ def client_info(s, link):
 
 
 def apply_async(force=False):
-    """Restarting cores can take a second; never block the HTTP response on it."""
+    """Coalesce changes into one worker; retain force reloads and changes arriving mid-apply."""
+    global _apply_thread, _apply_pending, _apply_force
+
     def go():
-        with _apply_lock:
+        global _apply_thread, _apply_pending, _apply_force
+        while True:
+            with _apply_lock:
+                if not _apply_pending:
+                    _apply_thread = None
+                    return
+                reload_force = _apply_force
+                _apply_pending, _apply_force = False, False
             try:
-                cores.apply(force=force)
+                cores.apply(force=reload_force)
                 jobs.log('configs applied')
             except Exception as e:
                 jobs.log('apply failed: %s' % e)
-    threading.Thread(target=go, daemon=True).start()
-    cluster.sync_soon()          # joined servers learn about user changes within seconds
+
+    with _apply_lock:
+        _apply_pending = True
+        _apply_force = _apply_force or force
+        if _apply_thread is None:
+            worker = threading.Thread(target=go, daemon=True)
+            _apply_thread = worker
+            try:
+                worker.start()
+            except Exception:
+                _apply_thread = None
+                raise
+    cluster.sync_soon()
 
 
 class BadRequest(ValueError):
