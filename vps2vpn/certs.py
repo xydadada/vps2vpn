@@ -93,24 +93,43 @@ _trust_cache = {}
 _trust_lock = threading.Lock()
 
 
+def _identity(host):
+    """Normalise DNS/IP names before checking an X.509 subject alternative name."""
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return host.lower().rstrip('.')
+
+
 def trusted(host):
-    """A publicly trusted certificate for `host` is in place. Cached per file version and per minute."""
+    """True only for a host-matching CA-trusted leaf with a matching private key."""
     if not host:
         return False
     try:
-        stamp = os.path.getmtime(paths.ACME_CRT)
+        stamp = (os.stat(paths.ACME_CRT).st_mtime_ns, os.stat(paths.ACME_KEY).st_mtime_ns)
     except OSError:
         return False
-    key = (host.lower(), stamp, int(time.time() // 60))
+    ident = _identity(host)
+    cache_key = (ident, stamp, int(time.time() // 60))
     with _trust_lock:
-        if key in _trust_cache:
-            return _trust_cache[key]
-    ok = acme_valid(1) and host.lower() in [n.lower() for n in acme_names()]
+        if cache_key in _trust_cache:
+            return _trust_cache[cache_key]
+    valid = acme_valid(1) and ident in {_identity(n) for n in acme_names()}
+    if valid:
+        try:
+            # SAN + expiry alone also accept staging, forged, and self-signed chains.
+            # OpenSSL validates the full presented chain against OS trust roots.
+            _openssl('verify', '-purpose', 'sslserver', '-untrusted',
+                     paths.ACME_CRT, paths.ACME_CRT)
+            # Independently ensure the leaf matches the private key used by our server.
+            ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(paths.ACME_CRT, paths.ACME_KEY)
+        except (OSError, RuntimeError, ValueError):
+            valid = False
     with _trust_lock:
         if len(_trust_cache) > 16:
             _trust_cache.clear()
-        _trust_cache[key] = ok
-    return ok
+        _trust_cache[cache_key] = valid
+    return valid
 
 
 def current(host=None):

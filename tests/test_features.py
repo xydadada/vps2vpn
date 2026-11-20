@@ -4,6 +4,7 @@ per-user history, server monthly traffic, site monitor, abuse watch, Shadowrocke
     python -m unittest tests.test_unit tests.test_features
 """
 import http.client
+import io
 import json
 import os
 import sqlite3
@@ -11,9 +12,10 @@ import ssl
 import threading
 import time
 import unittest
+from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, web
+from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, system, web
 
 GIB = 1 << 30
 
@@ -209,6 +211,42 @@ class Shadowrocket(tu.Base):
         self.assertEqual(out, ['DOMAIN-SUFFIX,google.com', 'DOMAIN,example.org'])
         out = rules.to_shadowrocket(b'1.0.1.0/24\n2001:db8::/32\nbad\n', 'geoip').decode().splitlines()
         self.assertEqual(out, ['IP-CIDR,1.0.1.0/24', 'IP-CIDR6,2001:db8::/32'])
+
+
+class CertificateTrust(tu.Base):
+    def test_untrusted_acme_chain_never_reports_publicly_trusted(self):
+        paths.ensure_dirs()
+        with open(paths.ACME_CRT, 'wb') as f:
+            f.write(b'staging-cert-placeholder')
+        with open(paths.ACME_KEY, 'wb') as f:
+            f.write(b'private-key-placeholder')
+        certs._trust_cache.clear()
+        self.addCleanup(certs._trust_cache.clear)
+        with mock.patch.object(certs, 'acme_valid', return_value=True), \\
+             mock.patch.object(certs, 'acme_names', return_value=['vpn.example']), \\
+             mock.patch.object(certs, '_openssl', side_effect=RuntimeError('untrusted chain')) as verify:
+            self.assertFalse(certs.trusted('vpn.example'))
+            self.assertFalse(certs.trusted('vpn.example'))  # cache must remember rejection
+            self.assertEqual(verify.call_count, 1)
+            # A replacement private key invalidates the trust cache as well as a new certificate.
+            stamp = os.stat(paths.ACME_KEY).st_mtime_ns
+            os.utime(paths.ACME_KEY, ns=(stamp + 1000000000, stamp + 1000000000))
+            self.assertFalse(certs.trusted('vpn.example'))
+            self.assertEqual(verify.call_count, 2)
+
+    def test_public_address_probe_rejects_private_and_unbounded_values(self):
+        def open_private(url, timeout=6, context=None):
+            self.assertTrue(context.check_hostname)
+            self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+            return io.BytesIO(b'ip=127.0.0.1\\n')
+        with mock.patch.object(system.urllib.request, 'urlopen', side_effect=open_private):
+            self.assertEqual(system.public_ip(), '')
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               return_value=io.BytesIO(b'ip=8.8.8.8\\n')):
+            self.assertEqual(system.public_ip(), '8.8.8.8')
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               return_value=io.BytesIO(b'ip=2001:4860:4860::8888\\n')):
+            self.assertEqual(system.public_ip(v6=True), '2001:4860:4860::8888')
 
 
 class ProtocolSecurity(tu.Base):
