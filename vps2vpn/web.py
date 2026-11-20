@@ -237,6 +237,9 @@ def client_info(s, link):
     return {'version': version, 'url': url, 'notes': s['client_notes'], 'files': files}
 
 
+_apply_retry = [0]          # seconds until the next retry after a failed apply (0 = last apply worked)
+
+
 def apply_async(force=False):
     """Restarting cores can take a second; coalesce bursts and never block the HTTP response on it."""
     global _apply_pending, _apply_force, _apply_running
@@ -261,8 +264,16 @@ def apply_async(force=False):
                 try:
                     cores.apply(force=f)
                     jobs.log('configs applied')
+                    _apply_retry[0] = 0
                 except Exception as e:
-                    jobs.log('apply failed: %s' % e)
+                    # The database already says who may connect; until a core has loaded that, a disabled
+                    # account could still get in. Try again with backoff (1, 2, 4 … 15 min) instead of waiting
+                    # for the next unrelated change.
+                    _apply_retry[0] = min(_apply_retry[0] * 2 or 60, 900)
+                    jobs.log('apply failed, retrying in %d s: %s' % (_apply_retry[0], e))
+                    t = threading.Timer(_apply_retry[0], apply_async, kwargs={'force': f})
+                    t.daemon = True
+                    t.start()
         threading.Thread(target=go, daemon=True, name='apply').start()
     cluster.sync_soon()          # joined servers learn about user changes within seconds
 
@@ -717,7 +728,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not s['setup_done'] or not secure.hmac_eq(auth[7:] if auth.startswith('Bearer ') else '', s['node_key']):
                 time.sleep(0.5)
                 return self.json({'error': 'bad node key'}, 403)
-            res = cluster.handle_sync(s, self.body_json(8 << 20))
+            try:
+                res = cluster.handle_sync(s, self.body_json(8 << 20))
+            except ValueError as e:      # a damaged account list is refused whole, nothing is changed
+                return self.json({'error': 'sync refused: %s' % str(e)[:200]}, 400)
             return self.json(res, 409 if res.get('conflict') else 200)
         if not s['setup_done'] or not db.session_ok(self.cookie('v2v')):
             return self.json({'error': 'login required'}, 401)
@@ -931,7 +945,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if d.get('logout_others'):
                 db.end_other_sessions(self.cookie('v2v'))
             if 'ip_limit_pause' in d:
-                db.set_settings(ip_limit_pause=bool(d['ip_limit_pause']))
+                try:
+                    db.set_settings(ip_limit_pause=as_bool(d['ip_limit_pause']))
+                except ValueError:
+                    return self.json({'error': 'ip_limit_pause: expected true or false'}, 400)
             return self.json({'ok': True})
         hist = []
         for e in db.events('login', 40):
@@ -1426,7 +1443,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if api == 'report':
             # Sent by the vps2vpn app when a line keeps failing (or works again); shown to the admin.
             try:
-                jobs.report_line(u['id'], str(d.get('line', '')), bool(d.get('ok')), str(d.get('host', '')))
+                host = d.get('host', '')
+                if not isinstance(host, str):
+                    raise ValueError('host must be text')
+                jobs.report_line(u['id'], str(d.get('line', '')), as_bool(d.get('ok', False)), host)
             except ValueError as e:
                 return self.json({'error': str(e)}, 400)
             return self.json({'ok': True})
@@ -1652,6 +1672,20 @@ def user_fields(d):
 HOST_RE = re.compile(r'^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$')
 
 
+def as_bool(v):
+    """A switch from JSON. bool('false') is True, so strings and numbers are read the way they are meant;
+    anything else (lists, objects, 'maybe') is refused rather than guessed."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int) and v in (0, 1):
+        return bool(v)
+    if isinstance(v, str) and v.strip().lower() in ('true', '1', 'on', 'yes'):
+        return True
+    if isinstance(v, str) and v.strip().lower() in ('false', '0', 'off', 'no', ''):
+        return False
+    raise ValueError('expected true or false')
+
+
 def validate_settings(d, s):
     """Check and normalise settings from the panel. Returns a dict of changes or an error string."""
     out = {}
@@ -1660,7 +1694,10 @@ def validate_settings(d, s):
              'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause')
     for k in bools:
         if k in d:
-            out[k] = bool(d[k])
+            try:
+                out[k] = as_bool(d[k])
+            except ValueError:
+                return '%s: expected true or false' % k
     for k in ('custom_direct', 'custom_proxy', 'custom_block'):
         if k in d:
             v = d[k]

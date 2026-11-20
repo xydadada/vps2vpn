@@ -4,6 +4,7 @@ per-user history, server monthly traffic, site monitor, abuse watch, Shadowrocke
     python -m unittest tests.test_unit tests.test_features
 """
 import http.client
+import io
 import json
 import os
 import sqlite3
@@ -11,9 +12,10 @@ import ssl
 import threading
 import time
 import unittest
+from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from vps2vpn import abuse, certs, cluster, db, jobs, members, monitor, paths, rules, secure, subscription, web
+from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, system, web
 
 GIB = 1 << 30
 
@@ -23,6 +25,46 @@ def mk(name, quota=0, **kv):
     if kv:
         db.update_user(uid, **kv)
     return db.user(uid)
+
+
+class TrustAndRouting(tu.Base):
+    def test_untrusted_chain_does_not_satisfy_public_ca_predicate(self):
+        paths.ensure_dirs()
+        with open(paths.ACME_CRT, 'wb') as out:
+            out.write(b'placeholder certificate')
+        with open(paths.ACME_KEY, 'wb') as out:
+            out.write(b'placeholder private key')
+        certs._trust_cache.clear()
+        self.addCleanup(certs._trust_cache.clear)
+        with mock.patch.object(certs, 'acme_valid', return_value=True), \
+             mock.patch.object(certs, 'acme_names', return_value=['vpn.example']), \
+             mock.patch.object(certs, '_openssl', side_effect=RuntimeError('not CA trusted')) as verify:
+            self.assertFalse(certs.trusted('vpn.example'))
+            self.assertFalse(certs.trusted('vpn.example'))
+            self.assertEqual(verify.call_count, 1)
+
+    def test_public_ip_probe_rejects_private_answers(self):
+        def answer(text):
+            return io.BytesIO(('ip=' + text + '\n').encode())
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: answer('127.0.0.1')):
+            self.assertEqual(system.public_ip(), '')
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: answer('8.8.8.8')):
+            self.assertEqual(system.public_ip(), '8.8.8.8')
+        with mock.patch.object(system.urllib.request, 'urlopen',
+                               side_effect=lambda *a, **kw: answer('2001:4860:4860::8888')):
+            self.assertEqual(system.public_ip(v6=True), '2001:4860:4860::8888')
+
+    def test_xray_resolves_sniffed_names_before_the_private_address_block(self):
+        # Sniffed names stay the destination: clients that resolve locally (redir-host, polluted DNS) would
+        # otherwise send Google & co. to wrong addresses. A spoofed name is resolved on the server and still
+        # hits the private-address block first.
+        config = cores.xray_config(db.settings(), [])
+        self.assertEqual(config['routing']['domainStrategy'], 'IPIfNonMatch')
+        self.assertEqual(config['inbounds'][0]['sniffing']['destOverride'], ['http', 'tls', 'quic'])
+        self.assertEqual(config['routing']['rules'][0]['ip'], ['geoip:private'])
+        self.assertEqual(config['routing']['rules'][0]['outboundTag'], 'block')
 
 
 class Invites(tu.Base):
@@ -214,6 +256,42 @@ class Shadowrocket(tu.Base):
         self.assertEqual(out, ['IP-CIDR,1.0.1.0/24', 'IP-CIDR6,2001:db8::/32'])
 
 
+class EmptySubscription(tu.Base):
+    def test_empty_node_list_cannot_fall_back_to_direct_in_any_format(self):
+        uid = db.add_user('empty-proxy-list')
+        user = db.user(uid)
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=False,
+                        tuic_enabled=False, servers=[])
+        base = 'https://example.invalid'
+        self.assertEqual(subscription.nodes(settings, user), [])
+
+        clash = subscription.clash(settings, user, base)
+        auto = subscription.names(settings)['auto']
+        group = next(g for g in clash['proxy-groups'] if g['name'] == auto)
+        self.assertEqual(group['proxies'], ['REJECT'])
+        self.assertEqual(clash['rules'], ['MATCH,REJECT'])
+        self.assertEqual(clash['rule-providers'], {})
+        self.assertFalse(clash['dns']['enable'])
+
+        singbox = subscription.singbox(settings, user, base)
+        self.assertEqual(singbox['route']['rules'], [{'action': 'reject'}])
+        self.assertFalse(any(o['type'] in ('selector', 'urltest') for o in singbox['outbounds']))
+
+        shadow = subscription.shadowrocket(settings, user, base)
+        self.assertIn('%s = fallback, REJECT' % auto, shadow)
+        self.assertIn('FINAL,REJECT,dns-failed', shadow)
+        self.assertNotIn('%s = fallback, DIRECT' % auto, shadow)
+
+    def test_all_node_protocols_disabled_still_reject_traffic(self):
+        user = mk('no-protocol')
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=False,
+                        tuic_enabled=False, servers=[])
+        self.assertEqual(subscription.nodes(settings, user), [])
+        self.assertEqual(subscription.clash(settings, user, 'https://example.invalid')['rules'], ['MATCH,REJECT'])
+        self.assertEqual(subscription.singbox(settings, user, 'https://example.invalid')['route']['rules'],
+                         [{'action': 'reject'}])
+
+
 class Servers(tu.Base):
     def test_node_side_sync(self):
         local = mk('own-user')
@@ -222,11 +300,10 @@ class Servers(tu.Base):
         web.apply_async = lambda force=False: None
         try:
             users = [{'id': 7, 'name': 'x', 'uuid': '00000000-0000-4000-8000-000000000007', 'hy2_pass': 'pass-seven', 'enabled': True},
-                     {'id': 9, 'name': 'own-user', 'uuid': '00000000-0000-4000-8000-000000000009', 'hy2_pass': 'pass-nine', 'enabled': False},
-                     {'id': 11, 'name': 'bad', 'uuid': '"},{"x', 'hy2_pass': 'pass-eleven', 'enabled': True}]
+                     {'id': 9, 'name': 'own-user', 'uuid': '00000000-0000-4000-8000-000000000009', 'hy2_pass': 'pass-nine', 'enabled': False}]
             ans = cluster.handle_sync(db.settings(), {'master': 'main', 'users': users})
             mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
-            self.assertEqual(set(mine), {7, 9})                 # 11 has a malformed uuid: skipped
+            self.assertEqual(set(mine), {7, 9})
             self.assertEqual(mine[7]['uuid'], '00000000-0000-4000-8000-000000000007')
             self.assertFalse(mine[9]['enabled'])
             self.assertEqual(ans['idmap'], {'7': mine[7]['id'], '9': mine[9]['id']})
@@ -249,6 +326,58 @@ class Servers(tu.Base):
                                                                           'users': users[:1]}))
         finally:
             web.apply_async = orig
+
+    def test_malformed_node_snapshot_cannot_delete_or_rewrite_accounts(self):
+        original = web.apply_async
+        web.apply_async = lambda force=False: None
+        legitimate = {'id': 7, 'name': 'remote', 'uuid': '00000000-0000-4000-8000-000000000007',
+                      'hy2_pass': 'pass-seven', 'enabled': True}
+        local = mk('local')
+        try:
+            cluster.handle_sync(db.settings(), {'master': 'main', 'master_id': 'main-one', 'users': [legitimate]})
+            before = [(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()]
+            scenarios = [
+                {'master': 'main', 'master_id': 'main-one', 'users': [dict(legitimate, id=8), dict(legitimate, id=8)]},
+                {'master': 'main', 'master_id': 'main-one', 'users': [legitimate, dict(legitimate, id=8)]},
+                {'master': 'main', 'master_id': 'main-one', 'users': [dict(legitimate, uuid='broken')]},
+                {'master': 'main', 'master_id': 'main-one', 'users': 'bad-not-a-list'},
+                {'master': 'main', 'master_id': 'main-one',
+                 'users': [dict(legitimate, uuid=db.user(local['id'])['uuid'])]},
+                {'master': 'main', 'master_id': 'main-one', 'users': [dict(legitimate, enabled='true')]},
+            ]
+            for value in scenarios:
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    cluster.handle_sync(db.settings(), value)
+                self.assertEqual([(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()], before)
+            self.assertEqual(db.settings()['node_master_id'], 'main-one')
+            rejected = cluster.handle_sync(db.settings(), {'master': 'legacy', 'users': []})
+            self.assertTrue(rejected['conflict'])
+        finally:
+            web.apply_async = original
+
+    def test_node_snapshot_rolls_back_after_second_insert_fails(self):
+        original_add, original_apply = db.add_user, web.apply_async
+        web.apply_async = lambda force=False: None
+        count = [0]
+        target = [{'id': i, 'name': 'remote%d' % i,
+                   'uuid': '00000000-0000-4000-8000-%012d' % i,
+                   'hy2_pass': 'pass-%d' % i, 'enabled': True} for i in (51, 52)]
+        before = [(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()]
+        def fail_second(*args, **kw):
+            count[0] += 1
+            if count[0] == 2:
+                raise RuntimeError('injected second account failure')
+            return original_add(*args, **kw)
+        db.add_user = fail_second
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'second account failure'):
+                cluster.handle_sync(db.settings(), {'master': 'main', 'master_id': 'new-main', 'users': target})
+        finally:
+            db.add_user = original_add
+            web.apply_async = original_apply
+        self.assertEqual([(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()], before)
+        self.assertEqual(db.settings()['node_master_id'], '')
+        self.assertEqual(count, [2])
 
     def test_main_side_counts_and_subscribes(self):
         u = mk('ann', 10)

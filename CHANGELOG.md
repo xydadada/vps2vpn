@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.4
+
+Review of the outside fixes proposed for 0.2.3 (#5–#8): taken where they hold up, adjusted where they did not.
+
+**Security**
+- A server whose protocols are all switched off no longer hands out subscriptions that quietly fall back to a direct connection: Clash, sing-box and Shadowrocket profiles then block traffic instead (checked with the real mihomo and sing-box).
+- Joined servers refuse a damaged account list from the main server as a whole, instead of reading its bad rows as deletions; the update is one transaction, and the main server is told why (HTTP 400).
+- A Let's Encrypt certificate only counts as trusted when its chain verifies against the system roots and the key matches.
+- The public-IP lookup only accepts a public address of the right family.
+- Telegram: the alert chat is chosen from private chats first (not a group the bot sits in), and alerts and backups always go to the chat set *now*, even from a job that started before you changed or switched it off.
+- When reloading the cores fails, it is retried (1 min, then up to every 15 min) so a disabled account cannot keep connecting until the next change.
+- Two installs started at once (a retried or double-clicked deploy) now run one after the other.
+- Port-hopping rules file and the AI check result are no longer world-readable.
+
+**Reliability**
+- Speed test: Cloudflare's download test is rate-limited and refused from some data centres, which showed as "0 Mb". The test now moves on to other public test files, also when a source breaks off mid-test.
+- Not taken from the review: switching off Xray's sniffed destination. Apps that resolve names on the phone (often with tampered DNS) rely on it to reach Google and others; spoofed names are already resolved on the server and stopped by the private-address block.
+
+**Tests and CI**
+- CI installs the way the one-click deployers do, measures speed against a local test source and prints service logs on failure; all five jobs are green again.
+
 ## 0.2.3
 
 Fixes from a third outside code review (on 0.2.2).

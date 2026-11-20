@@ -446,6 +446,19 @@ do_uninstall() {
   echo "done. Kernel tuning returns to defaults after a reboot."
 }
 
+one_at_a_time() {   # a retried or double-clicked deploy must not run two installs over each other
+  [ "$(id -u)" = 0 ] || return 0
+  command -v flock >/dev/null 2>&1 || return 0
+  exec 9>/run/vps2vpn-install.lock 2>/dev/null || return 0
+  if ! flock -n 9; then
+    say "another vps2vpn install is running; waiting for it (up to 10 minutes)"
+    flock -w 600 9 || die "another vps2vpn install is still running"
+  fi
+}
+
+case "${1:-install}" in
+  install|update|upgrade|uninstall) one_at_a_time ;;
+esac
 case "${1:-install}" in
   install|update|upgrade) do_install ;;
   info) PYTHONPATH="$LIB/app" python3 -m vps2vpn info ;;

@@ -26,9 +26,18 @@ def _call(token, method, params=None, timeout=10):
         return json.loads(r.read())
 
 
+def _target(s):
+    """Settings with the Telegram target as it is NOW. Long jobs hold settings read minutes ago; if the owner
+    has since switched Telegram off or to another chat, nothing may go to the old one (backups included)."""
+    s = dict(s or db.settings())
+    cur = db.settings()
+    s['tg_token'], s['tg_chat'] = cur.get('tg_token'), cur.get('tg_chat')
+    return s
+
+
 def send(text, key=None, every=6 * 3600, s=None):
     """Send unless the same `key` was sent within `every` seconds. Never raises."""
-    s = s or db.settings()
+    s = _target(s)
     if not (s.get('tg_token') and s.get('tg_chat')):
         return False
     now = time.monotonic()            # wall-clock jumps (NTP, manual set) must not mute or unmute alerts
@@ -85,7 +94,7 @@ def find_chat(token, challenge):
 
 def send_file(name, data, caption='', s=None):
     """Send a document (e.g. the daily backup) to the owner's chat. Never raises."""
-    s = s or db.settings()
+    s = _target(s)
     if not (s.get('tg_token') and s.get('tg_chat')):
         return False
     if isinstance(data, str):

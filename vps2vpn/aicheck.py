@@ -199,18 +199,25 @@ def run():
            'sites': {k: out.get(k) or {'status': 'unreachable', 'note': 'timeout'} for k in SITES}}
     res['advice'] = advice(res)
     try:
-        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o644)
+        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o600)
     except OSError:
         pass
     return res
 
 
 def latest():
+    """The last saved result, or None when there is none or it is not shaped like one (a damaged file must
+    not break the panel, the deployers or the servers that read it through public_info)."""
     try:
         with open(FILE, encoding='utf-8') as f:
-            return json.load(f)
+            res = json.load(f)
     except (OSError, ValueError):
         return None
+    sites = res.get('sites') if isinstance(res, dict) else None
+    if not isinstance(sites, dict) or not all(isinstance(sites.get(k), dict) and 'status' in sites[k]
+                                              for k in SITES):
+        return None
+    return res
 
 
 def summary(res):

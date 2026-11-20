@@ -108,27 +108,51 @@ def _remote_name(uname, master, rid, skip_uid=None):
         i += 1
 
 
+def _validated_sync_snapshot(body):
+    """Validate the entire main-server snapshot before any account mutation."""
+    if not isinstance(body, dict) or not isinstance(body.get('users'), list):
+        raise ValueError('node sync requires a complete user list')
+    if len(body['users']) > 20000:
+        raise ValueError('node sync has too many users')
+    master_raw, master_id = body.get('master') or 'main', body.get('master_id') or ''
+    if not isinstance(master_raw, str) or not isinstance(master_id, str) or len(master_id) > 64:
+        raise ValueError('invalid main-server identity')
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in master_raw + master_id):
+        raise ValueError('invalid main-server identity')
+    master = _clean_label(master_raw, 24) or 'main'
+    wanted, uuids = {}, set()
+    for u in body['users']:
+        if not isinstance(u, dict):
+            raise ValueError('malformed node sync user')
+        rid = u.get('id')
+        if type(rid) is not int or not 0 < rid < (1 << 63) or rid in wanted:
+            raise ValueError('duplicate or invalid remote account ID')
+        name, uuid, secret, enabled = (u.get('name'), u.get('uuid'), u.get('hy2_pass'), u.get('enabled'))
+        if not isinstance(name, str):
+            raise ValueError('invalid remote user name')
+        if not isinstance(uuid, str) or not UUID_RE.fullmatch(uuid) or uuid.lower() in uuids:
+            raise ValueError('duplicate or invalid remote UUID')
+        if not isinstance(secret, str) or not PASS_RE.fullmatch(secret):
+            raise ValueError('invalid remote user credential')
+        if type(enabled) not in (int, bool) or enabled not in (0, 1):
+            raise ValueError('invalid remote enabled state')
+        uuids.add(uuid.lower())
+        wanted[rid] = {'name': _clean_label(name, 24) or 'u%d' % rid, 'uuid': uuid,
+                       'hy2_pass': secret, 'enabled': int(enabled)}
+    return master, master_id, wanted, uuids
+
+
 def handle_sync(s, body, base_url=''):
-    """Called on a node by its main server. Returns the node's answer."""
-    with _node_lock:
+    """Apply an authenticated snapshot atomically; never treat malformed rows as deletions."""
+    master, master_id, wanted, uuids = _validated_sync_snapshot(body)
+    with _node_lock, db.transaction():
         s = db.settings()
-        master = _clean_label(body.get('master') or 'main', 24) or 'main'
-        master_id = _clean_label(body.get('master_id') or '', 64)
         if s['node_master_id'] and master_id != s['node_master_id']:
-            # Two main servers would delete each other's accounts here every minute.
             return {'error': 'this server already belongs to main server "%s"; on it press "New join code" to free it'
                              % s['node_master'], 'conflict': True}
-        wanted = {}
-        for u in body.get('users') or []:
-            try:
-                rid = int(u['id'])
-                uname = _clean_label(u['name'], 24) or ('u%d' % rid)
-                w = {'name': uname, 'uuid': str(u['uuid']), 'hy2_pass': str(u['hy2_pass']),
-                     'enabled': 1 if u.get('enabled') else 0}
-                if UUID_RE.match(w['uuid']) and PASS_RE.match(w['hy2_pass']):   # a bad value would break the cores
-                    wanted[rid] = w
-            except (KeyError, TypeError, ValueError):
-                continue
+        all_users = db.users()
+        if any(u['uuid'].lower() in uuids for u in all_users if not u['remote_id']):
+            raise ValueError('remote UUID conflicts with a local account')
         changed = False
         mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
         for rid, w in wanted.items():
@@ -156,16 +180,17 @@ def handle_sync(s, body, base_url=''):
                 changed = True
         if s['node_master'] != master or (master_id and s['node_master_id'] != master_id):
             db.set_settings(node_master=master, node_master_id=master_id or s['node_master_id'])
-        if changed:
-            from . import web
-            web.apply_async()
-        from . import system
-        h = system.health()
-        return {'ok': True, 'info': public_info(db.settings()),
-                'idmap': {str(rid): u['id'] for rid, u in mine.items()},
-                'traffic': {str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()},
-                'health': {k: h.get(k) for k in ('load', 'cpus', 'mem_total', 'mem_used', 'uptime', 'rx_rate', 'tx_rate')},
-                'version': __import__('vps2vpn').VERSION, 'at': int(time.time())}
+        idmap = {str(rid): u['id'] for rid, u in mine.items()}
+        traffic = {str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()}
+    # Outside the transaction: the database lock is not held while the cores reload or health is sampled.
+    if changed:
+        from . import web
+        web.apply_async()
+    from . import system
+    h = system.health()
+    return {'ok': True, 'info': public_info(db.settings()), 'idmap': idmap, 'traffic': traffic,
+            'health': {k: h.get(k) for k in ('load', 'cpus', 'mem_total', 'mem_used', 'uptime', 'rx_rate', 'tx_rate')},
+            'version': __import__('vps2vpn').VERSION, 'at': int(time.time())}
 
 
 # --- main-server side ---------------------------------------------------------------------

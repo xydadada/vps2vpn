@@ -48,6 +48,43 @@ class Secure(unittest.TestCase):
         self.assertFalse(secure.hmac_eq('', ''))
 
 
+class BenchSources(unittest.TestCase):
+    """A refusing or breaking Cloudflare must not show up as a 0 Mb download."""
+
+    def setUp(self):
+        from vps2vpn import bench
+        self.bench = bench
+        self.saved = (bench.working_download_url, bench.download, bench.latency, bench.upload)
+        bench.latency = lambda *a, **k: {'median': 10, 'p90': 12, 'min': 9, 'fails': 0}
+        bench.upload = lambda *a, **k: 5.0
+
+    def tearDown(self):
+        (self.bench.working_download_url, self.bench.download, self.bench.latency, self.bench.upload) = self.saved
+
+    def test_refused_cloudflare_uses_the_first_working_fallback(self):
+        b = self.bench
+        b.working_download_url = lambda proxy=None, **k: b.DOWN_FALLBACKS[0]
+        used = []
+        b.download = lambda proxy, streams, secs, url=None, **k: used.append(url) or 42.0
+        r = b.run(quick=True, log=lambda m: None)
+        self.assertEqual((r['down_1'], r['down_4']), (42.0, 42.0))
+        self.assertEqual(set(used), {b.DOWN_FALLBACKS[0]})
+
+    def test_source_breaking_off_mid_test_switches_to_the_next(self):
+        b = self.bench
+        b.working_download_url = lambda proxy=None, **k: b.DOWN_URL
+        b.download = lambda proxy, streams, secs, url=None, **k: 0.0 if url == b.DOWN_URL else 30.0
+        r = b.run(quick=True, log=lambda m: None)
+        self.assertEqual((r['down_1'], r['down_4']), (30.0, 30.0))
+
+    def test_explicit_origin_is_never_replaced(self):
+        b = self.bench
+        b.working_download_url = lambda *a, **k: self.fail('public sources probed for a fixture origin')
+        b.download = lambda proxy, streams, secs, url=None, **k: 0.0
+        r = b.run(quick=True, log=lambda m: None, origin='http://127.0.0.1:9')
+        self.assertEqual(r['down_1'], 0.0)
+
+
 class QR(unittest.TestCase):
     def test_sizes(self):
         self.assertEqual(len(qr.matrix('a')), 21)
@@ -260,8 +297,81 @@ class Ops(Base):
         self.assertIn('[2001:db8::5]', subscription.share_link(n[3]))
         self.assertIn('IPv6', subscription.render('clash', db.settings(), u, 'https://x')[1])
 
+    def test_switches_from_json_mean_what_they_say(self):
+        for v, want in ((True, True), (False, False), (1, True), (0, False), ('false', False), ('0', False),
+                        ('off', False), ('true', True), ('on', True)):
+            self.assertIs(web.as_bool(v), want, v)
+        for v in ([], {}, 'maybe', 2, None):
+            with self.assertRaises(ValueError):
+                web.as_bool(v)
+        self.assertEqual(web.validate_settings({'block_ads': 'false'}, db.settings()), {'block_ads': False})
+        self.assertIsInstance(web.validate_settings({'block_ads': ['x']}, db.settings()), str)
+
+    def test_damaged_ai_result_reads_as_none(self):
+        from vps2vpn import aicheck
+        paths.ensure_dirs()
+        for bad in ('[]', '{"sites": []}', '{"sites": {"claude": {}}}'):
+            with open(aicheck.FILE, 'w', encoding='utf-8') as f:
+                f.write(bad)
+            self.assertIsNone(aicheck.latest(), bad)
+
     def test_notify_quiet_without_config(self):
         self.assertFalse(notify.send('hi'))
+
+    def test_notify_uses_the_telegram_target_of_now_not_a_stale_snapshot(self):
+        sent = []
+        orig = notify._call
+        notify._call = lambda token, method, params: sent.append((token, params.get('chat_id'))) or {'ok': True}
+        try:
+            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='111')
+            stale = db.settings()
+            db.set_settings(tg_token='', tg_chat='')            # owner switched alerts off meanwhile
+            self.assertFalse(notify.send('backup', s=stale))
+            db.set_settings(tg_token='1234567:' + 'a' * 35, tg_chat='222')   # ... or moved them to another chat
+            notify.send('backup', s=stale)
+            self.assertEqual(sent, [('1234567:' + 'a' * 35, '222')])
+        finally:
+            notify._call = orig
+
+    def test_telegram_binding_requires_matching_private_chat(self):
+        orig = notify._call
+        challenge = 'a' * 32
+        notify._call = lambda token, method, params: {'ok': True, 'result': [
+            {'message': {'text': '/bind ' + challenge,
+                         'chat': {'id': 5, 'type': 'private', 'username': 'owner'},
+                         'from': {'id': 5, 'is_bot': False}}},
+            {'message': {'text': '/bind ' + challenge,
+                         'chat': {'id': -9, 'type': 'group', 'title': 'friends'},
+                         'from': {'id': 6, 'is_bot': False}}}]}
+        try:
+            self.assertEqual(notify.find_chat('t', challenge), ('5', 'owner'))
+        finally:
+            notify._call = orig
+
+    def test_failed_apply_is_retried(self):
+        timers = []
+        orig_apply, orig_timer = cores.apply, web.threading.Timer
+
+        class FakeTimer:
+            def __init__(self, delay, fn, kwargs=None):
+                timers.append(delay)
+                self.daemon = True
+
+            def start(self):
+                pass
+        cores.apply = lambda force=False: (_ for _ in ()).throw(RuntimeError('systemctl failed'))
+        web.threading.Timer = FakeTimer
+        web._apply_retry[0] = 0
+        try:
+            web.apply_async()
+            for _ in range(100):
+                if timers:
+                    break
+                time.sleep(0.02)
+        finally:
+            cores.apply, web.threading.Timer = orig_apply, orig_timer
+            web._apply_retry[0] = 0
+        self.assertEqual(timers, [60])
 
 
 class Web(Base):
