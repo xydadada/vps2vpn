@@ -625,9 +625,9 @@ class Servers(tu.Base):
     def test_main_side_counts_and_subscribes(self):
         u = mk('ann', 10)
         info = cluster.public_info(dict(db.settings(), public_host='198.51.100.5', node_name='tokyo'))
-        answers = [{'info': info, 'idmap': {str(u['id']): 42}, 'traffic': {str(u['id']): [0, 0]}},
-                   {'info': info, 'idmap': {str(u['id']): 42}, 'traffic': {str(u['id']): [100, 1000]}},
-                   {'info': info, 'idmap': {str(u['id']): 42}, 'traffic': {str(u['id']): [50, 60]}}]   # node lost counts
+        answers = [{'ok': True, 'info': info, 'idmap': {str(u['id']): 42}, 'traffic': {str(u['id']): [0, 0]}},
+                   {'ok': True, 'info': info, 'idmap': {str(u['id']): 42}, 'traffic': {str(u['id']): [100, 1000]}},
+                   {'ok': True, 'info': info, 'idmap': {str(u['id']): 42}, 'traffic': {str(u['id']): [50, 60]}}]   # node lost counts
         orig = cluster._request
         cluster._request = lambda server, body, timeout=15: (answers.pop(0), 'ab' * 32)
         try:
@@ -660,6 +660,8 @@ class Servers(tu.Base):
                 'idmap': {'7': 12}, 'seen': {'7': [100, 200]}, 'fail_count': 0}
         for response in ({'error': 'another master', 'conflict': True},
                          {'ok': False, 'info': {}, 'idmap': {}, 'traffic': {}},
+                         {'info': {}, 'idmap': {}, 'traffic': {}},
+                         {'ok': None, 'info': {}, 'idmap': {}, 'traffic': {}},
                          {'info': [], 'idmap': {}, 'traffic': {}},
                          {'info': {}, 'idmap': [], 'traffic': {}},
                          {'info': {}, 'idmap': {}, 'traffic': []},
@@ -672,6 +674,18 @@ class Servers(tu.Base):
             self.assertEqual(node['idmap'], {'7': 12})
             self.assertEqual(node['seen'], {'7': [100, 200]})
             self.assertEqual(node['pin'], 'ab' * 32)
+
+    def test_http_200_missing_success_marker_is_a_sync_error(self):
+        conn = mock.Mock()
+        conn.sock.getpeercert.return_value = b'fixture cert'
+        conn.getresponse.return_value.status = 200
+        conn.getresponse.return_value.read.return_value = (
+            b'{"info":{},"idmap":{},"traffic":{}}')
+        with mock.patch.object(cluster.http.client, 'HTTPSConnection', return_value=conn):
+            with self.assertRaisesRegex(cluster.SyncError, 'refused'):
+                cluster._request({'url': 'https://node.example/adm', 'key': 'token'},
+                                 {'users': []})
+            conn.close.assert_called()
 
     def test_sync_dns_rebinding_rejected_before_tcp_connection(self):
         answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443)),
