@@ -355,9 +355,16 @@ def update_user(uid, **kv):
 
 
 def rotate_user(uid):
-    """New credentials and link, e.g. after a link leaked."""
-    x('UPDATE users SET uuid=?, hy2_pass=?, sub_token=? WHERE id=?',
-      (secure.new_uuid(), secure.token(18), secure.token(18), uid))
+    """Rotate account secrets and revoke all old member sessions atomically.
+
+    A stolen subscription token grants access to the link-based member area,
+    including password setup and login. Rotating only the URL/proxy keys
+    must not leave an already-issued member cookie usable for eight hours.
+    """
+    with transaction() as c:
+        c.execute('UPDATE users SET uuid=?, hy2_pass=?, sub_token=? WHERE id=?',
+                  (secure.new_uuid(), secure.token(18), secure.token(18), uid))
+        c.execute('DELETE FROM member_sessions WHERE user_id=?', (uid,))
 
 
 def delete_user(uid):
