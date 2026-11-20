@@ -362,6 +362,8 @@ class WebAudit(tu.Base):
         self.httpd.shutdown()
         self.httpd.server_close()
         self.worker.join(timeout=5)
+        with web._fails_lock:
+            web._fails.clear()
 
     def test_admin_base_without_slash_redirects_for_relative_assets(self):
         status, body, response = self.req('GET', '/adm')
@@ -405,6 +407,137 @@ class WebAudit(tu.Base):
         for endpoint in ('restart', 'rules-refresh', 'password', 'logout'):
             status, body, _ = self.req('GET', '/adm/api/' + endpoint)
             self.assertEqual(status, 405, (endpoint, body))
+
+
+    def _auth_request(self, path, data, connection=None):
+        conn = connection or http.client.HTTPConnection('127.0.0.1', self.port, timeout=15)
+        try:
+            conn.request('POST', path, json.dumps(data),
+                         {'Content-Type': 'application/json', 'X-V2V': '1'})
+            response = conn.getresponse()
+            return response.status, response.read()
+        finally:
+            if connection is None:
+                conn.close()
+
+    def test_member_success_preserves_other_identity_failures(self):
+        db.add_user('member', login_hash=secure.hash_password('member-password'))
+        db.add_user('victim', login_hash=secure.hash_password('victim-password'))
+        targets = (('/adm/api/login', {'username': 'admin', 'password': 'wrong'}),
+                   ('/mem/api/login', {'name': 'victim', 'password': 'wrong'}))
+        with mock.patch.object(web, '_auth_clock', return_value=1000):
+            for path, credentials in targets:
+                with self.subTest(path=path):
+                    with web._fails_lock:
+                        web._fails.clear()
+                    for _ in range(7):
+                        status, body = self._auth_request(path, credentials)
+                        self.assertEqual(status, 403, body)
+                    status, body = self._auth_request(
+                        '/mem/api/login', {'name': 'member', 'password': 'member-password'})
+                    self.assertEqual(status, 200, body)
+                    status, body = self._auth_request(path, credentials)
+                    self.assertEqual(status, 403, body)
+                    status, body = self._auth_request(path, credentials)
+                    self.assertEqual(status, 429, body)
+
+    def test_parallel_success_preserves_same_tick_failed_reservations(self):
+        db.add_user('member', login_hash=secure.hash_password('member-password'))
+        wrong = {'username': 'admin', 'password': 'wrong'}
+        entered, release = threading.Event(), threading.Event()
+        real_check = secure.check_password
+
+        def check(password, encoded):
+            if password == 'member-password':
+                entered.set()
+                if not release.wait(10):
+                    raise AssertionError('successful login was not released')
+            return real_check(password, encoded)
+
+        with mock.patch.object(web, '_auth_clock', return_value=1000):
+            status, body = self._auth_request('/adm/api/login', wrong)
+            self.assertEqual(status, 403, body)
+            with web._fails_lock:
+                first_failure = web._fails['127.0.0.1'][0]
+            with mock.patch.object(secure, 'check_password', side_effect=check):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
+                    successful = pool.submit(self._auth_request, '/mem/api/login',
+                                             {'name': 'member', 'password': 'member-password'})
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        failed = [pool.submit(self._auth_request, '/adm/api/login', wrong)
+                                  for _ in range(6)]
+                        for request in failed:
+                            status, body = request.result(timeout=10)
+                            self.assertEqual(status, 403, body)
+                    finally:
+                        release.set()
+                    status, body = successful.result(timeout=10)
+                    self.assertEqual(status, 200, body)
+            with web._fails_lock:
+                self.assertIn(first_failure, web._fails.get('127.0.0.1', []))
+            status, body = self._auth_request('/adm/api/login', wrong)
+            self.assertEqual(status, 403, body)
+            status, body = self._auth_request('/adm/api/login', wrong)
+            self.assertEqual(status, 429, body)
+
+    def test_expired_success_does_not_clear_new_http_reservations(self):
+        db.add_user('member', login_hash=secure.hash_password('member-password'))
+        wrong = {'username': 'admin', 'password': 'wrong'}
+        entered, release = threading.Event(), threading.Event()
+        real_check = secure.check_password
+
+        def check(password, encoded):
+            if password == 'member-password':
+                entered.set()
+                if not release.wait(10):
+                    raise AssertionError('expired login was not released')
+            return real_check(password, encoded)
+
+        with mock.patch.object(web, '_auth_clock', return_value=1000) as clock, \
+                mock.patch.object(secure, 'check_password', side_effect=check):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
+                successful = pool.submit(self._auth_request, '/mem/api/login',
+                                         {'name': 'member', 'password': 'member-password'})
+                try:
+                    self.assertTrue(entered.wait(5))
+                    clock.return_value = 1601
+                    failed = [pool.submit(self._auth_request, '/adm/api/login', wrong)
+                              for _ in range(8)]
+                    for request in failed:
+                        status, body = request.result(timeout=10)
+                        self.assertEqual(status, 403, body)
+                finally:
+                    release.set()
+                status, body = successful.result(timeout=10)
+                self.assertEqual(status, 200, body)
+            status, body = self._auth_request('/adm/api/login', wrong)
+            self.assertEqual(status, 429, body)
+
+    def test_successful_keepalive_logins_do_not_spend_or_reset_failed_budget(self):
+        db.add_user('member', login_hash=secure.hash_password('member-password'))
+        wrong = {'username': 'admin', 'password': 'wrong'}
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=15)
+        try:
+            with mock.patch.object(web, '_auth_clock', return_value=1000):
+                status, body = self._auth_request('/adm/api/login', wrong, conn)
+                self.assertEqual(status, 403, body)
+                original_socket = conn.sock
+                for i in range(12):
+                    path = '/adm/api/login' if i % 2 else '/mem/api/login'
+                    credentials = ({'username': 'admin', 'password': 'password123'} if i % 2 else
+                                   {'name': 'member', 'password': 'member-password'})
+                    status, body = self._auth_request(path, credentials, conn)
+                    self.assertEqual(status, 200, body)
+                    self.assertIs(conn.sock, original_socket)
+                for _ in range(7):
+                    status, body = self._auth_request('/adm/api/login', wrong, conn)
+                    self.assertEqual(status, 403, body)
+                status, body = self._auth_request('/adm/api/login', wrong, conn)
+                self.assertEqual(status, 429, body)
+        finally:
+            conn.close()
+
 
 
 if __name__ == '__main__':

@@ -30,8 +30,9 @@ from . import (VERSION, abuse, aicheck, certs, cluster, cores, db, doctor, jobs,
                secure, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
-_fails = {}                    # ip -> admitted authentication attempts in the last ten minutes
+_fails = {}                    # ip -> [(monotonic expiry, unique authentication attempt)]
 _fails_lock = threading.Lock()
+_auth_clock = time.monotonic
 _setup_lock = threading.Lock()
 _apply_lock = threading.Lock()
 _apply_thread = None
@@ -561,26 +562,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
             tok, db.settings()['panel_path'], max_age)
 
     def rate_limited(self):
-        now = time.time()
         ip = self.client_ip()
         with _fails_lock:
+            # A handler can serve several keep-alive requests. Each admission
+            # owns a distinct reservation, even when the clock returns one tick.
+            self._auth_attempt = None
+            now = _auth_clock()
             for key, hits in list(_fails.items()):
-                if not hits or now - hits[-1] >= 600:
+                live = [entry for entry in hits if entry[0] > now]
+                if live:
+                    _fails[key] = live
+                else:
                     del _fails[key]
             if ip not in _fails and len(_fails) >= 4096:
                 return True
-            hits = [t for t in _fails.get(ip, []) if now - t < 600]
-            _fails[ip] = hits
+            hits = _fails.setdefault(ip, [])
             if len(hits) >= 8:
                 return True
-            # Reserve before the expensive password hash so parallel requests
-            # cannot all pass a check against an empty failure list.
-            hits.append(now)
+            attempt = object()
+            hits.append((now + 600, attempt))
+            self._auth_attempt = (ip, attempt)
             return False
 
     def auth_succeeded(self):
         with _fails_lock:
-            _fails.pop(self.client_ip(), None)
+            reservation = getattr(self, '_auth_attempt', None)
+            self._auth_attempt = None
+            if reservation is None:
+                return
+            ip, attempt = reservation
+            hits = _fails.get(ip)
+            if hits is None:
+                return
+            # A successful member login must not erase another identity's
+            # failures or an in-flight request. An expired attempt may already
+            # be absent from a newer list for this IP; leave that list intact.
+            remaining = [entry for entry in hits if entry[1] is not attempt]
+            if remaining:
+                _fails[ip] = remaining
+            else:
+                _fails.pop(ip, None)
 
     # --- setup wizard ----------------------------------------------------------------
     def api_setup_info(self, s):
