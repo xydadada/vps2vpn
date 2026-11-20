@@ -191,7 +191,7 @@ class Monitor(tu.Base):
 class RuleMirrorDownloads(tu.Base):
     def test_oversized_download_rejected_and_old_mirror_retained(self):
         paths.ensure_dirs()
-        old = b'MRS!previous-valid-rule-data'
+        old = rules.MRS_ZSTD_MAGIC + b'previous-valid-rule-data'
         dst = rules.local_file('private', 'clash')
         paths.write_atomic(dst, old, 0o644)
         logs = []
@@ -206,7 +206,7 @@ class RuleMirrorDownloads(tu.Base):
         self.assertTrue(any('download failed' in line for line in logs))
 
     def test_http_200_html_upstream_falls_back_to_cdn(self):
-        valid = b'MRS!controlled-rule-payload'
+        valid = rules.MRS_ZSTD_MAGIC + b'controlled-rule-payload'
         with mock.patch.object(rules, '_fetch',
                                side_effect=[b'<!DOCTYPE html><html>error</html>', valid]) as fetch:
             self.assertEqual(rules.fetch_converted('private', 'clash'), valid)
@@ -217,7 +217,7 @@ class RuleMirrorDownloads(tu.Base):
     def test_both_mirrors_error_pages_do_not_overwrite_existing_rules(self):
         paths.ensure_dirs()
         dst = rules.local_file('private', 'clash')
-        old = b'MRS!the-existing-good-rule-file'
+        old = rules.MRS_ZSTD_MAGIC + b'the-existing-good-rule-file'
         paths.write_atomic(dst, old, 0o644)
         logs = []
         with mock.patch.object(rules, 'SETS', {'private': ('geosite', 'private')}), \
@@ -232,17 +232,29 @@ class RuleMirrorDownloads(tu.Base):
     def test_binary_magic_rejects_http_200_plaintext_and_uses_fallback(self):
         bad = b'Access denied: upstream temporarily unavailable; please retry later.'
         for fmt, valid in (
-                ('clash', b'MRS!' + b'valid-test-rule-data'),
+                ('clash', rules.MRS_ZSTD_MAGIC + b'valid-test-rule-data'),
                 ('singbox', b'SRS\x01' + b'valid-test-rule-data')):
             with self.subTest(fmt=fmt):
                 with mock.patch.object(rules, '_fetch', side_effect=[bad, valid]) as fetch:
                     self.assertEqual(rules.fetch_converted('private', fmt), valid)
                     self.assertEqual(fetch.call_count, 2)
 
+    def test_mrs_magic_is_inside_a_zstandard_frame_not_at_file_start(self):
+        # Mihomo's ConvertToMrs writes MRS! through zstd.NewWriter;
+        # real .mrs files have Zstandard frame magic on disk.
+        frame = rules.MRS_ZSTD_MAGIC + b'controlled-compressed-frame'
+        with mock.patch.object(rules, '_fetch', return_value=frame) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'clash'), frame)
+            self.assertEqual(fetch.call_count, 1)
+        # Bare MRS! is uncompressed, so this does not prove a usable file.
+        with mock.patch.object(rules, '_fetch', side_effect=[b'MRS!not-a-zstd-frame', frame]) as fetch:
+            self.assertEqual(rules.fetch_converted('private', 'clash'), frame)
+            self.assertEqual(fetch.call_count, 2)
+
     def test_invalid_binary_magic_never_overwrites_both_existing_mirrors(self):
         paths.ensure_dirs()
         originals = {
-            'clash': b'MRS!' + b'existing-clash-mirror-data',
+            'clash': rules.MRS_ZSTD_MAGIC + b'existing-clash-mirror-data',
             'singbox': b'SRS\x01' + b'existing-singbox-mirror-data',
         }
         for fmt, old in originals.items():
