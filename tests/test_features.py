@@ -3,15 +3,19 @@ per-user history, server monthly traffic, site monitor, abuse watch, Shadowrocke
 
     python -m unittest tests.test_unit tests.test_features
 """
+import hashlib
 import http.client
 import io
 import json
 import os
+import socket
 import sqlite3
 import ssl
 import threading
 import time
 import unittest
+import unittest.mock
+from unittest import mock
 from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
@@ -25,6 +29,63 @@ def mk(name, quota=0, **kv):
     if kv:
         db.update_user(uid, **kv)
     return db.user(uid)
+
+
+class CachedTelemetry(tu.Base):
+    def test_ai_cache_rejects_malformed_status_and_metadata(self):
+        from vps2vpn import aicheck
+        paths.ensure_dirs()
+        valid = {
+            'at': 123, 'country': 'US', 'ip': {},
+            'sites': {key: {'status': 'ok'} for key in aicheck.SITES},
+        }
+        bad_cases = [
+            dict(valid, sites={**valid['sites'], 'claude': {'status': []}}),
+            dict(valid, sites={**valid['sites'], 'claude_api': {'status': {}}}),
+            dict(valid, sites={**valid['sites'], 'gemini': {'status': 'unexpected'}}),
+            dict(valid, sites={**valid['sites'], 'chatgpt': {}}),
+            dict(valid, ip=['not-an-object']),
+            dict(valid, ip={'city': ['Austin']}),
+            dict(valid, ip={'country': ['US']}),
+            dict(valid, ip={'city': {'name': 'Austin'}}),
+            dict(valid, country=['US']),
+        ]
+        for bad in bad_cases:
+            paths.write_atomic(aicheck.FILE, json.dumps(bad))
+            self.assertIsNone(aicheck.latest(), bad)
+        paths.write_atomic(aicheck.FILE, json.dumps(valid))
+        self.assertEqual(aicheck.latest(), valid)
+        self.assertIn('Claude', aicheck.summary(aicheck.latest()))
+        # An absent/null city from ipinfo is allowed; valid location text is
+        # safe to look up and display after the cache validation.
+        with_city = dict(valid, ip={'city': 'Tokyo', 'country': 'JP'})
+        paths.write_atomic(aicheck.FILE, json.dumps(with_city))
+        self.assertEqual(aicheck.place_name(aicheck.latest()), '东京')
+        with_null = dict(valid, ip={'city': None, 'country': None})
+        paths.write_atomic(aicheck.FILE, json.dumps(with_null))
+        self.assertEqual(aicheck.place_name(aicheck.latest()), '美国')
+
+    def test_monitor_recovers_from_non_array_and_skips_corrupt_rows(self):
+        paths.ensure_dirs()
+        good = {'at': 123, 'v6': False,
+                'sites': {'github/4': {'ok': True, 'total': 12.5}},
+                'speed': {'ok': True, 'at': 123, 'mbps': 32.0}}
+        broken = [
+            42, None, {'at': 123}, {'at': 123, 'sites': []},
+            {'at': 123, 'sites': {'github/4': {'ok': []}}},
+            {'at': 123, 'sites': {'github/4': {'ok': True, 'total': 'slow'}}},
+            {'at': 123, 'sites': {}, 'speed': ['bad']},
+            {'at': 123, 'sites': {}, 'speed': {'at': 'yesterday'}},
+        ]
+        for document, expected in (({'sites': []}, []), (broken, []),
+                                   (broken + [good], [good])):
+            paths.write_atomic(monitor.FILE, json.dumps(document))
+            monitor._hist = None
+            self.assertEqual(monitor.history(), expected)
+            report = monitor.summary()
+            self.assertEqual(report['latest']['at'] if expected else None,
+                             123 if expected else None)
+        self.assertEqual(monitor.summary()['sites'][0]['v4']['median_ms'], 12.5)
 
 
 class TrustAndRouting(tu.Base):
@@ -211,6 +272,45 @@ class Abuse(tu.Base):
         self.assertEqual(abuse.split_addr('[2001:db8::1]:443'), ('2001:db8::1', 443))
         self.assertIsNone(abuse.split_addr('nonsense'))
 
+    def test_invalid_stream_addresses_are_not_ports(self):
+        for value in ('host:' + '9' * 5000, 'host:４４３', 'host:0',
+                      'host:65536', '[::1]:' + '1' * 10000, 'host:+80'):
+            self.assertIsNone(abuse.split_addr(value))
+        self.assertEqual(abuse.split_addr('host:65535'), ('host', 65535))
+
+    def test_malformed_hysteria_stream_does_not_discard_valid_records(self):
+        s = dict(db.settings(), hy2_enabled=True, tuic_enabled=False, reality_enabled=False)
+        records = [
+            None, {'auth': 42, 'req_addr': 'wrong.example:443'},
+            {'auth': 'u' + '9' * 5000, 'req_addr': 'wrong.example:443'},
+            {'auth': 'u2', 'req_addr': 'wrong.example:' + '8' * 5000},
+            {'auth': 'u7', 'req_addr': 'valid.example:443'},
+        ]
+        with unittest.mock.patch.object(abuse, '_hy2_streams', return_value=records), \
+             unittest.mock.patch.object(abuse.cores, 'online_detail', return_value={}):
+            report = abuse.scan(s)
+        self.assertEqual(report[7]['streams'], 1)
+        self.assertEqual(report[7]['targets'], 1)
+        self.assertEqual(abuse.latest()['coverage'], ['hy2'])
+
+    def test_malformed_tuic_connection_does_not_discard_valid_records(self):
+        s = dict(db.settings(), hy2_enabled=False, tuic_enabled=True, reality_enabled=False)
+        records = [
+            None, {'metadata': {'destinationPort': '443'}, 'chains': [5]},
+            {'metadata': {'destinationPort': '４４３'}, 'chains': ['u7']},
+            {'metadata': {'destinationPort': '443'}, 'chains': ['u' + '9' * 5000]},
+            {'metadata': {'destinationPort': '443', 'host': ['bad.example']}, 'chains': ['u7']},
+            {'metadata': {'destinationPort': '443', 'destinationIP': {'bad': 'value'}}, 'chains': ['u7']},
+            {'metadata': {'destinationPort': 443, 'host': 'valid.example'}, 'chains': ['u7']},
+        ]
+        with unittest.mock.patch.object(abuse.cores.TuicMeter, 'poll', return_value={'connections': records}), \
+             unittest.mock.patch.object(abuse.cores, 'online_detail', return_value={}):
+            report = abuse.scan(s)
+        self.assertEqual(report[7]['streams'], 1)
+        self.assertEqual(report[7]['targets'], 1)
+        self.assertEqual(abuse.latest()['coverage'], ['tuic'])
+
+
 
 class Monitor(tu.Base):
     def test_summary(self):
@@ -267,6 +367,108 @@ class RuleMirrorDownloads(tu.Base):
         with open(dst, 'rb') as f:
             self.assertEqual(f.read(), old)
         self.assertTrue(any('download failed' in line for line in logs))
+
+
+
+
+
+class MonitorSpeed(unittest.TestCase):
+    def measure(self, packet):
+        class FakeSocket:
+            def __init__(self, response):
+                self.response = response
+                self.request = None
+
+            def sendall(self, request):
+                self.request = request
+
+            def makefile(self, mode):
+                return io.BytesIO(self.response)
+
+            def close(self):
+                pass
+
+        class FakeTLS:
+            def wrap_socket(self, conn, server_hostname):
+                return conn
+
+        sock = FakeSocket(packet)
+        with mock.patch.object(monitor.socket, 'create_connection', return_value=sock), \
+             mock.patch.object(monitor.ssl, 'create_default_context', return_value=FakeTLS()), \
+             mock.patch.object(monitor, 'SPEED_BYTES', 32):
+            result = monitor.speed(timeout=1)
+        return result, sock.request
+
+    def test_successful_response_counts_only_exact_entity_body(self):
+        body = b'a' * 32
+        packet = b'HTTP/1.1 200 OK\r\nContent-Length: 32\r\nX-Extra: headers-not-payload\r\n\r\n' + body
+        result, request = self.measure(packet)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['bytes'], len(body))
+        self.assertIn(b'GET /__down?bytes=32 HTTP/1.1', request)
+        self.assertIn(b'Accept-Encoding: identity', request)
+
+    def test_successful_chunked_response_counts_only_entity_body(self):
+        packet = (b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+                  + b'20\r\n' + b'a' * 32 + b'\r\n0\r\n\r\n')
+        result, _ = self.measure(packet)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['bytes'], 32)
+
+    def test_http_errors_bad_lengths_and_partial_responses_fail(self):
+        for label, packet in (
+            ('not found', b'HTTP/1.1 404 Not Found\r\nContent-Length: 32\r\n\r\n' + b'X' * 32),
+            ('wrong length', b'HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n' + b'a' * 64),
+            ('short body', b'HTTP/1.1 200 OK\r\nContent-Length: 32\r\n\r\n' + b'a' * 12),
+            ('compressed', b'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 32\r\n\r\n' + b'a' * 32),
+            ('extra chunk', b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+             + b'21\r\n' + b'a' * 33 + b'\r\n0\r\n\r\n'),
+        ):
+            with self.subTest(case=label):
+                result, _ = self.measure(packet)
+                self.assertFalse(result['ok'])
+                self.assertIn('error', result)
+
+
+
+
+class RuleFileColdCache(tu.Base):
+    """Cold Shadowrocket requests must not turn invalid upstream data into a permanent cache."""
+
+    def test_empty_converted_rules_do_not_get_cached(self):
+        paths.ensure_dirs()
+        filename = rules.local_file('private', 'shadowrocket')
+        sent = []
+        handler = type('HandlerStub', (), {
+            'send': lambda _, *args, **kwargs: sent.append((args, kwargs)),
+            'not_found': lambda _: self.fail('known rule set refused'),
+        })()
+        with mock.patch.object(rules, 'fetch_converted', side_effect=[
+                b'\n', b'DOMAIN-SUFFIX,example.org\n']) as download:
+            web.Handler.rule_file(handler, 'private', 'list')
+            self.assertEqual(sent[-1][0][0], 503)
+            self.assertFalse(os.path.exists(filename))
+            web.Handler.rule_file(handler, 'private', 'list')
+            self.assertEqual(sent[-1][0][:2], (200, b'DOMAIN-SUFFIX,example.org\n'))
+            self.assertTrue(os.path.exists(filename))
+            web.Handler.rule_file(handler, 'private', 'list')
+            self.assertEqual(download.call_count, 2)
+            self.assertEqual(sent[-1][0][0], 200)
+
+    def test_malformed_converted_rule_lines_never_overwrite_cold_cache(self):
+        paths.ensure_dirs()
+        filename = rules.local_file('private', 'shadowrocket')
+        sent = []
+        handler = type('HandlerStub', (), {
+            'send': lambda _, *args, **kwargs: sent.append(args),
+            'not_found': lambda _: self.fail('known rule set refused'),
+        })()
+        samples = (b'<html>temporary error</html>', b'DOMAIN-SUFFIX,example.org\ninvalid', b'DOMAIN,')
+        with mock.patch.object(rules, 'fetch_converted', side_effect=samples):
+            for _ in samples:
+                web.Handler.rule_file(handler, 'private', 'list')
+                self.assertEqual(sent[-1][0], 503)
+                self.assertFalse(os.path.exists(filename))
 
 
 class CoreOnlineTelemetry(tu.Base):
@@ -517,6 +719,69 @@ class Servers(tu.Base):
         # paused user: no entries anywhere
         self.assertEqual(subscription.nodes(dict(db.settings(), reality_enabled=False, hy2_enabled=False,
                                                  tuic_enabled=False, servers=[]), db.user(u['id'])), [])
+
+    def test_sync_rejects_malformed_http_200_without_losing_previous_state(self):
+        node = {'id': 'abc12345', 'name': 'Tokyo', 'url': 'https://node.example/adm',
+                'key': 'secret', 'pin': 'ab' * 32, 'info': {'node_name': 'Tokyo'},
+                'idmap': {'7': 12}, 'seen': {'7': [100, 200]}, 'fail_count': 0}
+        for response in ({'error': 'another master', 'conflict': True},
+                         {'ok': False, 'info': {}, 'idmap': {}, 'traffic': {}},
+                         {'info': [], 'idmap': {}, 'traffic': {}},
+                         {'info': {}, 'idmap': [], 'traffic': {}},
+                         {'info': {}, 'idmap': {}, 'traffic': []},
+                         ['not a mapping']):
+            node['fail_count'] = 0
+            with mock.patch.object(cluster, '_request', return_value=(response, 'cd' * 32)):
+                self.assertFalse(cluster.sync_one(node))
+            self.assertEqual(node['fail_count'], 1)
+            self.assertEqual(node['info'], {'node_name': 'Tokyo'})
+            self.assertEqual(node['idmap'], {'7': 12})
+            self.assertEqual(node['seen'], {'7': [100, 200]})
+            self.assertEqual(node['pin'], 'ab' * 32)
+
+    def test_sync_dns_rebinding_rejected_before_tcp_connection(self):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443)),
+                   (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 443))]
+        with mock.patch.object(paths, 'LIVE', True):
+            with mock.patch.object(cluster.socket, 'getaddrinfo', return_value=answers):
+                with mock.patch.object(cluster.http.client, 'HTTPSConnection') as factory:
+                    with self.assertRaisesRegex(cluster.SyncError, 'non-public'):
+                        cluster._request({'url': 'https://node.example/adm', 'key': 'token'},
+                                         {'users': []})
+                    factory.assert_not_called()
+
+    def test_sync_keeps_tls_hostname_but_only_dials_vetted_ip(self):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443))]
+        conn = mock.Mock()
+        conn.sock.getpeercert.return_value = b'fixture cert'
+        conn.getresponse.return_value.status = 200
+        conn.getresponse.return_value.read.return_value = (
+            b'{"ok":true,"info":{},"idmap":{},"traffic":{}}')
+        marker = object()
+        with mock.patch.object(paths, 'LIVE', True):
+            with mock.patch.object(cluster.socket, 'getaddrinfo', return_value=answers):
+                with mock.patch.object(cluster.http.client, 'HTTPSConnection', return_value=conn) as maker:
+                    with mock.patch.object(cluster.socket, 'create_connection', return_value=marker) as dial:
+                        value, pin = cluster._request(
+                            {'url': 'https://node.example/adm', 'key': 'token'}, {'users': []})
+                        self.assertTrue(value['ok'])
+                        self.assertEqual(pin, hashlib.sha256(b'fixture cert').hexdigest())
+                        self.assertIs(conn._create_connection(('node.example', 443), 4), marker)
+                        dial.assert_called_once_with(('8.8.8.8', 443), 4, None)
+                        self.assertEqual(maker.call_args[0][:2], ('node.example', 443))
+
+    def test_http_200_conflict_is_a_sync_error(self):
+        conn = mock.Mock()
+        conn.sock.getpeercert.return_value = b'fixture cert'
+        conn.getresponse.return_value.status = 200
+        conn.getresponse.return_value.read.return_value = (
+            b'{"error":"wrong master","conflict":true}')
+        with mock.patch.object(cluster.http.client, 'HTTPSConnection', return_value=conn):
+            with self.assertRaisesRegex(cluster.SyncError, 'wrong master'):
+                cluster._request({'url': 'https://node.example/adm', 'key': 'token'},
+                                 {'users': []})
+            conn.close.assert_called()
+
 
     def test_join_code(self):
         db.set_settings(panel_path='pp', node_name='Osaka')
@@ -769,7 +1034,7 @@ class AuditFollowUps(tu.Base):
         def fake_request(srv, payload, timeout=15):
             with cluster.restoring():            # a restore lands while the round waits for the node
                 pass
-            return {'idmap': {str(uid): 1}, 'traffic': {str(uid): [500, 500]}}, ''
+            return {'ok': True, 'info': {}, 'idmap': {str(uid): 1}, 'traffic': {str(uid): [500, 500]}}, ''
         with mock.patch.object(cluster, '_request', fake_request):
             cluster.sync_all(log=lambda m: None)
         self.assertEqual(db.user(uid)['used_up'], 0)

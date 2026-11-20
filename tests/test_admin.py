@@ -112,7 +112,7 @@ class TelegramCommands(tu.Base):
         db.set_settings(tg_token='1:x', tg_chat='42', setup_done=True)
         calls, sent = [], []
         stop = threading.Event()
-        batches = [{'result': [{'update_id': 1, 'message': {'chat': {'id': 42}, 'text': '/old'}}]},   # before start
+        batches = [{'result': [{'update_id': 1, 'message': {'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42}, 'text': '/old'}}]},   # before start
                    {'result': [{'update_id': 2, 'message': {'chat': {'id': 7}, 'text': '/status'}},  # stranger
                                {'update_id': 3, 'message': {'chat': {'id': 42, 'type': 'group'}, 'from': {'id': 9},
                                                             'text': '/backup'}},       # a group that took the id
@@ -137,6 +137,95 @@ class TelegramCommands(tu.Base):
         self.assertEqual([p['text'] for p in sent], ['reply to /help'])
         self.assertEqual(sent[0]['chat_id'], '42')
         self.assertEqual(calls[1][1]['offset'], 2)                       # old update acknowledged, not answered
+
+    def test_disabled_or_rebound_during_poll_must_drop_stale_commands(self):
+        changes = (
+            {'tg_token': '', 'tg_chat': ''},
+            {'tg_token': '2:y'},
+            {'tg_chat': '99'},
+            {'tg_bot': False},
+        )
+        for changed in changes:
+            with self.subTest(changed=changed):
+                db.set_settings(tg_token='1:x', tg_chat='42', tg_bot=True, setup_done=True)
+                handled, sent = [], []
+                stop = threading.Event()
+                poll_count = [0]
+
+                def fake_call(token, method, params=None, timeout=10):
+                    if method == 'getUpdates':
+                        poll_count[0] += 1
+                        if poll_count[0] == 1:
+                            return {'ok': True, 'result': []}  # initial backlog drained
+                        db.set_settings(**changed)  # admin acts during the long-poll
+                        stop.set()
+                        return {'ok': True, 'result': [
+                            {'update_id': 2, 'message': {'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42}, 'text': '/status'}}]}
+                    sent.append((token, params))
+                    return {'ok': True}
+
+                def handle(command):
+                    handled.append(command)
+                    return 'private data'
+                orig = notify._call
+                notify._call = fake_call
+                try:
+                    notify.bot_loop(stop, handle, lambda line: None)
+                finally:
+                    notify._call = orig
+                self.assertEqual(poll_count[0], 2)
+                self.assertEqual(handled, [])
+                self.assertEqual(sent, [])
+
+    def test_disabling_during_handler_cancels_reply_and_later_commands(self):
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_bot=True, setup_done=True)
+        handled, sent = [], []
+        stop = threading.Event()
+        polls = [0]
+
+        def fake_call(token, method, params=None, timeout=10):
+            if method == 'getUpdates':
+                polls[0] += 1
+                if polls[0] == 1:
+                    return {'ok': True, 'result': []}
+                stop.set()
+                return {'ok': True, 'result': [
+                    {'update_id': 2, 'message': {'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42}, 'text': '/status'}},
+                    {'update_id': 3, 'message': {'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42}, 'text': '/backup'}}]}
+            sent.append(params)
+            return {'ok': True}
+
+        def handle(command):
+            handled.append(command)
+            db.set_settings(tg_token='', tg_chat='')  # revocation while handle() is working
+            return 'must not be sent'
+        orig = notify._call
+        notify._call = fake_call
+        try:
+            notify.bot_loop(stop, handle, lambda line: None)
+        finally:
+            notify._call = orig
+        self.assertEqual(handled, ['/status'])
+        self.assertEqual(sent, [])
+
+    def test_long_reply_stops_between_chunks_after_revocation(self):
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_bot=True, setup_done=True)
+        snapshot = db.settings()
+        sent = []
+        orig = notify._call
+
+        def fake_call(token, method, params=None, timeout=10):
+            sent.append((token, params['chat_id'], params['text']))
+            db.set_settings(tg_token='', tg_chat='')
+            return {'ok': True}
+        notify._call = fake_call
+        try:
+            notify.reply(snapshot, '42', 'x' * (notify.MAX_TEXT + 10))
+        finally:
+            notify._call = orig
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][1], '42')
+        self.assertEqual(len(sent[0][2]), notify.MAX_TEXT)
 
 
 class History(tu.Base):
