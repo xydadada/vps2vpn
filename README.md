@@ -54,6 +54,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/xydadada/vps2vpn/main/instal
 
 装完屏幕上会出现一个链接，打开它，后面同上。
 
+它装的是最新的正式版（Release），下载后先核对 SHA256 校验值，对不上就拒绝安装。再次运行就是升级：升级前会先把数据库和旧版本代码存一份快照（保留最近 3 份），并打印一行回滚命令。
+
 ### 方法 3：已经下载了代码
 
 ```bash
@@ -229,6 +231,8 @@ MIT
 3. *From a checkout:* `sudo bash install.sh`
 
 Then open the link it prints, set an admin password, click **Build my VPN**, and scan the QR code with your app.
+
+The one-line installer installs the latest tagged release and checks its SHA256 before unpacking (developers: `V2V_REF=main` installs a branch, unverified). Re-running it upgrades; each upgrade first snapshots the database (SQLite online backup) and the previous code, keeps the last 3, and prints the one-line rollback command.
 
 **What you get**
 - Three protocols to switch between: Hysteria 2 (UDP, best on lossy routes), VLESS/REALITY (TCP, most robust) and TUIC v5 (UDP, a second QUIC option); clients fail over automatically.
