@@ -87,6 +87,10 @@ def parse_join_code(code):
         d = json.loads(secure.b64url_decode(code[5:]))
         url = urllib.parse.urlsplit(d['u'])
         pin = d.get('p', '')
+        # urlsplit defers invalid-port errors until the .port property is read.
+        # Reject malformed and explicit zero ports while decoding the join code.
+        if url.port == 0:
+            raise ValueError
         if url.scheme != 'https' or not url.hostname or not isinstance(d['k'], str) or not d['k']:
             raise ValueError
         if not isinstance(pin, str) or (pin and not PIN_RE.fullmatch(pin)):
@@ -271,7 +275,12 @@ def _validate_sync_answer(ans):
 def _request(server, body, timeout=15):
     """POST to the node's sync endpoint over HTTPS with the pinned certificate. Returns (answer, pin)."""
     url = urllib.parse.urlsplit(server['url'])
-    port = url.port or 443
+    try:
+        port = url.port or 443
+    except ValueError as e:
+        raise SyncError('invalid node port: %s' % e)
+    if not url.hostname:
+        raise SyncError('node URL has no host')
     # DNS can rebind after the node was added. Re-check on every live sync.
     targets = _resolve_public_node_targets(url.hostname, port) if paths.LIVE else None
     pin = (server.get('pin') or '').strip().lower()
