@@ -61,6 +61,26 @@ def send(text, key=None, every=6 * 3600, s=None):
         return False
 
 
+
+def _owner_private_message(message, chat_id):
+    """Authorize commands only from the exact bound private human chat.
+
+    A legacy group chat ID is not an administrator identity: every member
+    can post commands in that group.  Fail closed for missing sender fields.
+    """
+    if not isinstance(message, dict):
+        return False
+    chat = message.get('chat')
+    sender = message.get('from')
+    if not isinstance(chat, dict) or not isinstance(sender, dict):
+        return False
+    ident = chat.get('id')
+    return (chat.get('type') == 'private' and type(ident) is int and ident > 0
+            and str(ident) == str(chat_id)
+            and type(sender.get('id')) is int and sender['id'] == ident
+            and sender.get('is_bot') is False)
+
+
 def find_chat(token, challenge):
     """Bind only a private chat whose user sent this panel's random pairing challenge.
 
@@ -96,6 +116,13 @@ def send_file(name, data, caption='', s=None):
     """Send a document (e.g. the daily backup) to the owner's chat. Never raises."""
     s = _target(s)
     if not (s.get('tg_token') and s.get('tg_chat')):
+        return False
+    # Old installations may have saved a group/channel ID before private
+    # pairing existed. Never export credential-bearing backups to those chats.
+    try:
+        if int(s['tg_chat']) <= 0:
+            return False
+    except (TypeError, ValueError):
         return False
     if isinstance(data, str):
         data = data.encode()
@@ -159,10 +186,13 @@ def bot_loop(stop, handle, log):
             offset = upd['update_id'] + 1
             if first:
                 continue              # old messages from before the panel started: do not act on them
-            msg = upd.get('message') or {}
-            text = (msg.get('text') or '').strip()
-            if str((msg.get('chat') or {}).get('id')) != str(s['tg_chat']) or not text.startswith('/'):
+            msg = upd.get('message')
+            if not _owner_private_message(msg, s['tg_chat']):
                 continue
+            text = msg.get('text')
+            if not isinstance(text, str) or not text.strip().startswith('/'):
+                continue
+            text = text.strip()
             try:
                 out = handle(text)
             except Exception as e:      # a bad command must not stop the bot
