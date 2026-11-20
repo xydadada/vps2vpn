@@ -52,6 +52,14 @@ jobs:
         env:
           V2V_E2E_TARGET: www.amd.com
         run: python3 tests/e2e_local.py bins
+      - name: Protocol and benchmark failure diagnostics
+        if: failure()
+        run: |
+          for log in /tmp/v2v-e2e-*/benchmark.*.log /tmp/v2v-e2e-*/mihomo-*.log /tmp/v2v-e2e-*/xray.log /tmp/v2v-e2e-*/tuic.log; do
+            [ -f "$log" ] || continue
+            printf '\n== %s ==\n' "$log"
+            tail -n 40 "$log"
+          done
 
   install:
     # the real installer on a fresh Ubuntu runner, then the acceptance checks
@@ -62,5 +70,13 @@ jobs:
         run: |
           tar -czf /tmp/v.tgz --exclude=__pycache__ install.sh vps2vpn
           sudo V2V_SRC=/tmp/v.tgz bash install.sh install
+      - name: Complete initial setup before testing the active services
+        run: |
+          sudo env PYTHONPATH=/usr/local/lib/vps2vpn/app python3 -c 'from vps2vpn.__main__ import quick_setup; quick_setup()'
+          sudo vps2vpn apply --force
+          sudo vps2vpn rules
       - name: Acceptance checks
         run: sudo bash tests/vps_acceptance.sh --full
+      - name: Service failure diagnostics
+        if: failure()
+        run: sudo journalctl -u vps2vpn -u vps2vpn-xray -u vps2vpn-hysteria -u vps2vpn-tuic -n 100 --no-pager
