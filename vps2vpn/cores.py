@@ -47,6 +47,17 @@ def email(u):
     return 'u%d' % u['id']
 
 
+def _stat_uid(label):
+    """Parse a core's u<id> marker without Unicode-digit or bigint surprises."""
+    if not isinstance(label, str) or not label.startswith('u'):
+        return None
+    digits = label[1:]
+    if not digits or len(digits) > 19 or not digits.isascii() or not digits.isdecimal():
+        return None
+    uid = int(digits)
+    return uid if 0 < uid < (1 << 63) else None
+
+
 def xray_config(s, users):
     clients = [{'id': u['uuid'], 'flow': 'xtls-rprx-vision', 'email': email(u)} for u in users]
     # Private destinations are blocked by IP and by name. Sniffing is not routeOnly, so a sniffed (possibly
@@ -273,9 +284,10 @@ def collect_traffic(s=None):
                 if not isinstance(st, dict) or not isinstance(st.get('name'), str):
                     continue
                 parts = st['name'].split('>>>')        # user>>>u12>>>traffic>>>uplink
-                if len(parts) == 4 and parts[1].startswith('u') and parts[1][1:].isdigit():
+                uid = _stat_uid(parts[1]) if len(parts) == 4 else None
+                if uid is not None and parts[3] in ('uplink', 'downlink'):
                     v = _count(st.get('value', 0))
-                    add(int(parts[1][1:]), v if parts[3] == 'uplink' else 0, v if parts[3] == 'downlink' else 0)
+                    add(uid, v if parts[3] == 'uplink' else 0, v if parts[3] == 'downlink' else 0)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     if s['hy2_enabled']:
@@ -285,9 +297,10 @@ def collect_traffic(s=None):
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
             for name, t in (data.items() if isinstance(data, dict) else ()):
-                if isinstance(name, str) and name.startswith('u') and name[1:].isdigit() and isinstance(t, dict):
+                uid = _stat_uid(name)
+                if uid is not None and isinstance(t, dict):
                     # Hysteria reports tx = bytes from the client (upload), rx = bytes to the client (download)
-                    add(int(name[1:]), _count(t.get('tx', 0)), _count(t.get('rx', 0)))
+                    add(uid, _count(t.get('tx', 0)), _count(t.get('rx', 0)))
         except (OSError, ValueError):
             pass
     if s['tuic_enabled']:
@@ -330,11 +343,8 @@ class TuicMeter:
         for tag in chains:
             if not isinstance(tag, str) or not tag.startswith('u'):
                 continue
-            digits = tag[1:]
-            if not (digits and len(digits) <= 19 and digits.isascii() and digits.isdecimal()):
-                continue
-            uid = int(digits)
-            if 0 < uid < (1 << 63):
+            uid = _stat_uid(tag)
+            if uid is not None:
                 return uid
         return None
 
@@ -500,7 +510,10 @@ def _online_detail(s):
         try:
             text = _xray_api(s, 'statsgetallonlineusers')
             known = known or bool(text)
-            for uid in {int(m) for m in UID_RE.findall(text)}:
+            # Xray stats strings are not trusted numeric input: a single
+            # 5000-digit or Unicode-digit marker must not abort this snapshot.
+            ids = {_stat_uid('u' + marker) for marker in UID_RE.findall(text)}
+            for uid in ids - {None}:
                 ips = IP_RE.findall(_xray_api(s, 'statsonlineiplist', '-email', 'u%d' % uid))
                 mark(uid, 'reality', ips, max(1, len(ips)))
         except (OSError, subprocess.SubprocessError):
@@ -516,11 +529,8 @@ def _online_detail(s):
             for name, n in online_map.items():
                 if not isinstance(name, str) or not name.startswith('u'):
                     continue
-                digits = name[1:]
-                if not (digits and len(digits) <= 19 and digits.isascii() and digits.isdecimal()):
-                    continue
-                uid = int(digits)
-                if not 0 < uid < (1 << 63):
+                uid = _stat_uid(name)
+                if uid is None:
                     continue
                 # Hysteria normally reports integer counts. Keep compatible
                 # ASCII decimal strings, but reject arrays, booleans, and huge values.
