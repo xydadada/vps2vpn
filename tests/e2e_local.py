@@ -193,7 +193,7 @@ def main():
     r = subprocess.run([MIHOMO, '-t', '-d', cdir, '-f', empty_clash_file],
                        capture_output=True, text=True, timeout=120)
     check('mihomo accepts fail-closed empty subscription',
-          r.returncode == 0, last_line(r.stdout + r.stderr, 250))
+          r.returncode == 0, (r.stdout + r.stderr).strip()[-600:])
     empty_sb_file = os.path.join(ROOT, 'singbox-empty.json')
     with open(empty_sb_file, 'w', encoding='utf-8') as f:
         json.dump(subscription.singbox(empty_settings, u, base), f)

@@ -229,6 +229,7 @@ class EmptySubscription(tu.Base):
         self.assertEqual(group['proxies'], ['REJECT'])
         self.assertEqual(clash['rules'], ['MATCH,REJECT'])
         self.assertEqual(clash['rule-providers'], {})
+        self.assertFalse(clash['dns']['enable'])
 
         singbox = subscription.singbox(settings, user, base)
         self.assertEqual(singbox['route']['rules'], [{'action': 'reject'}])
