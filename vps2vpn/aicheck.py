@@ -190,7 +190,7 @@ def run():
     res = {'at': int(time.time()), 'country': cc, 'ip': ip, 'sites': {k: out[k] for k in SITES}}
     res['advice'] = advice(res)
     try:
-        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o644)
+        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o600)
     except OSError:
         pass
     return res

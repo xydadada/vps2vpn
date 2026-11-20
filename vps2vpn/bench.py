@@ -6,10 +6,12 @@ Everything goes to public test endpoints over HTTPS:
   upload    https://speed.cloudflare.com/__up
 `proxy` is an http://host:port proxy (mihomo's mixed port) or None for a direct measurement.
 """
+import http.client
 import os
 import statistics
 import threading
 import time
+import urllib.error
 import urllib.request
 
 LATENCY_URL = 'https://www.gstatic.com/generate_204'
@@ -24,7 +26,31 @@ def _opener(proxy):
     return urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def latency(proxy=None, n=10, url=LATENCY_URL, timeout=10):
+def _record_error(errors, phase, error):
+    """Keep actionable transport/status information without copying URLs, credentials or response bodies."""
+    if errors is None:
+        return
+    if isinstance(error, urllib.error.HTTPError):
+        detail = 'HTTP %d' % error.code
+        retry = error.headers.get('Retry-After', '') if error.headers else ''
+        if retry:
+            detail += '; Retry-After=' + (retry[:12] + 's' if retry.isascii() and retry.isdecimal() else 'present')
+        error.close()
+    else:
+        reason = error.reason if isinstance(error, urllib.error.URLError) else error
+        detail = type(reason).__name__ if not isinstance(reason, str) else type(error).__name__
+        errno = getattr(reason, 'errno', None)
+        if errno is not None:
+            detail += ' (errno %s)' % errno
+        ssl_reason = getattr(reason, 'reason', '')
+        if isinstance(ssl_reason, str) and ssl_reason.replace('_', '').isalnum():
+            detail += ': ' + ssl_reason[:80]
+    message = phase + ': ' + detail
+    if message not in errors:
+        errors.append(message)
+
+
+def latency(proxy=None, n=10, url=LATENCY_URL, timeout=10, errors=None):
     """Milliseconds for n fresh HTTPS requests. Returns {median, p90, min, fails}."""
     op, ms, fails = _opener(proxy), [], 0
     for _ in range(n):
@@ -33,8 +59,9 @@ def latency(proxy=None, n=10, url=LATENCY_URL, timeout=10):
             with op.open(urllib.request.Request(url, headers=UA), timeout=timeout) as r:
                 r.read()
             ms.append((time.perf_counter() - t0) * 1000)
-        except OSError:
+        except (OSError, http.client.HTTPException) as error:
             fails += 1
+            _record_error(errors, 'latency', error)
     if not ms:
         return {'median': None, 'p90': None, 'min': None, 'fails': fails}
     ms.sort()
@@ -42,7 +69,7 @@ def latency(proxy=None, n=10, url=LATENCY_URL, timeout=10):
             'min': round(ms[0]), 'fails': fails}
 
 
-def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15):
+def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, errors=None):
     """Mbit/s over `streams` parallel connections for `seconds` (after one second of warm-up).
     Cloudflare refuses single downloads near 100 MB, so each connection repeats 50 MB requests."""
     op = _opener(proxy)
@@ -62,7 +89,9 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15):
                             total[0] += len(b)
                             if 'warm' not in marks and time.perf_counter() > stop - seconds:
                                 marks['warm'] = (time.perf_counter(), total[0])
-            except OSError:
+            except (OSError, http.client.HTTPException) as error:
+                with lock:
+                    _record_error(errors, 'download %dx' % streams, error)
                 return
 
     ts = [threading.Thread(target=one, daemon=True) for _ in range(streams)]
@@ -77,7 +106,7 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15):
     return round((total[0] - b0) * 8 / max(0.001, end - t0) / 1e6, 1)
 
 
-def upload(proxy=None, size=25 << 20, timeout=30):
+def upload(proxy=None, size=25 << 20, timeout=30, errors=None):
     """Mbit/s for one upload of `size` bytes."""
     op = _opener(proxy)
     data = os.urandom(1 << 20) * (size >> 20)
@@ -86,21 +115,23 @@ def upload(proxy=None, size=25 << 20, timeout=30):
         req = urllib.request.Request(UP_URL, data=data, headers=dict(UA, **{'Content-Type': 'application/octet-stream'}))
         with op.open(req, timeout=timeout) as r:
             r.read()
-    except OSError:
+    except (OSError, http.client.HTTPException) as error:
+        _record_error(errors, 'upload', error)
         return 0.0
     return round(len(data) * 8 / (time.perf_counter() - t0) / 1e6, 1)
 
 
 def run(proxy=None, quick=False, log=print):
-    out = {}
+    errors = []
+    out = {'errors': errors}
     log('  latency…')
-    out['latency'] = latency(proxy, n=5 if quick else 10)
+    out['latency'] = latency(proxy, n=5 if quick else 10, errors=errors)
     log('  download, 1 connection…')
-    out['down_1'] = download(proxy, 1, 5 if quick else 10)
+    out['down_1'] = download(proxy, 1, 5 if quick else 10, errors=errors)
     log('  download, 4 connections…')
-    out['down_4'] = download(proxy, 4, 5 if quick else 10)
+    out['down_4'] = download(proxy, 4, 5 if quick else 10, errors=errors)
     log('  upload…')
-    out['up_1'] = upload(proxy, (8 if quick else 25) << 20)
+    out['up_1'] = upload(proxy, (8 if quick else 25) << 20, errors=errors)
     return out
 
 
@@ -123,4 +154,5 @@ def table(rows):
         lines.append('%-26s %9s %9s %8s Mb %8s Mb %6s Mb' % (
             label[:26], la['median'] if la['median'] is not None else 'fail', la['p90'] if la['p90'] is not None else '-',
             r['down_1'], r['down_4'], r['up_1']))
+        lines.extend('  ! ' + error for error in r.get('errors', []))
     return '\n'.join(lines)

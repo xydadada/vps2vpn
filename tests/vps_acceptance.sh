@@ -43,7 +43,15 @@ checks() {
   chk "BBR on" bash -c "sysctl -n net.ipv4.tcp_congestion_control | grep -qx bbr"
   chk "rmem_max >= 7 MB" bash -c "[ \$(sysctl -n net.core.rmem_max) -ge 7340032 ]"
   chk "time synchronized" bash -c "timedatectl show -p NTPSynchronized --value | grep -qx yes"
-  chk "secrets not world-readable (public certificates and rule files aside)" bash -c "[ -z \"\$(find /etc/vps2vpn /var/lib/vps2vpn -perm -o=r -type f ! -name '*.crt' ! -name '*.crt.host' ! -path '/var/lib/vps2vpn/rules/*')\" ]"
+  local exposed
+  exposed=$(find /etc/vps2vpn /var/lib/vps2vpn -perm -o=r -type f ! -name '*.crt' ! -name '*.crt.host' \
+                  ! -path '/var/lib/vps2vpn/rules/*' -printf '%m %p\n')
+  if [ -z "$exposed" ]; then
+    ok "secrets not world-readable (public certificates and rule files aside)"
+  else
+    bad "secrets not world-readable (public certificates and rule files aside)"
+    printf '  world-readable file (mode/path only): %s\n' "$exposed"
+  fi
   echo "== self-check (vps2vpn doctor)"
   if vps2vpn doctor; then ok "doctor reports no problems"; else bad "doctor found problems (see above)"; fi
   echo "== certificate"

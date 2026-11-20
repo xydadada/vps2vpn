@@ -8,6 +8,7 @@ import copy
 import http.client
 import http.server
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -19,12 +20,13 @@ import threading
 import time
 import types
 import unittest
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 from tests import test_unit as tu
 from tests.test_deploy import deploy
 from vps2vpn import __main__ as cli
-from vps2vpn import aicheck, certs, cluster, cores, db, jobs, monitor, notify, paths, system, web
+from vps2vpn import aicheck, bench, certs, cluster, cores, db, jobs, monitor, notify, paths, system, web
 
 
 def remote(uid, name='member'):
@@ -518,6 +520,33 @@ class TelegramSafety(tu.Base):
             self.assertFalse(notify.send_file('backup.json', b'secret',
                                              s={'tg_token': 'token', 'tg_chat': '-8'}))
             request.assert_not_called()
+
+
+
+class BenchmarkErrors(unittest.TestCase):
+    def test_http_failure_is_reported_once_without_secret_url(self):
+        errors = []
+        error = urllib.error.HTTPError('https://user:password@example.org/s/secret?token=private',
+                                       429, 'Too Many Requests', {'Retry-After': '60'}, io.BytesIO())
+        opener = MagicMock()
+        opener.open.side_effect = error
+        with patch.object(bench, '_opener', return_value=opener):
+            self.assertEqual(bench.download(streams=4, seconds=0.01, errors=errors), 0)
+        self.assertEqual(errors, ['download 4x: HTTP 429; Retry-After=60s'])
+        self.assertNotIn('secret', ' '.join(errors))
+        self.assertNotIn('password', ' '.join(errors))
+
+    def test_network_failure_is_not_an_unexplained_zero(self):
+        errors = []
+        opener = MagicMock()
+        opener.open.side_effect = urllib.error.URLError(ConnectionRefusedError(111, 'connection refused'))
+        with patch.object(bench, '_opener', return_value=opener):
+            result = bench.latency(n=1, errors=errors)
+        self.assertIsNone(result['median'])
+        self.assertEqual(result['fails'], 1)
+        self.assertEqual(errors, ['latency: ConnectionRefusedError (errno 111)'])
+        row = {'latency': result, 'down_1': 0, 'down_4': 0, 'up_1': 0, 'errors': errors}
+        self.assertIn(errors[0], bench.table([('test', row)]))
 
 
 class DeploySafety(unittest.TestCase):
