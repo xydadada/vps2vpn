@@ -195,27 +195,63 @@ def ai_view(res):
 
 
 CLIENT_FILE = re.compile(r'vps2vpn-v?(\d+(?:\.\d+){0,3})-([a-z0-9]+)[a-z0-9._-]*\.(exe|msi|apk|dmg|zip|AppImage|deb)')
+# Matches client lib/common/release_asset.dart's current releaseAssetName().
+# The legacy numeric-first naming above remains valid for older installers.
+CLIENT_FILE_RELEASE = re.compile(
+    r'vps2vpn-(dev|rs)-(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)-'
+    r'(windows|macos|linux|android)-(amd64|arm64|armv7|universal)'
+    r'(?:-(setup|portable))?\.(exe|msi|apk|dmg|zip|AppImage|deb)')
 
 
 def _ver(v):
-    return tuple(int(x) for x in v.split('.')) if v else ()
+    core, _, prerelease = v.partition('-')
+    numbers = tuple(int(x) for x in core.split('.'))
+    # SemVer: a normal release outranks a prerelease of the same core.
+    # Compare numeric prerelease identifiers numerically (rs.10 > rs.2).
+    pre = tuple((0, int(p)) if p.isdigit() else (1, p) for p in prerelease.split('.')) if prerelease else ()
+    return (numbers + (0,) * (4 - len(numbers)), int(not bool(prerelease)), pre)
+
+
+def _client_asset(name):
+    """(version, platform, preference) for a legacy or current client artifact."""
+    modern = CLIENT_FILE_RELEASE.fullmatch(name)
+    if modern:
+        line, version, platform, arch, form, ext = modern.groups()
+        # The member API exposes one download per OS. Prefer common builds
+        # and a Windows installer when several architectures/forms coexist.
+        ranks = {
+            'windows': ('amd64', 'arm64', 'universal', 'armv7'),
+            'android': ('arm64', 'armv7', 'amd64', 'universal'),
+            'macos': ('universal', 'arm64', 'amd64', 'armv7'),
+            'linux': ('amd64', 'arm64', 'universal', 'armv7'),
+        }
+        arch_score = 4 - ranks[platform].index(arch)
+        return version, platform, (2, arch_score, int(form == 'setup'), int(line == 'rs'), name)
+    legacy = CLIENT_FILE.fullmatch(name)
+    if legacy:
+        return legacy.group(1), legacy.group(2), (1, 0, 0, 0, name)
+    return None
 
 
 def client_files():
-    """{'version': '1.2.3', 'files': {'windows': name, 'android': name}} for the newest installers in paths.CLIENT."""
+    """Newest recognized client release and a deterministic default download for each OS."""
     try:
         names = os.listdir(paths.CLIENT)
     except OSError:
         return None
     best = {}
-    for n in names:
-        m = CLIENT_FILE.fullmatch(n)
-        if m and os.path.isfile(os.path.join(paths.CLIENT, n)):
-            best.setdefault(m.group(1), {})[m.group(2)] = n
+    for name in names:
+        asset = _client_asset(name)
+        if not asset or not os.path.isfile(os.path.join(paths.CLIENT, name)):
+            continue
+        version, platform, preference = asset
+        current = best.setdefault(version, {}).get(platform)
+        if current is None or preference > current[0]:
+            best[version][platform] = (preference, name)
     if not best:
         return None
     v = max(best, key=_ver)
-    return {'version': v, 'files': best[v]}
+    return {'version': v, 'files': {platform: entry[1] for platform, entry in best[v].items()}}
 
 
 def client_info(s, link):
@@ -1466,7 +1502,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def download(self, name):
         """Stream an app installer from paths.CLIENT (only names the update check would offer)."""
-        if not CLIENT_FILE.fullmatch(name):
+        if not _client_asset(name):
             return self.not_found()
         f = os.path.join(paths.CLIENT, name)
         if not os.path.isfile(f):
