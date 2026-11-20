@@ -3,6 +3,7 @@
 and plain share links (v2rayN, NekoBox...). Entries of joined servers (see cluster.py) are included."""
 import base64
 import json
+import re
 import time
 import urllib.parse
 
@@ -107,6 +108,43 @@ def userinfo_header(u):
     return 'upload=%d; download=%d; total=%d; expire=%d' % (u['used_up'], u['used_down'], total, u['expire_at'] or 0)
 
 
+# Why an account gets no proxies: (Chinese, English). Shown as a placeholder entry and in the Announce header.
+STATUS_TEXT = {
+    'quota': ('流量已用完', 'Quota used up'),
+    'expired': ('已到期', 'Expired'),
+    'devices': ('设备过多，暂停中', 'Paused (too many devices)'),
+}
+DISABLED_TEXT = ('已停用', 'Disabled')
+# The placeholder must never carry traffic: an unspecified address, a port nothing listens on, a dummy key,
+# and the routing of a disabled profile rejects everything anyway.
+PLACEHOLDER_HOST, PLACEHOLDER_PORT = '0.0.0.0', 1
+PLACEHOLDER_UUID = '00000000-0000-0000-0000-000000000000'
+SUPPORT_URL_RE = r'(?:https?://|tg://)[^\s<>"\x00-\x1f\x7f-\uffff]{3,300}'
+
+
+def status_text(u):
+    """(zh, en) reason for a disabled account, or None while it works."""
+    if u.get('enabled', 1):
+        return None
+    return STATUS_TEXT.get(u.get('disabled_reason') or '', DISABLED_TEXT)
+
+
+def placeholder_name(u):
+    """Name of the unusable entry a disabled account sees in its app, or '' while it works."""
+    st = status_text(u)
+    return '%s %s - 请联系管理员 Contact admin' % st if st else ''
+
+
+def header_b64(text):
+    """`base64:` header form (Profile-Title, Announce): UTF-8 text survives, the value itself is ASCII."""
+    return 'base64:' + base64.b64encode(str(text).encode('utf-8')).decode('ascii')
+
+
+def safe_header(v):
+    """A header value without CR/LF or any other control or non-ASCII character."""
+    return ''.join(c for c in str(v) if 32 <= ord(c) < 127)
+
+
 # --- share links ------------------------------------------------------------------
 def share_link(n):
     tag = urllib.parse.quote(n['name'])
@@ -135,9 +173,21 @@ def _host(h):
     return '[%s]' % h if ':' in h else h
 
 
+def placeholder_link(u):
+    name = placeholder_name(u)
+    if not name:
+        return ''
+    q = {'encryption': 'none', 'security': 'none', 'type': 'tcp'}
+    return 'vless://%s@%s:%d?%s#%s' % (PLACEHOLDER_UUID, PLACEHOLDER_HOST, PLACEHOLDER_PORT,
+                                      urllib.parse.urlencode(q), urllib.parse.quote(name))
+
+
 def links_base64(s, u):
     # TUIC links have no certificate pinning, so they are only listed with a publicly trusted certificate
-    text = '\n'.join(share_link(n) for n in nodes(s, u) if n['type'] != 'tuic' or not n.get('pin')) + '\n'
+    lines = [share_link(n) for n in nodes(s, u) if n['type'] != 'tuic' or not n.get('pin')]
+    if not lines and placeholder_link(u):
+        lines = [placeholder_link(u)]      # a disabled account: one dead entry that names the reason
+    text = '\n'.join(lines) + '\n'
     return base64.b64encode(text.encode()).decode()
 
 
@@ -213,9 +263,15 @@ def clash(s, u, base_url):
         # No proxy nodes means no outbound routing or DNS lookups. The normal
         # DNS nameserver policy refers to remote rule providers and would be
         # invalid once those providers disappear. Do not configure them at all.
+        dead = []
+        ph = placeholder_name(u)
+        if ph:
+            # Only there to show the reason in the app: it points nowhere and the only rule is REJECT.
+            dead = [{'name': ph, 'type': 'socks5', 'server': PLACEHOLDER_HOST, 'port': PLACEHOLDER_PORT}]
+            groups[0]['proxies'] = [ph] + groups[0]['proxies']
         return {'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule',
                 'log-level': 'warning', 'dns': {'enable': False},
-                'proxies': [], 'proxy-groups': groups, 'rule-providers': {},
+                'proxies': dead, 'proxy-groups': groups, 'rule-providers': {},
                 'rules': ['MATCH,REJECT']}
     cn_dns = ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query']
     ns_policy = {'rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private': cn_dns}
@@ -290,6 +346,12 @@ def singbox(s, u, base_url):
     if not tags:
         # A disabled or exhausted subscription must not silently switch from
         # proxy to direct Internet access when all usable nodes disappear.
+        dead = []
+        ph = placeholder_name(u)
+        if ph:
+            # Shows the reason in the app; never used: the only route rule rejects everything.
+            dead = [{'type': 'selector', 'tag': g['proxy'], 'outbounds': [ph], 'default': ph},
+                    {'type': 'socks', 'tag': ph, 'server': PLACEHOLDER_HOST, 'server_port': PLACEHOLDER_PORT}]
         return {
             'log': {'level': 'warn'},
             'inbounds': [
@@ -297,8 +359,8 @@ def singbox(s, u, base_url):
                  'auto_route': True, 'strict_route': True, 'stack': 'mixed'},
                 {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 7890},
             ],
-            'outbounds': [{'type': 'direct', 'tag': 'direct'}],
-            'route': {'rules': [{'action': 'reject'}], 'auto_detect_interface': True},
+            'outbounds': [{'type': 'direct', 'tag': 'direct'}] + dead,
+            'route': {'rules': [{'action': 'reject'}], 'final': 'direct', 'auto_detect_interface': True},
         }
     per = server_groups(ns)
     many = len(per) > 1
@@ -423,11 +485,16 @@ def shadowrocket(s, u, base_url, sub_url=''):
             lines.append(line)
             ok.append(n)
     pn = [_sr_name(n) for n in ok]
+    ph = _sr_label(placeholder_name(u)) if not ok else ''
+    if ph:
+        # Shows the reason in the app; points nowhere and the only rule is FINAL,REJECT.
+        lines.append('%s = socks5, %s, %d' % (ph, PLACEHOLDER_HOST, PLACEHOLDER_PORT))
     raw_per = server_groups(ok)
     per = [(_sr_label(label), [_sr_name(n) for n in ok if n['group'] == label]) for label, _ in raw_per]
     many = len(per) > 1
     test = 'url=http://www.gstatic.com/generate_204, interval=120, timeout=5'
-    groups = ['%s = select, %s' % (g['proxy'], ', '.join([g['auto']] + ([p[0] for p in per] if many else []) + pn))]
+    groups = ['%s = select, %s' % (g['proxy'], ', '.join(([ph] if ph else []) + [g['auto']] +
+                                                         ([p[0] for p in per] if many else []) + pn))]
     if many:
         groups.append('%s = url-test, %s, %s, tolerance=80' % (g['auto'], ', '.join(p[0] for p in per), test))
         groups += ['%s = fallback, %s, %s' % (label, ', '.join(m), test) for label, m in per if m]
@@ -483,7 +550,10 @@ def shadowrocket(s, u, base_url, sub_url=''):
 
 
 # --- choose a format from the client's User-Agent ---------------------------------
-def detect_format(ua, wanted=''):
+def detect_format(ua, wanted='', accept=None):
+    """'' means "show the web page". `accept` is the Accept header: when given, only a client asking for
+    text/html gets the page, and any app we do not recognise (Happ, Streisand, V2Box...) the plain share
+    links. Without it an unknown User-Agent means a browser, as before."""
     if wanted in ('clash', 'singbox', 'links', 'shadowrocket'):
         return wanted
     ua = (ua or '').lower()
@@ -493,15 +563,27 @@ def detect_format(ua, wanted=''):
         return 'clash'
     if any(k in ua for k in ('shadowrocket', 'v2ray', 'nekobox', 'nekoray', 'quantumult', 'surge', 'loon')):
         return 'links'
+    if accept is not None and 'text/html' not in accept.lower():
+        return 'links'      # an unknown app: the generic share-link list imports almost everywhere
     return ''      # a browser: show the landing page
 
 
 def render(fmt, s, u, base_url):
     """(content_type, body, extra_headers)"""
-    qname = urllib.parse.quote(s['node_name'] or 'vps2vpn', safe='')
+    title = s['node_name'] or 'vps2vpn'
+    qname = urllib.parse.quote(title, safe='')
     headers = {'Subscription-Userinfo': userinfo_header(u), 'Profile-Update-Interval': '12',
                'Content-Disposition': "attachment; filename*=UTF-8''%s" % qname,
+               'Profile-Title': header_b64(title),
+               # the person's own page (usage, requests); a browser opening the subscription link gets it
+               'Profile-Web-Page-Url': safe_header('%s/s/%s' % (base_url, u['sub_token'])),
                'Cache-Control': 'no-store'}
+    support = s.get('support_url') or ''
+    if support and re.fullmatch(SUPPORT_URL_RE, support):
+        headers['Support-Url'] = support
+    st = status_text(u)
+    if st:
+        headers['Announce'] = header_b64('%s %s - 请联系管理员 / Contact the admin' % st)
     if fmt == 'clash':
         return 'text/yaml; charset=utf-8', clash_yaml(s, u, base_url), headers
     if fmt == 'singbox':

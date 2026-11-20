@@ -78,7 +78,9 @@ MIGRATIONS = {
               ('remote_id', 'INTEGER NOT NULL DEFAULT 0'),         # set on a joined node: the main server's user id
               ('max_ips', 'INTEGER NOT NULL DEFAULT 0'),           # device limit (0 = none)
               ('paused_until', 'INTEGER NOT NULL DEFAULT 0'),      # end of a short pause for too many devices
-              ('expire_after_days', 'INTEGER NOT NULL DEFAULT 0')],  # lifetime that starts on first use
+              ('expire_after_days', 'INTEGER NOT NULL DEFAULT 0'),   # lifetime that starts on first use
+              ('sub_fetched_at', 'INTEGER NOT NULL DEFAULT 0'),      # last time an app downloaded the subscription
+              ('sub_ua', "TEXT NOT NULL DEFAULT ''")],               # ...and its User-Agent (sanitised, short)
 }
 
 # Everything the panel can be configured with, and the defaults a fresh install starts from.
@@ -142,6 +144,7 @@ DEFAULTS = {
     'member_invites': True,     # members may share part of their quota through invite codes
     'member_requests': True,    # members may ask the admin for more quota
     'member_notice': '',        # short message from the admin shown at the top of every member page
+    'support_url': '',          # http(s):// or tg:// link apps show as "support" (Support-Url header); empty = none
     # Server-wide monthly traffic (many providers bill or cap it)
     'server_cap_gb': 0,         # 0 = no cap; alerts at 80% and 100%
     'server_reset_day': 1,
@@ -352,6 +355,25 @@ def update_user(uid, **kv):
         args.append(v)
     if sets:
         x('UPDATE users SET %s WHERE id=?' % ','.join(sets), args + [uid])
+
+
+SUB_UA_MAX = 120
+SUB_FETCH_QUIET = 300           # the same app fetching again within 5 minutes is not written down again
+
+
+def clean_ua(ua):
+    """A User-Agent safe to store and show: printable ASCII only, at most SUB_UA_MAX characters."""
+    return ''.join(c for c in str(ua or '') if 32 <= ord(c) < 127).strip()[:SUB_UA_MAX]
+
+
+def record_sub_fetch(u, ua, now=None):
+    """Note that `u` (a user row) downloaded its subscription. Returns True when a row was written."""
+    now = int(now if now is not None else time.time())
+    ua = clean_ua(ua)
+    if u.get('sub_ua', '') == ua and 0 <= now - int(u.get('sub_fetched_at') or 0) < SUB_FETCH_QUIET:
+        return False
+    x('UPDATE users SET sub_fetched_at=?, sub_ua=? WHERE id=?', (now, ua, u['id']))
+    return True
 
 
 def rotate_user(uid):
@@ -580,7 +602,7 @@ def export_all():
             'requests': [dict(r) for r in q('SELECT * FROM requests')]}
 
 
-IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': ''}
+IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': '', 'sub_ua': ''}
 
 
 def import_all(data):
@@ -594,7 +616,8 @@ def import_all(data):
     keep['tg_verified'] = False
     cols = ('id', 'name', 'uuid', 'hy2_pass', 'sub_token', 'quota_gb', 'expire_at', 'reset_day', 'used_up',
             'used_down', 'enabled', 'disabled_reason', 'note', 'last_seen', 'last_reset', 'created_at',
-            'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days')
+            'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
+            'sub_fetched_at', 'sub_ua')
     table_cols = {'invites': INVITE_COLS, 'requests': REQUEST_COLS}
     with transaction() as c:
         c.execute('DELETE FROM settings')

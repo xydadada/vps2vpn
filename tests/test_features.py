@@ -3,6 +3,7 @@ per-user history, server monthly traffic, site monitor, abuse watch, Shadowrocke
 
     python -m unittest tests.test_unit tests.test_features
 """
+import base64
 import hashlib
 import http.client
 import io
@@ -14,6 +15,7 @@ import ssl
 import threading
 import time
 import unittest
+import urllib.parse
 import zlib
 import unittest.mock
 from unittest import mock
@@ -1522,3 +1524,244 @@ class FewerRestarts(tu.Base):
                 mock.patch.object(cores, 'apply') as apply:
             sched.renew_cert(db.settings())
         apply.assert_called_once_with()
+
+
+
+class SubscriptionUX(tu.Base):
+    """Browser-or-app detection, profile headers, the reason shown to disabled accounts, fetch bookkeeping."""
+
+    def test_accept_decides_between_page_and_links(self):
+        d = subscription.detect_format
+        html_accept = 'text/html,application/xhtml+xml,*/*;q=0.8'
+        self.assertEqual(d('Mozilla/5.0 Chrome/130', '', html_accept), '')
+        self.assertEqual(d('Mozilla/5.0 Chrome/130', '', 'TEXT/HTML'), '')
+        for ua in ('Happ/1.0', 'Streisand/2.1', 'V2Box/1.4', '', None, 'okhttp/4.9', 'Mozilla/5.0'):
+            self.assertEqual(d(ua, '', ''), 'links', ua)
+            self.assertEqual(d(ua, '', '*/*'), 'links', ua)
+        # recognised apps keep their format whatever they accept
+        for ua, fmt in (('clash-verge/v2.0', 'clash'), ('HiddifyNext/2.5', 'singbox'),
+                        ('Shadowrocket/2000 CFNetwork', 'links'), ('mihomo/1.18', 'clash')):
+            self.assertEqual(d(ua, '', html_accept), fmt)
+            self.assertEqual(d(ua, '', ''), fmt)
+        self.assertEqual(d('Mozilla/5.0', 'clash', html_accept), 'clash')
+        self.assertEqual(d('Mozilla/5.0 Chrome/130'), '')            # callers without Accept: unchanged
+
+    def _decode(self, v):
+        self.assertTrue(v.startswith('base64:'), v)
+        return base64.b64decode(v[len('base64:'):]).decode('utf-8')
+
+    def test_profile_headers(self):
+        db.set_settings(node_name='香港 节点', support_url='https://t.me/helpdesk')
+        u = mk('ann')
+        s = db.settings()
+        for fmt in ('clash', 'singbox', 'links', 'shadowrocket'):
+            _, _, h = subscription.render(fmt, s, u, 'https://example.org:8443')
+            self.assertEqual(self._decode(h['Profile-Title']), '香港 节点')
+            self.assertEqual(h['Profile-Web-Page-Url'], 'https://example.org:8443/s/%s' % u['sub_token'])
+            self.assertEqual(h['Support-Url'], 'https://t.me/helpdesk')
+            self.assertNotIn('Announce', h)                               # nothing to say while it works
+            for v in h.values():
+                v.encode('ascii')
+                self.assertNotIn('\r', v)
+                self.assertNotIn('\n', v)
+        db.set_settings(support_url='')
+        _, _, h = subscription.render('clash', db.settings(), u, 'https://example.org:8443')
+        self.assertNotIn('Support-Url', h)
+        # a bad value that got stored anyway (old backup, edited database) is not sent
+        _, _, h = subscription.render('clash', dict(db.settings(), support_url='https://a.b/\r\nX-Evil: 1'), u, 'https://x')
+        self.assertNotIn('Support-Url', h)
+        for reason, word in (('quota', 'Quota used up'), ('expired', 'Expired'), ('devices', 'Paused'),
+                             ('manual', 'Disabled'), ('', 'Disabled')):
+            off = dict(u, enabled=0, disabled_reason=reason)
+            _, _, h = subscription.render('links', db.settings(), off, 'https://x')
+            self.assertIn(word, self._decode(h['Announce']))
+            self.assertIn('请联系管理员', self._decode(h['Announce']))
+            h['Announce'].encode('ascii')
+
+    def test_support_url_validation(self):
+        s = db.settings()
+        for ok in ('https://t.me/help', 'http://example.org/support?x=1', 'tg://resolve?domain=helpdesk', ''):
+            self.assertEqual(web.validate_settings({'support_url': ok}, s), {'support_url': ok})
+        self.assertEqual(web.validate_settings({'support_url': '  https://t.me/help\n'}, s),
+                         {'support_url': 'https://t.me/help'})
+        for bad in ('javascript:alert(1)', 'ftp://x.org/a', 'https://a.b/\r\nSet-Cookie: x', 'https://a b.c/',
+                    'https://例子.cn/', 'tg://', 't.me/help', 'https://x.org/' + 'a' * 400):
+            self.assertIsInstance(web.validate_settings({'support_url': bad}, s), str, bad)
+
+    def _disabled(self, reason):
+        u = mk('off-' + reason, 1, enabled=0, disabled_reason=reason)
+        s = db.settings()
+        # what web.subscription() hands over for a disabled account
+        return u, dict(s, reality_enabled=False, hy2_enabled=False, tuic_enabled=False, servers=[]), s
+
+    def _no_secrets(self, text, u, s):
+        for secret in (s['public_host'], u['uuid'], u['hy2_pass'], s['reality_public_key'], s['reality_short_id']):
+            self.assertNotIn(secret, text)
+
+    def test_disabled_placeholder_per_format(self):
+        u, off, s = self._disabled('expired')
+        base = 'https://example.org:8443'
+        name = subscription.placeholder_name(u)
+        self.assertIn('已到期', name)
+        self.assertIn('Expired', name)
+        # Clash: one dead entry, selectable in the main group, all traffic still rejected
+        c = subscription.clash(off, u, base)
+        self.assertEqual([(p['name'], p['server'], p['port']) for p in c['proxies']], [(name, '0.0.0.0', 1)])
+        self.assertEqual(c['rules'], ['MATCH,REJECT'])
+        self.assertIn(name, c['proxy-groups'][0]['proxies'])
+        self._no_secrets(json.dumps(c, ensure_ascii=False), u, s)
+        # sing-box: same, and the route keeps rejecting everything
+        sb = subscription.singbox(off, u, base)
+        tags = {o['tag']: o for o in sb['outbounds']}
+        self.assertEqual((tags[name]['server'], tags[name]['server_port']), ('0.0.0.0', 1))
+        self.assertEqual(sb['route']['rules'], [{'action': 'reject'}])
+        self.assertEqual(sb['route']['final'], 'direct')
+        self.assertNotIn('dns', sb)
+        self._no_secrets(json.dumps(sb, ensure_ascii=False), u, s)
+        # Shadowrocket: a socks line to nowhere, FINAL,REJECT
+        sr = subscription.shadowrocket(off, u, base, base + '/s/' + u['sub_token'])
+        proxy = sr.split('[Proxy]\n', 1)[1].split('\n\n', 1)[0]
+        self.assertEqual(proxy, '%s = socks5, 0.0.0.0, 1' % subscription._sr_label(name))
+        self.assertIn('[Rule]\nFINAL,REJECT,dns-failed\n', sr)
+        self._no_secrets('\n'.join(l for l in sr.splitlines() if not l.startswith('update-url')), u, s)
+        # share links: one vless link to 0.0.0.0:1 with a zero key, named with the reason
+        links = base64.b64decode(subscription.links_base64(off, u)).decode().split()
+        self.assertEqual(len(links), 1)
+        self.assertTrue(links[0].startswith('vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?'))
+        self.assertEqual(urllib.parse.unquote(links[0].split('#', 1)[1]), name)
+        self._no_secrets(links[0], u, s)
+        # an account that works has no placeholder
+        ok = mk('fine')
+        self.assertEqual(subscription.placeholder_name(ok), '')
+        self.assertNotIn('0.0.0.0', json.dumps(subscription.clash(s, ok, base)))
+        for reason, word in (('quota', '流量已用完'), ('devices', '设备过多'), ('manual', '已停用')):
+            self.assertIn(word, subscription.placeholder_name(dict(u, disabled_reason=reason)))
+
+    def test_fetch_recording_and_throttle(self):
+        u = mk('fetcher')
+        self.assertEqual((u['sub_fetched_at'], u['sub_ua']), (0, ''))
+        ua = 'clash-verge/2.0\r\n\x00évil' + 'x' * 300
+        self.assertTrue(db.record_sub_fetch(u, ua, now=1000))
+        u = db.user(u['id'])
+        self.assertEqual(u['sub_fetched_at'], 1000)
+        self.assertTrue(u['sub_ua'].startswith('clash-verge/2.0vil'))
+        self.assertLessEqual(len(u['sub_ua']), db.SUB_UA_MAX)
+        self.assertTrue(all(32 <= ord(c) < 127 for c in u['sub_ua']))
+        self.assertFalse(db.record_sub_fetch(u, ua, now=1000 + db.SUB_FETCH_QUIET - 1))   # same app, soon after
+        self.assertEqual(db.user(u['id'])['sub_fetched_at'], 1000)
+        self.assertTrue(db.record_sub_fetch(u, ua, now=1000 + db.SUB_FETCH_QUIET))       # later: written again
+        u = db.user(u['id'])
+        self.assertTrue(db.record_sub_fetch(u, 'Shadowrocket/2000', now=u['sub_fetched_at'] + 5))   # another app
+        self.assertEqual(db.user(u['id'])['sub_ua'], 'Shadowrocket/2000')
+
+    def test_migration_and_backup_keep_fetch_columns(self):
+        db.close()
+        os.remove(paths.DB)
+        c = sqlite3.connect(paths.DB)          # a database from before these columns
+        try:
+            c.executescript(
+                'CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, uuid TEXT NOT NULL,'
+                'hy2_pass TEXT NOT NULL, sub_token TEXT NOT NULL UNIQUE, quota_gb REAL NOT NULL DEFAULT 0,'
+                'expire_at INTEGER NOT NULL DEFAULT 0, reset_day INTEGER NOT NULL DEFAULT 0, used_up INTEGER NOT NULL DEFAULT 0,'
+                'used_down INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, disabled_reason TEXT NOT NULL DEFAULT "",'
+                'note TEXT NOT NULL DEFAULT "", last_seen INTEGER NOT NULL DEFAULT 0, last_reset TEXT NOT NULL DEFAULT "",'
+                'created_at INTEGER NOT NULL, login_hash TEXT NOT NULL DEFAULT "", invited_by INTEGER NOT NULL DEFAULT 0,'
+                'invite_deduct REAL NOT NULL DEFAULT 0, remote_id INTEGER NOT NULL DEFAULT 0, max_ips INTEGER NOT NULL DEFAULT 0,'
+                'paused_until INTEGER NOT NULL DEFAULT 0, expire_after_days INTEGER NOT NULL DEFAULT 0);'
+                "INSERT INTO users(name, uuid, hy2_pass, sub_token, created_at) VALUES('old', 'u', 'p', 'tok', 1);")
+            c.commit()
+        finally:
+            c.close()
+        u = db.users()[0]
+        self.assertEqual((u['name'], u['sub_fetched_at'], u['sub_ua']), ('old', 0, ''))
+        db.record_sub_fetch(u, 'Happ/1.0', now=12345)
+        data = json.loads(json.dumps(db.export_all()))
+        db.import_all(data)
+        u = db.users()[0]
+        self.assertEqual((u['sub_fetched_at'], u['sub_ua']), (12345, 'Happ/1.0'))
+        # a backup made before these columns existed still imports
+        for row in data['users']:
+            row.pop('sub_fetched_at')
+            row.pop('sub_ua')
+        db.import_all(data)
+        self.assertEqual((db.users()[0]['sub_fetched_at'], db.users()[0]['sub_ua']), (0, ''))
+
+
+class SubscriptionUXWeb(tu.Base):
+    """The same over real HTTPS."""
+
+    def setUp(self):
+        super().setUp()
+        db.set_settings(public_host='127.0.0.1', setup_done=True, member_path='mem', panel_path='adm',
+                        admin_hash=secure.hash_password('adminpassword'))
+        certs.ensure_self_signed('127.0.0.1')
+        self.httpd = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
+        self.port = self.httpd.server_address[1]
+        db.set_settings(panel_port=self.port)
+        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self._thread.start()
+        self.cookie = ''
+        web._fails.clear()
+        self._apply = web.apply_async
+        web.apply_async = lambda force=False: None
+
+    tearDown = MemberWeb.tearDown
+    req = tu.Web.req
+
+    def _b64(self, v):
+        return base64.b64decode(v.split(':', 1)[1]).decode('utf-8')
+
+    def test_unknown_app_gets_links_browser_gets_page(self):
+        u = mk('web-user', 10)
+        path = '/s/%s' % u['sub_token']
+        st, body, r = self.req('GET', path, headers={'User-Agent': 'Happ/1.0'})
+        self.assertEqual(st, 200)
+        self.assertTrue(base64.b64decode(body).startswith(b'hysteria2://'))
+        self.assertEqual(self._b64(r.getheader('Profile-Title')), 'vps2vpn')
+        self.assertTrue(r.getheader('Profile-Web-Page-Url').endswith(path))
+        self.assertIsNone(r.getheader('Support-Url'))
+        self.assertIsNone(r.getheader('Announce'))
+        st, body, r = self.req('GET', path, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html,*/*'})
+        self.assertIn(('<base href="/s/%s/">' % u['sub_token']).encode(), body)
+        st, body, r = self.req('GET', path, headers={'User-Agent': 'clash-verge/2.0', 'Accept': 'text/html'})
+        self.assertIn(b'"proxies"', body)                        # a recognised app stays an app
+
+    def test_fetch_recorded_and_shown_to_admin(self):
+        u = mk('seen', 10)
+        path = '/s/%s' % u['sub_token']
+        self.req('GET', path, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html'})
+        self.assertEqual(db.user(u['id'])['sub_fetched_at'], 0)          # the web page is not a fetch
+        self.req('GET', path, headers={'User-Agent': 'V2Box/1.4'})
+        first = db.user(u['id'])
+        self.assertEqual(first['sub_ua'], 'V2Box/1.4')
+        self.assertGreater(first['sub_fetched_at'], 0)
+        with mock.patch.object(db, 'record_sub_fetch', wraps=db.record_sub_fetch) as rec:
+            st, _, _ = self.req('GET', path, headers={'User-Agent': 'V2Box/1.4'})   # throttled: nothing written
+        self.assertEqual(st, 200)
+        self.assertEqual(rec.call_count, 1)
+        self.assertEqual(db.user(u['id'])['sub_fetched_at'], first['sub_fetched_at'])
+        st, body, _ = self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
+        self.assertEqual(st, 200, body)
+        st, body, _ = self.req('GET', '/adm/api/state')
+        row = [x for x in json.loads(body)['users'] if x['id'] == u['id']][0]
+        self.assertEqual((row['sub_ua'], row['sub_fetched_at']), ('V2Box/1.4', first['sub_fetched_at']))
+        st, body, _ = self.req('POST', '/adm/api/settings', {'support_url': 'tg://resolve?domain=help'})
+        self.assertEqual(st, 200, body)
+        st, _, r = self.req('GET', path, headers={'User-Agent': 'V2Box/1.4'})
+        self.assertEqual(r.getheader('Support-Url'), 'tg://resolve?domain=help')
+        st, body, _ = self.req('POST', '/adm/api/settings', {'support_url': 'https://a.b/\r\nX: y'})
+        self.assertEqual(st, 400)
+
+    def test_disabled_user_over_https(self):
+        u = mk('gone', 1, enabled=0, disabled_reason='quota')
+        s = db.settings()
+        for fmt in ('clash', 'singbox', 'shadowrocket', 'links'):
+            st, body, r = self.req('GET', '/s/%s?format=%s' % (u['sub_token'], fmt), headers={'User-Agent': 'x'})
+            self.assertEqual(st, 200)
+            text = base64.b64decode(body).decode() if fmt == 'links' else body.decode()
+            self.assertIn('0.0.0.0', text)
+            if fmt != 'links':
+                self.assertIn('流量已用完', text)
+            for secret in (u['uuid'], u['hy2_pass'], s['reality_public_key']):
+                self.assertNotIn(secret, text)
+            self.assertIn('Quota used up', self._b64(r.getheader('Announce')))
