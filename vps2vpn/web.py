@@ -1327,7 +1327,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cluster.remove_server(sid)
         elif action == 'save':
             d = self.body_json()
-            cluster.update_server(sid, **{k: d[k] for k in ('name', 'enabled') if k in d})
+            fields = {k: d[k] for k in ('name', 'enabled') if k in d}
+            if 'enabled' in fields:
+                try:
+                    fields['enabled'] = as_bool(fields['enabled'])
+                except ValueError:
+                    return self.json({'error': 'enabled: expected true or false'}, 400)
+            cluster.update_server(sid, **fields)
         else:
             cluster.sync_all(jobs.log)
         return self.json({'ok': True, 'servers': cluster.view(db.settings())})
@@ -1658,7 +1664,10 @@ def user_fields(d):
             if not 0 <= out['reset_day'] <= 28:
                 return 'reset day must be 1-28 (0 = never)'
         if 'enabled' in d:
-            out['enabled'] = 1 if d['enabled'] else 0
+            try:
+                out['enabled'] = int(as_bool(d['enabled']))
+            except ValueError:
+                return 'enabled: expected true or false'
         if 'max_ips' in d:
             out['max_ips'] = int(d['max_ips'] or 0)
             if not 0 <= out['max_ips'] <= 100:
