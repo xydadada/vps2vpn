@@ -322,6 +322,26 @@ class Servers(tu.Base):
         self.assertEqual(subscription.nodes(dict(db.settings(), reality_enabled=False, hy2_enabled=False,
                                                  tuic_enabled=False, servers=[]), db.user(u['id'])), [])
 
+    def test_main_rejects_200_error_without_erasing_healthy_node(self):
+        # A node-master conflict can be returned as HTTP 200 with an error
+        # payload, which must not be persisted as an empty successful snapshot.
+        server = {'id': 'deadbeef', 'name': 'Tokyo', 'url': 'https://example.com/x',
+                  'key': 'secret', 'pin': 'ab' * 32, 'info': {'node_name': 'Tokyo'},
+                  'idmap': {'7': 42}, 'seen': {'7': (50, 80)}, 'fail_count': 0}
+        before = dict(server)
+        for answer in ({'error': 'bound to another master', 'conflict': True},
+                       {'info': [], 'idmap': {}, 'traffic': {}},
+                       {'info': {}, 'idmap': [], 'traffic': {}},
+                       {'info': {}, 'idmap': {}, 'traffic': []},
+                       ['not a snapshot']):
+            with mock.patch.object(cluster, '_request', return_value=(answer, 'cd' * 32)):
+                self.assertFalse(cluster.sync_one(server))
+            self.assertEqual(server['info'], before['info'])
+            self.assertEqual(server['idmap'], before['idmap'])
+            self.assertEqual(server['seen'], before['seen'])
+            self.assertEqual(server['pin'], before['pin'])
+        self.assertEqual(server['fail_count'], 5)
+
     def test_node_sync_rejects_mixed_public_and_private_dns(self):
         # A host may be safe when joined but rebinding or split-horizon DNS
         # must not redirect periodic sync traffic toward an internal address.

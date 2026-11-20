@@ -247,7 +247,7 @@ def _request(server, body, timeout=15):
                 except ValueError:
                     why = data[:120].decode('utf-8', 'replace')
                 raise SyncError('node answered %d: %s' % (r.status, why[:200]))
-            return json.loads(data), got
+            return _validate_sync_answer(json.loads(data)), got
         except ssl.SSLError as e:
             if attempt == 'public':
                 raise SyncError('certificate changed and is not publicly trusted (%s); remove and re-add the server'
@@ -259,6 +259,20 @@ def _request(server, body, timeout=15):
     raise SyncError('certificate does not match; remove and re-add the server')
 
 
+def _validate_sync_answer(ans):
+    """Reject failed or malformed 200 responses before touching quota or node state."""
+    if not isinstance(ans, dict):
+        raise SyncError('node sync response is not a JSON object')
+    if ans.get('conflict') or ans.get('error') or ans.get('ok', True) is not True:
+        raise SyncError('node sync refused: %s' % str(ans.get('error') or 'node rejected request')[:200])
+    for key in ('info', 'idmap', 'traffic'):
+        if not isinstance(ans.get(key), dict):
+            raise SyncError('node sync response has invalid %s' % key)
+    if 'health' in ans and not isinstance(ans['health'], dict):
+        raise SyncError('node sync response has invalid health')
+    return ans
+
+
 def push_users():
     return [{'id': u['id'], 'name': u['name'], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'], 'enabled': bool(u['enabled'])}
             for u in db.users() if not u['remote_id']]
@@ -266,6 +280,7 @@ def push_users():
 
 def _apply_sync_answer(server, ans, got_pin, log=print):
     """Apply a node's sync response to `server` and record traffic deltas in DB."""
+    _validate_sync_answer(ans)
     known = {u['id'] for u in db.users()}
     old_seen = server.get('seen') or {}
     seen = {}
@@ -334,10 +349,10 @@ def sync_one(server, s=None, log=print):
     try:
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
                                          'users': push_users()})
+        _apply_sync_answer(server, ans, got_pin, log)
     except SyncError as e:
         _record_sync_error(server, e)
         return False
-    _apply_sync_answer(server, ans, got_pin, log)
     return True
 
 
