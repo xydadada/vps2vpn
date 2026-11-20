@@ -120,7 +120,13 @@ def scan(s=None):
                     # One malformed connection must not discard the whole snapshot.
                     continue
                 if uid is not None:
-                    flows.append((uid, m.get('host') or m.get('destinationIP') or '', port_num))
+                    # An API response can contain non-string host metadata.
+                    # aggregate() calls .lower(), so one malformed value must
+                    # not discard every otherwise valid connection in the poll.
+                    host = m.get('host') or m.get('destinationIP') or ''
+                    if not isinstance(host, str):
+                        continue
+                    flows.append((uid, host, port_num))
             coverage.append('tuic')
         except (OSError, ValueError):
             pass
