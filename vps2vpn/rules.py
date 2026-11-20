@@ -124,23 +124,29 @@ def to_shadowrocket(data, kind):
     return ('\n'.join(out) + '\n').encode()
 
 
-def _rule_payload(url):
-    """Download a rule without accepting a CDN's HTTP-200 error document."""
+def _rule_payload(url, fmt):
+    """Download a rule without accepting HTTP-200 errors or wrong binary data."""
     data = _fetch(url)
-    # Both mirrors sometimes return a branded error page with HTTP 200. That
-    # is never a valid .mrs/.srs or a MetaCubeX text rule list. Avoid silently
-    # replacing the last working rules with an HTML/JSON error response.
+    # Both mirrors sometimes return branded error pages with HTTP 200.
     head = data[:256].lstrip().lower()
     if head.startswith((b'<!doctype', b'<html', b'<?xml', b'{"message"', b'{"error"')):
         raise OSError('rule download returned an error document')
+    # Binary rules are identified by their actual on-disk magic, not by HTTP
+    # status or a minimum size. An upstream plaintext "Access denied" with
+    # status 200 could otherwise pass the size heuristic and destroy valid
+    # .mrs/.srs rules currently used by clients.
+    if fmt == 'clash' and not data.startswith(b'MRS!'):
+        raise OSError('rule download has invalid MRS magic')
+    if fmt == 'singbox' and not data.startswith(b'SRS'):
+        raise OSError('rule download has invalid SRS magic')
     return data
 
 
 def fetch_converted(name, fmt):
     try:
-        data = _rule_payload(upstream_url(name, fmt, cdn=False))
+        data = _rule_payload(upstream_url(name, fmt, cdn=False), fmt)
     except OSError:
-        data = _rule_payload(upstream_url(name, fmt, cdn=True))
+        data = _rule_payload(upstream_url(name, fmt, cdn=True), fmt)
     return to_shadowrocket(data, SETS[name][0]) if fmt == 'shadowrocket' else data
 
 
