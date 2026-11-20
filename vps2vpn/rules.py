@@ -90,6 +90,7 @@ def used_sets(s):
 
 
 FORMATS = ('clash', 'singbox', 'shadowrocket')
+MRS_ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'  # on-disk framing; MRS! is inside compressed data
 MAX_RULE_DOWNLOAD_BYTES = 50 << 20
 
 
@@ -135,8 +136,11 @@ def _rule_payload(url, fmt):
     # status or a minimum size. An upstream plaintext "Access denied" with
     # status 200 could otherwise pass the size heuristic and destroy valid
     # .mrs/.srs rules currently used by clients.
-    if fmt == 'clash' and not data.startswith(b'MRS!'):
-        raise OSError('rule download has invalid MRS magic')
+    # Mihomo writes the MRS! header THROUGH a zstd encoder, so the on-disk
+    # .mrs begins with the standard zstd frame header, not literal MRS!.
+    # https://github.com/MetaCubeX/mihomo/blob/Meta/rules/provider/mrs_converter.go
+    if fmt == 'clash' and not data.startswith(MRS_ZSTD_MAGIC):
+        raise OSError('rule download does not start with a Zstandard MRS frame')
     if fmt == 'singbox' and not data.startswith(b'SRS'):
         raise OSError('rule download has invalid SRS magic')
     return data
