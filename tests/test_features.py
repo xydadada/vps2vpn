@@ -1346,3 +1346,179 @@ class AuditFollowUps(tu.Base):
             certs._publish_pair(key, b'new key', crt, b'new cert')
         with open(key, 'rb') as f:
             self.assertEqual(f.read(), b'old key')
+
+
+class FewerRestarts(tu.Base):
+    """Adding users reaches the running Xray through its API; a restart first banks the counters it would zero."""
+
+    def setUp(self):
+        super().setUp()
+        db.set_settings(setup_done=True, reality_enabled=True, hy2_enabled=False, tuic_enabled=False)
+        self.calls, self.runs, self.adu_files = [], [], []
+        self.adu_answer = (0, 'Added 1 user(s) in total.\n')
+        self.running = {cores.XRAY_UNIT}       # units systemd reports active
+
+        def systemctl(*a):
+            self.calls.append(a)
+            return mock.Mock(returncode=0, stdout='', stderr='')
+
+        def run(cmd, **kw):
+            self.runs.append(cmd)
+            if cmd[1:3] == ['api', 'adu']:
+                with open(cmd[-1], encoding='utf-8') as f:
+                    self.adu_files.append(json.load(f))
+                code, out = self.adu_answer
+                return mock.Mock(returncode=code, stdout=out, stderr='')
+            return mock.Mock(returncode=0, stdout='{}', stderr='')
+        for patch in (mock.patch.object(system, 'systemctl', systemctl),
+                      mock.patch.object(system, 'unit_active', lambda unit: unit in self.running),
+                      mock.patch.object(system, 'port_hopping', lambda s: None),
+                      mock.patch.object(system, 'doh_servers', lambda max_age=86400: []),
+                      mock.patch.object(cores.subprocess, 'run', run),
+                      mock.patch.object(cores.paths, 'XRAY_BIN', os.path.abspath(__file__))):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_old(self, users, s=None):
+        s = s or db.settings()
+        paths.ensure_dirs()
+        with open(paths.XRAY_CONFIG, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(cores.xray_config(s, users), indent=2, ensure_ascii=False) + '\n')
+
+    def restarted(self):
+        return [a[1] for a in self.calls if a[0] == 'restart']
+
+    def adu_calls(self):
+        return [c for c in self.runs if c[1:3] == ['api', 'adu']]
+
+    def test_xray_config_enables_the_user_api(self):
+        self.assertIn('HandlerService', cores.xray_config(db.settings(), [])['api']['services'])
+
+    def test_added_user_goes_through_the_api_without_a_restart(self):
+        old = mk('old')
+        self.write_old([old])
+        new = mk('new')
+        cores.apply()
+        self.assertNotIn(cores.XRAY_UNIT, self.restarted())
+        adu = self.adu_calls()
+        self.assertEqual(len(adu), 1)
+        # Go's flag parser stops at the first positional argument: flags must come before the file
+        self.assertEqual(adu[0][3], '--server=127.0.0.1:%d' % db.settings()['traffic_api_port'])
+        inbound = self.adu_files[0]['inbounds'][0]
+        self.assertEqual(inbound['tag'], cores.XRAY_INBOUND)
+        self.assertEqual(inbound['settings']['clients'],
+                         [{'id': new['uuid'], 'flow': 'xtls-rprx-vision', 'email': 'u%d' % new['id']}])
+        self.assertFalse(os.path.exists(adu[0][-1]))          # the file with the UUIDs is gone again
+        with open(paths.XRAY_CONFIG, encoding='utf-8') as f:  # and a later restart loads the same users
+            emails = [c['email'] for c in json.load(f)['inbounds'][0]['settings']['clients']]
+        self.assertEqual(sorted(emails), sorted(['u%d' % old['id'], 'u%d' % new['id']]))
+
+    def test_other_change_restarts(self):
+        u = mk('a')
+        s = db.settings()
+        self.write_old([u], dict(s, block_bt=not s['block_bt']))
+        mk('b')
+        cores.apply()
+        self.assertIn(cores.XRAY_UNIT, self.restarted())
+        self.assertFalse(self.adu_calls())
+
+    def test_removed_or_rotated_user_restarts(self):
+        a, b = mk('a'), mk('b')
+        self.write_old([a, b])
+        db.update_user(b['id'], enabled=0)                    # cut off: existing connections must drop too
+        cores.apply()
+        self.assertIn(cores.XRAY_UNIT, self.restarted())
+        self.assertFalse(self.adu_calls())
+        old = cores.xray_config(db.settings(), [a])
+        new = cores.xray_config(db.settings(), [dict(a, uuid='00000000-0000-4000-8000-000000000000')])
+        added, removed = cores.xray_user_diff(old, new)
+        self.assertEqual((len(added), removed), (1, ['u%d' % a['id']]))
+        self.assertIsNone(cores.xray_user_diff(None, new))
+
+    def test_failed_api_call_falls_back_to_a_restart(self):
+        for answer in ((1, 'failed to dial 127.0.0.1'), (0, 'User u2 already exists.\nAdded 0 user(s) in total.')):
+            self.calls[:], self.runs[:] = [], []
+            self.adu_answer = answer
+            for u in db.users():
+                db.delete_user(u['id'])
+            self.write_old([mk('x')])
+            mk('y')
+            cores.apply()
+            self.assertEqual(len(self.adu_calls()), 1, answer)
+            self.assertIn(cores.XRAY_UNIT, self.restarted(), answer)
+
+    def test_stopped_xray_is_started_not_called(self):
+        self.write_old([mk('a')])
+        mk('b')
+        self.running = set()
+        cores.apply()
+        self.assertIn(cores.XRAY_UNIT, self.restarted())
+        self.assertFalse(self.adu_calls())
+
+    def test_traffic_is_collected_before_a_restart(self):
+        u = mk('a')
+        order = []
+
+        def collect(s):
+            order.append(('collect', s['reality_enabled'], s['hy2_enabled'], s['tuic_enabled']))
+            return {u['id']: (100, 200)}
+
+        def systemctl(*a):
+            order.append(a)
+            return mock.Mock(returncode=0, stdout='', stderr='')
+        with mock.patch.object(cores, 'collect_traffic', collect), mock.patch.object(system, 'systemctl', systemctl):
+            cores.apply(force=True)
+        self.assertEqual(order[0], ('collect', True, False, False))     # only the cores going down: Xray here
+        self.assertIn(('restart', cores.XRAY_UNIT), order)
+        self.assertEqual(db.user(u['id'])['used_up'], 100)
+        self.assertEqual(db.user(u['id'])['used_down'], 200)
+
+    def test_failed_collection_does_not_block_the_restart(self):
+        mk('a')
+        with mock.patch.object(cores, 'collect_traffic', mock.Mock(side_effect=RuntimeError('core hung'))):
+            cores.apply(force=True)
+        self.assertIn(cores.XRAY_UNIT, self.restarted())
+
+    def test_stopped_core_is_not_asked_for_counters(self):
+        mk('a')
+        self.running = set()
+        with mock.patch.object(cores, 'collect_traffic', mock.Mock(return_value={})) as collect:
+            cores.apply(force=True)
+        collect.assert_not_called()
+        self.assertIn(cores.XRAY_UNIT, self.restarted())
+
+    def test_hot_add_does_not_collect(self):
+        self.write_old([mk('a')])
+        mk('b')
+        with mock.patch.object(cores, 'collect_traffic', mock.Mock(return_value={})) as collect:
+            cores.apply()
+        collect.assert_not_called()
+        self.assertEqual(self.restarted(), [])
+
+    def test_only_the_core_whose_config_changed_restarts(self):
+        db.set_settings(hy2_enabled=True, tuic_enabled=True)
+        self.running = {cores.XRAY_UNIT, cores.HY2_UNIT, cores.TUIC_UNIT}
+        mk('a')
+        cores.write_configs()
+        self.calls[:] = []
+        db.set_settings(hy2_obfs='changed-obfs')              # a Hysteria-only setting
+        with mock.patch.object(cores, 'collect_traffic', mock.Mock(return_value={})):
+            cores.apply()
+        self.assertEqual(self.restarted(), [cores.HY2_UNIT])
+
+    def test_certificate_renewal_does_not_restart_the_quic_cores(self):
+        db.set_settings(hy2_enabled=True, tuic_enabled=True)
+        sched = jobs.Scheduler()
+        with mock.patch.object(certs, 'renew_if_needed', lambda s, log=print: 'ok'), \
+                mock.patch.object(cores, 'apply') as apply:
+            sched.renew_cert(db.settings())
+        apply.assert_not_called()
+        self.assertEqual(self.restarted(), [])
+        self.assertEqual(db.settings()['cert_status'], 'ok')
+        # a certificate in other files (self-signed -> Let's Encrypt) changes the configs: apply them
+        seq = iter([(paths.SELF_CRT, paths.SELF_KEY), (paths.ACME_CRT, paths.ACME_KEY)])
+        with mock.patch.object(certs, 'renew_if_needed', lambda s, log=print: 'ok'), \
+                mock.patch.object(certs, 'current', lambda host=None: next(seq)), \
+                mock.patch.object(cores, 'apply') as apply:
+            sched.renew_cert(db.settings())
+        apply.assert_called_once_with()

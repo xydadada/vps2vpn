@@ -1,5 +1,6 @@
 """Server-side configs for Xray (VLESS+REALITY), Hysteria 2 and sing-box (TUIC), applying them, and reading
 traffic and who is online."""
+import copy
 import hashlib
 import json
 import os
@@ -16,6 +17,8 @@ from . import certs, db, paths, system
 XRAY_UNIT = 'vps2vpn-xray'
 HY2_UNIT = 'vps2vpn-hysteria'
 TUIC_UNIT = 'vps2vpn-tuic'
+XRAY_INBOUND = 'reality'          # tag of the REALITY inbound, used by the user API (`xray api adu`)
+_ENABLED = {XRAY_UNIT: 'reality_enabled', HY2_UNIT: 'hy2_enabled', TUIC_UNIT: 'tuic_enabled'}
 
 _apply_lock = threading.Lock()
 _online_lock = threading.Lock()        # guards _online_cache only; never held while asking the cores
@@ -72,7 +75,9 @@ def xray_config(s, users):
         rules.append({'protocol': ['bittorrent'], 'outboundTag': 'block'})
     return {
         'log': {'loglevel': 'warning', 'access': 'none'},
-        'api': {'tag': 'api', 'listen': '127.0.0.1:%d' % s['traffic_api_port'], 'services': ['StatsService']},
+        # HandlerService lets the panel add users to the running core (_xray_hot_add) instead of restarting it
+        'api': {'tag': 'api', 'listen': '127.0.0.1:%d' % s['traffic_api_port'],
+                'services': ['HandlerService', 'StatsService']},
         'stats': {},
         'policy': {'levels': {'0': {'statsUserUplink': True, 'statsUserDownlink': True, 'statsUserOnline': True,
                                     'handshake': 4, 'connIdle': 300, 'bufferSize': 64}},
@@ -81,7 +86,7 @@ def xray_config(s, users):
         'dns': {'servers': ['https+local://%s/dns-query' % ip for ip, _ in system.doh_servers()[:2]] + ['localhost'],
                 'queryStrategy': 'UseIP'},
         'inbounds': [{
-            'tag': 'reality', 'listen': _listen_addr(), 'port': s['reality_port'], 'protocol': 'vless',
+            'tag': XRAY_INBOUND, 'listen': _listen_addr(), 'port': s['reality_port'], 'protocol': 'vless',
             'settings': {'clients': clients, 'decryption': 'none'},
             'streamSettings': {
                 'network': 'raw', 'security': 'reality',
@@ -192,10 +197,10 @@ def write_configs(s=None, errors=None):
             continue
         text = json.dumps(data, indent=2, ensure_ascii=False) + '\n'
         try:
-            with open(path) as f:
+            with open(path, encoding='utf-8') as f:     # written as UTF-8 by write_atomic
                 if f.read() == text:
                     continue
-        except FileNotFoundError:
+        except (FileNotFoundError, UnicodeDecodeError):
             pass
         cmd = None
         if paths.LIVE and path == paths.XRAY_CONFIG and os.path.exists(paths.XRAY_BIN):
@@ -227,25 +232,149 @@ def check_path(path):
     return base + '.check' + (ext or '.json')
 
 
+def _read_json(path):
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _split_clients(conf):
+    """({email: client} of the REALITY inbound, the config with that list emptied), or None if unrecognisable."""
+    try:
+        rest = copy.deepcopy(conf)
+        found = [inb for inb in rest['inbounds'] if inb.get('tag') == XRAY_INBOUND]
+        if len(found) != 1:
+            return None
+        clients = {}
+        for c in found[0]['settings']['clients']:
+            if not isinstance(c, dict) or not isinstance(c.get('email'), str) or not c['email'] \
+                    or c['email'].lower() in clients:
+                return None              # Xray keys users by lower-cased email; the API cannot address these
+            clients[c['email'].lower()] = c
+        found[0]['settings']['clients'] = []
+        return clients, rest
+    except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def xray_user_diff(old, new):
+    """(added clients, removed emails) when the two Xray configs differ only in the REALITY client list,
+    else None (anything else changed, or a config is missing: the core must be restarted). A client whose
+    entry changed (new UUID after a link rotation) counts as removed and added."""
+    a = _split_clients(old) if old else None
+    b = _split_clients(new) if new else None
+    if not a or not b or a[1] != b[1]:
+        return None
+    added = [c for e, c in sorted(b[0].items()) if a[0].get(e) != c]
+    removed = sorted(e for e, c in a[0].items() if b[0].get(e) != c)
+    return added, removed
+
+
+def _xray_hot_add(s, conf, added):
+    """Add users to the running Xray through its HandlerService. True only if every one was accepted.
+
+    `xray api adu [--server=...] <file.json>` (Xray-core main/commands/all/api/inbound_user_add.go, v26.3.27)
+    reads a config file's "inbounds", builds each one and adds its clients to the running inbound with the same
+    tag. It exits 0 even when a user is refused (e.g. the email already exists) and only prints "Added N
+    user(s) in total.", so N is checked. Go's flag parser stops at the first positional argument, so the
+    flags go before the file."""
+    if not added or not os.path.exists(paths.XRAY_BIN):
+        return False
+    path = os.path.splitext(paths.XRAY_CONFIG)[0] + '.adu.json'      # holds UUIDs: root-only, removed at once
+    try:
+        inb = copy.deepcopy(next(i for i in conf['inbounds'] if i.get('tag') == XRAY_INBOUND))
+        inb['settings']['clients'] = added
+        paths.write_atomic(path, json.dumps({'inbounds': [inb]}), 0o600)
+        r = subprocess.run([paths.XRAY_BIN, 'api', 'adu', '--server=127.0.0.1:%d' % s['traffic_api_port'],
+                            '-timeout=5', path], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError, StopIteration, KeyError, TypeError):
+        return False
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    m = re.search(r'Added (\d+) user', r.stdout or '')
+    return r.returncode == 0 and bool(m) and int(m.group(1)) == len(added)
+
+
+def _xray_live_update(s, old, new):
+    """Bring the running Xray to the new config without a restart, when that is safe. True if it worked
+    (or nothing needed doing); False means restart.
+
+    Only additions are done live. `xray api rmu` exists, but removing a user only takes it out of the VLESS
+    validator (proxy/vless/validator.go MemoryValidator.Del): connections it already has stay open, and
+    neither HandlerService nor StatsService (app/proxyman/command, app/stats/command, v26.3.27) has a call
+    that closes a user's connections. A user is removed when they are disabled (quota, expiry, device-limit
+    pause) or deleted, and must then really be cut off, so a removal still restarts Xray."""
+    diff = xray_user_diff(old, new)
+    if diff is None:
+        return False
+    added, removed = diff
+    if removed:
+        return False
+    if not added:
+        return True                      # same configuration, only written differently
+    if system.unit_active(XRAY_UNIT) is not True:
+        return False                     # not running (or not a live system): a (re)start loads the file
+    return _xray_hot_add(s, new, added)
+
+
+def save_traffic(s=None):
+    """Read and reset the cores' counters and add them to the users' usage. Returns the deltas."""
+    s = s or db.settings()
+    known = {u['id'] for u in db.users()}
+    deltas = [(uid, up, down) for uid, (up, down) in collect_traffic(s).items()
+              if uid in known and (up or down)]
+    if deltas:
+        with db.transaction():
+            for uid, up, down in deltas:
+                db.add_traffic(uid, up, down)
+    return deltas
+
+
+def _save_before_restart(s, units):
+    """A core starts its counters from zero when it restarts, so whatever it counted since the last
+    collection would be lost: collect from the cores about to go down first. Only running ones are asked
+    (a stopped core has nothing left, and asking it would only wait for a timeout). Never raises: a failed
+    reading must not keep a core from restarting. Lock order is _apply_lock, then the database and TUIC
+    meter locks, as write_configs already does; no holder of those ever waits for _apply_lock."""
+    try:
+        running = [u for u in units if system.unit_active(u) is True]
+        if running:
+            save_traffic(dict(s, **{flag: unit in running for unit, flag in _ENABLED.items()}))
+    except Exception as e:           # accounting is best effort here, the restart is not
+        print('traffic collection before restart failed: %s' % e, flush=True)
+
+
 def apply(s=None, force=False):
     """Write configs and restart only what changed. Safe to call any time."""
     with _apply_lock:
         s = s or db.settings()
         errors = []
+        old_xray = None if force else _read_json(paths.XRAY_CONFIG)
         changed = write_configs(s, errors)
         units = {XRAY_UNIT: s['reality_enabled'], HY2_UNIT: s['hy2_enabled'], TUIC_UNIT: s['tuic_enabled']}
         restart = []
         if force or paths.XRAY_CONFIG in changed:
-            restart.append(XRAY_UNIT)
+            # Users only added: hand them to the running core and keep everyone else connected. The file is
+            # already written, so a later restart comes up in the same state.
+            if force or not s['reality_enabled'] or \
+                    not _xray_live_update(s, old_xray, _read_json(paths.XRAY_CONFIG)):
+                restart.append(XRAY_UNIT)
         if force or paths.HY2_CONFIG in changed:
             restart.append(HY2_UNIT)
         if force or paths.TUIC_CONFIG in changed:
             restart.append(TUIC_UNIT)
+        # also when the config did not change but the service is down (protocol switched back on, crash)
+        start = [u for u, on in units.items() if on and (u in restart or system.unit_active(u) is False)]
+        _save_before_restart(s, start + [u for u, on in units.items() if not on])
         for unit, on in units.items():
             if not on:
                 system.systemctl('disable', '--now', unit)
-            # also when the config did not change but the service is down (protocol switched back on, crash)
-            elif unit in restart or system.unit_active(unit) is False:
+            elif unit in start:
                 system.systemctl('enable', unit)
                 r = system.systemctl('restart', unit)
                 if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
