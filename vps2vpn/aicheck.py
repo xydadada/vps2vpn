@@ -199,7 +199,7 @@ def run():
            'sites': {k: out.get(k) or {'status': 'unreachable', 'note': 'timeout'} for k in SITES}}
     res['advice'] = advice(res)
     try:
-        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o644)
+        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o600)
     except OSError:
         pass
     return res
