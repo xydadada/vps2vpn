@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 import urllib.parse
 
 ROOT = tempfile.mkdtemp(prefix='v2v-test-')
@@ -27,6 +28,58 @@ rules.refresh_in_background = lambda log=print: None
 def tearDownModule():
     db.close()
     shutil.rmtree(ROOT, ignore_errors=True)
+
+
+
+class TelegramCommandAuthorization(unittest.TestCase):
+    def test_group_and_mismatched_senders_cannot_invoke_admin_commands(self):
+        cases = [
+            ({'chat': {'id': -1001, 'type': 'supergroup'}, 'from': {'id': 42}, 'text': '/backup'}, -1001),
+            ({'chat': {'id': 42, 'type': 'group'}, 'from': {'id': 42}, 'text': '/backup'}, 42),
+            ({'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 99}, 'text': '/backup'}, 42),
+            ({'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42, 'is_bot': True}, 'text': '/backup'}, 42),
+            ({'chat': {'id': 42, 'type': 'private'}, 'from': {}, 'text': '/backup'}, 42),
+        ]
+        for message, configured_chat in cases:
+            with self.subTest(message=message):
+                self.assertFalse(notify._owner_private_message(message, configured_chat))
+        self.assertTrue(notify._owner_private_message({
+            'chat': {'id': 42, 'type': 'private'},
+            'from': {'id': 42, 'is_bot': False}, 'text': '/help',
+        }, 42))
+
+    def test_poll_only_executes_private_owner_commands(self):
+        s = {'tg_token': '123456:' + 'A' * 35, 'tg_chat': '42', 'tg_bot': True, 'setup_done': True}
+        stop = threading.Event()
+        seen = []
+        batches = [
+            {'ok': True, 'result': []},
+            {'ok': True, 'result': [
+                {'update_id': 2, 'message': {
+                    'chat': {'id': 42, 'type': 'group'}, 'from': {'id': 42}, 'text': '/backup'}},
+                {'update_id': 3, 'message': {
+                    'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 99}, 'text': '/backup'}},
+                {'update_id': 4, 'message': {
+                    'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42}, 'text': '/help'}},
+            ]},
+        ]
+
+        def fake_call(*args, **kwargs):
+            result = batches.pop(0)
+            if not batches:
+                stop.set()
+            return result
+
+        def handler(command):
+            seen.append(command)
+            return 'pong'
+
+        with mock.patch.object(notify.db, 'settings', return_value=s), \
+             mock.patch.object(notify, '_call', side_effect=fake_call), \
+             mock.patch.object(notify, 'reply') as reply:
+            notify.bot_loop(stop, handler, lambda line: None)
+        self.assertEqual(seen, ['/help'])
+        reply.assert_called_once_with(s, '42', 'pong')
 
 
 class Secure(unittest.TestCase):
