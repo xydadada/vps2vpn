@@ -1556,7 +1556,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.json({'results': doctor.run_all()})
 
     def api_telegram(self, method, s):
-        """POST {token?} -> find the chat that messaged the bot, save both, send a test message."""
+        """POST {token?, challenge} -> verify a private chat pairing code before saving."""
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
         d = self.body_json()
@@ -1566,8 +1566,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         token = str(d.get('token') or s['tg_token']).strip()
         if not re.fullmatch(r'\d{5,15}:[A-Za-z0-9_-]{30,64}', token):
             return self.json({'error': 'bad_token'}, 400)
+        challenge = str(d.get('challenge') or '').strip()
+        if not re.fullmatch(r'[0-9a-f]{32}', challenge):
+            return self.json({'error': 'pairing_required'}, 400)
         try:
-            chat, who = notify.find_chat(token)
+            chat, who = notify.find_chat(token, challenge)
         except urllib.error.HTTPError as e:
             return self.json({'error': 'bad_token' if e.code in (401, 404) else 'telegram %d' % e.code}, 400)
         except OSError as e:
