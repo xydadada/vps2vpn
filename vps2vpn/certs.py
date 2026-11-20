@@ -56,8 +56,15 @@ def ensure_self_signed(host):
     """Create (or recreate for a new host) a 10-year self-signed ECDSA certificate."""
     paths.ensure_dirs()
     marker = paths.SELF_CRT + '.host'
-    if os.path.exists(paths.SELF_CRT) and os.path.exists(marker) and open(marker).read() == host:
-        return
+    if all(os.path.exists(p) for p in (paths.SELF_CRT, paths.SELF_KEY, marker)):
+        try:
+            with open(marker) as f:
+                matches = f.read() == host
+            if matches:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(paths.SELF_CRT, paths.SELF_KEY)
+                return
+        except (OSError, ssl.SSLError):
+            pass  # missing, corrupt or mismatched key: regenerate the complete fallback pair
     with tempfile.TemporaryDirectory() as d:
         key, crt = os.path.join(d, 'k'), os.path.join(d, 'c')
         _openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
@@ -90,18 +97,30 @@ def acme_names():
 _trust_cache = {}
 
 
+def _identity(host):
+    return str(ipaddress.ip_address(host)) if is_ip(host) else host.lower().rstrip('.')
+
+
 def trusted(host):
     """A publicly trusted certificate for `host` is in place. Cached per file version and per minute."""
     if not host:
         return False
     try:
-        stamp = os.path.getmtime(paths.ACME_CRT)
+        stamp = (os.stat(paths.ACME_CRT).st_mtime_ns, os.stat(paths.ACME_KEY).st_mtime_ns)
     except OSError:
         return False
-    key = (host.lower(), stamp, int(time.time() // 60))
+    key = (_identity(host), stamp, int(time.time() // 60))
     if key not in _trust_cache:
         _trust_cache.clear()
-        _trust_cache[key] = acme_valid(1) and host.lower() in [n.lower() for n in acme_names()]
+        valid = acme_valid(1) and _identity(host) in [_identity(n) for n in acme_names()]
+        if valid:
+            try:
+                # Checking expiry/SAN alone also accepts staging and arbitrary self-signed certificates.
+                _openssl('verify', '-untrusted', paths.ACME_CRT, paths.ACME_CRT)
+                ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(paths.ACME_CRT, paths.ACME_KEY)
+            except (OSError, RuntimeError):
+                valid = False
+        _trust_cache[key] = valid
     return _trust_cache[key]
 
 
@@ -284,9 +303,10 @@ def issue(host, email='', staging=False, log=print):
             chain = chain.decode()
         if '-----BEGIN CERTIFICATE-----' not in chain:
             raise AcmeError('unexpected certificate response')
-        paths.write_atomic(paths.ACME_KEY, _pem(key), 0o640, 'vps2vpn')
-        paths.write_atomic(paths.ACME_CRT, chain.replace('\r', ''), 0o644, 'vps2vpn')
-    log('ACME: certificate installed for %s' % host)
+        suffix = '.staging' if staging else ''
+        paths.write_atomic(paths.ACME_KEY + suffix, _pem(key), 0o640, 'vps2vpn')
+        paths.write_atomic(paths.ACME_CRT + suffix, chain.replace('\r', ''), 0o644, 'vps2vpn')
+    log('ACME: %scertificate saved for %s' % ('staging ' if staging else '', host))
     return True
 
 

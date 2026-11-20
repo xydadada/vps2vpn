@@ -84,6 +84,8 @@ def cmd_init(a):
     done = s['setup_done']
     cloud = system.cloud_provider()
     name, how = system.CLOUD_HINTS.get(cloud, ('', ''))
+    ports = ', '.join('%s/%s' % (p, proto) for proto, p in system.needed_ports(s))
+    how = (how or 'Cloud firewall / 云防火墙：仅开放列出的 TCP/UDP 端口。') + ' Ports / 端口: ' + ports
     out = {'url': panel_url(s, setup=not done), 'setup_done': done, 'ports': system.needed_ports(s),
            'warnings': warnings, 'cloud': name, 'cloud_firewall': how}
     if a.auto:
@@ -210,8 +212,9 @@ def cmd_rules(a):
 def cmd_cert(a):
     s = db.settings()
     certs.issue(s['domain'] or s['public_host'], s['acme_email'], staging=a.staging)
-    db.set_settings(cert_status='ok')
-    cores.apply()
+    if not a.staging:
+        db.set_settings(cert_status='ok')
+        cores.apply(force=True)
 
 
 def cmd_doctor(a):

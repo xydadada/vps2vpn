@@ -81,7 +81,14 @@ function Copy-Key([string]$src) {
 }
 
 function Get-SshArgs([string]$keyPath, [bool]$usePassword) {
-  $kh = Join-Path $Work 'known_hosts'
+  if ($Server -notmatch '^[A-Za-z0-9.:-]{3,255}$' -or $User -notmatch '^[a-z_][a-z0-9_.-]{0,31}$' -or $Port -lt 1 -or $Port -gt 65535) {
+    throw '服务器 IP、用户名或 SSH 端口格式不对。'
+  }
+  if (-not (Test-Path -LiteralPath $Records)) { New-Item -ItemType Directory -Path $Records -Force | Out-Null }
+  Restrict-Path $Records
+  $kh = Join-Path $Records 'known_hosts'
+  if (-not (Test-Path -LiteralPath $kh)) { [IO.File]::WriteAllText($kh, '') }
+  Restrict-Path $kh
   $a = @('-F', 'none', '-p', "$Port", '-o', 'StrictHostKeyChecking=accept-new', '-o', "UserKnownHostsFile=`"$kh`"",
     '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8')
   if ($keyPath) { $a += @('-i', "`"$keyPath`"", '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes') }
@@ -147,7 +154,11 @@ function Get-ShowLines($job, [string]$t, [bool]$final) {
   # Complete lines to show in the log. The result line holds the new admin password, so it is never shown.
   $job.Pending += $t
   $parts = $job.Pending -split "`n"
-  if ($final) { $job.Pending = '' } else { $job.Pending = $parts[-1]; $parts = $parts[0..($parts.Count - 2)] }
+  if ($final) { $job.Pending = '' } else {
+    $job.Pending = $parts[-1]
+    if ($parts.Count -lt 2) { return '' }
+    $parts = $parts[0..($parts.Count - 2)]
+  }
   $keep = @($parts | Where-Object { $_ -notmatch '^V2V_RESULT:' })
   if ($keep.Count -eq 0) { return '' }
   return (($keep -join "`n") + $(if ($final) { '' } else { "`n" }))
@@ -317,6 +328,7 @@ public static class V2VHttp {
       return BitConverter.ToString(h).Replace("-", "").ToLowerInvariant() == pin;
     };
     req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 30000;
+    req.AllowAutoRedirect = false;
     req.Headers["X-V2V"] = "1";
     if (!String.IsNullOrEmpty(cookie)) req.Headers["Cookie"] = cookie;
     byte[] b = Encoding.UTF8.GetBytes(body);
@@ -575,7 +587,7 @@ function Fill-Result($p, $st) {
   }
   $bad = @($st.Ports | Where-Object { -not $_.ok })
   if ($bad.Count) {
-    $how = if ($rec['cloud_firewall']) { "这台在 $($rec['cloud']) 上。$($rec['cloud_firewall'])" } else { '请到云服务商的网页控制台，找「防火墙 / 安全组」，添加一条规则：协议选「全部/所有」，来源 0.0.0.0/0。' }
+    $how = if ($rec['cloud_firewall']) { "这台在 $($rec['cloud']) 上。$($rec['cloud_firewall'])" } else { '请到云服务商控制台的「防火墙 / 安全组」，仅添加所列 TCP/UDP 端口；端口跳跃还须添加服务器配置的 UDP 跳跃范围。' }
     Add-Label ('有端口被云服务商的防火墙挡住了。' + $how) $y 88 $red $p | Out-Null; $y += 92
     $p.Controls.Add((New-Btn '我已放行，再检查一次' 20 $y 220 {
       $this.Enabled = $false; $this.Text = '正在检查…'; [Windows.Forms.Application]::DoEvents()

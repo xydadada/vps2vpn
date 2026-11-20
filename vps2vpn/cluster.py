@@ -30,6 +30,7 @@ UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 PASS_RE = re.compile(r'^[!-~]{6,128}$')   # printable ASCII, no spaces
 _wake = threading.Event()
 _lock = threading.Lock()
+_node_lock = threading.Lock()
 
 
 # --- node side -------------------------------------------------------------------------
@@ -63,45 +64,75 @@ def join_code(s, base_url):
 
 
 def parse_join_code(code):
-    code = (code or '').strip()
-    if not code.startswith('v2v1.'):
+    if not isinstance(code, str) or not code.strip().startswith('v2v1.'):
         raise ValueError('not a vps2vpn join code')
+    code = code.strip()
     try:
         d = json.loads(secure.b64url_decode(code[5:]))
+        if not isinstance(d, dict) or not isinstance(d.get('u'), str):
+            raise ValueError
         url = urllib.parse.urlsplit(d['u'])
-        if url.scheme != 'https' or not url.hostname or not d['k']:
+        key, pin = d['k'], d.get('p', '')
+        if (url.scheme != 'https' or not url.hostname or url.username is not None or url.password is not None
+                or url.query or url.fragment or (url.port is not None and not 1 <= url.port <= 65535)
+                or not isinstance(key, str) or not key
+                or any(ord(c) <= 32 or ord(c) == 127 for c in d['u'] + key)
+                or not isinstance(pin, str) or (pin and not re.fullmatch(r'[0-9a-fA-F]{64}', pin))):
             raise ValueError
     except (ValueError, KeyError, TypeError):
         raise ValueError('the join code is damaged; copy it again')
-    return {'url': d['u'].rstrip('/'), 'key': d['k'], 'pin': d.get('p', ''), 'name': d.get('n') or url.hostname}
+    # An absent pin requires public certificate validation; it never disables TLS verification.
+    return {'url': d['u'].rstrip('/'), 'key': key, 'pin': pin.lower(), 'name': str(d.get('n') or url.hostname)}
 
 
 def handle_sync(s, body, base_url=''):
-    """Called on a node by its main server. Returns the node's answer."""
+    """Validate and commit one complete snapshot before scheduling a core reload."""
+    with _node_lock, db.transaction():
+        result = _handle_sync(db.settings(), body, base_url)
+    if result.pop('_changed', False):
+        from . import web
+        web.apply_async()
+    return result
+
+
+def _handle_sync(s, body, base_url=''):
+    if not isinstance(body, dict) or not isinstance(body.get('users'), list):
+        raise ValueError('sync requires a complete users list')
     master = str(body.get('master') or 'main')[:24]
     master_id = str(body.get('master_id') or '')[:64]
-    if s['node_master_id'] and master_id and master_id != s['node_master_id']:
+    if master_id and master_id == s['install_id']:
+        return {'error': 'a server cannot join itself', 'conflict': True}
+    if s['node_master_id'] and master_id != s['node_master_id']:
         # Two main servers would delete each other's accounts here every minute.
         return {'error': 'this server already belongs to main server "%s"; on it press "New join code" to free it'
                          % s['node_master'], 'conflict': True}
     wanted = {}
-    for u in body.get('users') or []:
+    for u in body['users']:
         try:
-            w = {'name': str(u['name'])[:24], 'uuid': str(u['uuid']), 'hy2_pass': str(u['hy2_pass']),
-                 'enabled': 1 if u.get('enabled') else 0}
-            if UUID_RE.match(w['uuid']) and PASS_RE.match(w['hy2_pass']):   # a bad value would break the cores
-                wanted[int(u['id'])] = w
+            if not isinstance(u, dict) or type(u['id']) is not int or not 1 <= u['id'] <= 2 ** 63 - 1:
+                raise ValueError
+            if (not isinstance(u['name'], str) or not u['name'].strip()
+                    or not isinstance(u['uuid'], str) or not UUID_RE.fullmatch(u['uuid'])
+                    or not isinstance(u['hy2_pass'], str) or not PASS_RE.fullmatch(u['hy2_pass'])
+                    or type(u.get('enabled')) not in (bool, int) or u['enabled'] not in (0, 1)
+                    or u['id'] in wanted):
+                raise ValueError
+            wanted[u['id']] = {'name': u['name'][:24], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'],
+                               'enabled': int(u['enabled'])}
         except (KeyError, TypeError, ValueError):
-            continue
+            raise ValueError('invalid user in sync; no accounts changed')
     changed = False
     mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
     for rid, w in wanted.items():
         u = mine.get(rid)
         if u is None:
-            name = '%s@%s' % (w['name'], master)
-            if db.user_by_name(name):
-                name = '%s#%d' % (name[:26], rid)
-            uid = db.add_user(name[:32], note='from main server %s' % master, remote_id=rid, uuid=w['uuid'],
+            stem = '%s@%s' % (w['name'], master)
+            name, attempt = stem[:32], 0
+            while db.user_by_name(name):
+                attempt += 1
+                suffix = '#%d%s' % (rid, '-%d' % attempt if attempt > 1 else '')
+                name = stem[:32 - len(suffix)] + suffix
+            uid = db.add_user(name, note='from main server %s' % master, remote_id=rid, uuid=w['uuid'],
                               hy2_pass=w['hy2_pass'], enabled=w['enabled'],
                               disabled_reason='' if w['enabled'] else 'remote')
             mine[rid] = db.user(uid)
@@ -117,12 +148,9 @@ def handle_sync(s, body, base_url=''):
             changed = True
     if s['node_master'] != master or (master_id and s['node_master_id'] != master_id):
         db.set_settings(node_master=master, node_master_id=master_id or s['node_master_id'])
-    if changed:
-        from . import web
-        web.apply_async()
     from . import system
     h = system.health()
-    return {'ok': True, 'info': public_info(db.settings()),
+    return {'ok': True, '_changed': changed, 'info': public_info(db.settings()),
             'idmap': {str(rid): u['id'] for rid, u in mine.items()},
             'traffic': {str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()},
             'health': {k: h.get(k) for k in ('load', 'cpus', 'mem_total', 'mem_used', 'uptime', 'rx_rate', 'tx_rate')},
@@ -140,7 +168,7 @@ def _request(server, body, timeout=15):
     port = url.port or 443
     pin = server.get('pin', '')
     payload = json.dumps(body).encode()
-    for attempt in ('pin', 'public'):
+    for attempt in (('pin', 'public') if pin else ('public',)):
         if attempt == 'pin':
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
@@ -152,14 +180,16 @@ def _request(server, body, timeout=15):
             conn.connect()
             der = conn.sock.getpeercert(True)
             got = hashlib.sha256(der).hexdigest()
-            if attempt == 'pin' and pin and got != pin:
+            if attempt == 'pin' and got != pin:
                 conn.close()
                 continue                             # maybe it renewed to a trusted certificate: try that
             conn.request('POST', url.path + '/api/node/sync', body=payload,
                          headers={'Content-Type': 'application/json', 'X-V2V': '1',
                                   'Authorization': 'Bearer ' + server['key']})
             r = conn.getresponse()
-            data = r.read(8 << 20)
+            data = r.read((8 << 20) + 1)
+            if len(data) > 8 << 20:
+                raise SyncError('node response is too large')
             if r.status != 200:
                 try:
                     why = json.loads(data).get('error') or ''
@@ -185,28 +215,58 @@ def push_users():
 
 def sync_one(server, s=None, log=print):
     s = s or db.settings()
+    # Network I/O must not hold the database transaction.
     try:
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
                                          'users': push_users()})
+        if not isinstance(ans, dict) or ans.get('error'):
+            raise SyncError('invalid sync response')
+        traffic = ans.get('traffic')
+        if not isinstance(traffic, dict):
+            raise SyncError('invalid traffic snapshot')
+        for rid, counts in traffic.items():
+            if (not isinstance(rid, str) or not re.fullmatch(r'[0-9]{1,19}', rid)
+                    or not 1 <= int(rid) <= 2 ** 63 - 1
+                    or not isinstance(counts, (list, tuple)) or len(counts) != 2
+                    or any(type(n) is not int or not 0 <= n <= 2 ** 63 - 1 for n in counts)):
+                raise SyncError('invalid traffic counter')
+        for key in ('info', 'idmap', 'health'):
+            if ans.get(key) is not None and not isinstance(ans[key], dict):
+                raise SyncError('invalid node metadata')
     except SyncError as e:
         server.update(error=str(e)[:200], fail_count=server.get('fail_count', 0) + 1)
+        with db.transaction():
+            stored = db.settings()['servers']
+            for entry in stored:
+                if entry['id'] == server['id']:
+                    entry.update(error=server['error'], fail_count=server['fail_count'])
+            db.set_settings(servers=stored)
         if server['fail_count'] == 5:
             notify.send('server %s unreachable: %s / 子服务器 %s 连不上了' % (server['name'], e, server['name']),
                         key='node-down-' + server['id'], every=6 * 3600)
         return False
-    seen = server.get('seen') or {}
-    known = {u['id'] for u in db.users()}
-    for rid, (up, down) in (ans.get('traffic') or {}).items():
-        uid = int(rid)
-        up0, down0 = seen.get(rid, (0, 0))
-        # A lower count means the node lost the account (re-created, restored): count from zero again.
-        dup = up - up0 if up >= up0 else up
-        ddown = down - down0 if down >= down0 else down
-        if uid in known and (dup or ddown) and rid in seen:
-            db.add_traffic(uid, dup, ddown)
-        seen[rid] = (up, down)
-    server.update(info=ans.get('info') or {}, idmap=ans.get('idmap') or {}, seen=seen, health=ans.get('health') or {},
-                  version=ans.get('version', ''), last_ok=int(time.time()), error='', fail_count=0, pin=got_pin)
+    # Read the persisted cursor and commit it with the charge. A crash, failed settings write or stale
+    # caller cannot charge the same snapshot twice.
+    with db.transaction():
+        stored = db.settings()['servers']
+        saved = next((x for x in stored if x['id'] == server['id']), server)
+        seen = dict(saved.get('seen') or {})
+        known = {u['id'] for u in db.users() if not u['remote_id']}
+        for rid, (up, down) in traffic.items():
+            up0, down0 = seen.get(rid, (0, 0))
+            dup = up - up0 if up >= up0 else up
+            ddown = down - down0 if down >= down0 else down
+            if int(rid) in known and (dup or ddown) and rid in seen:
+                db.add_traffic(int(rid), dup, ddown)
+            seen[rid] = (up, down)
+        result = dict(info=ans.get('info') or {}, idmap=ans.get('idmap') or {}, seen=seen,
+                      health=ans.get('health') or {}, version=ans.get('version', ''),
+                      last_ok=int(time.time()), error='', fail_count=0, pin=got_pin)
+        for entry in stored:
+            if entry['id'] == server['id']:
+                entry.update(result)
+        db.set_settings(servers=stored)
+    server.update(result)
     return True
 
 
@@ -220,8 +280,6 @@ def sync_all(log=print):
         for server in servers:
             if server.get('enabled', True):
                 sync_one(server, s, log)
-        # write back only the server list (other settings may have changed meanwhile)
-        db.set_settings(servers=servers)
         if json.dumps([(x.get('info'), x.get('idmap')) for x in servers], sort_keys=True) != before:
             log('servers synced: %s' % ', '.join('%s %s' % (x['name'], 'ok' if not x.get('error') else 'FAILED')
                                                 for x in servers))
@@ -240,14 +298,14 @@ def unique_name(name, s, skip=None):
 
 def add_server(code, name=''):
     j = parse_join_code(code)
-    s = db.settings()
-    if any(x['url'] == j['url'] for x in s['servers']):
-        raise ValueError('that server is already added')
-    server = {'id': secrets.token_hex(4), 'name': unique_name(name or j['name'], s), 'url': j['url'], 'key': j['key'],
-              'pin': j['pin'], 'enabled': True, 'info': {}, 'idmap': {}, 'seen': {}, 'added_at': int(time.time())}
-    if not sync_one(server, s):
-        raise ValueError('cannot reach that server: %s' % server['error'])
     with _lock:
+        s = db.settings()
+        if any(x['url'] == j['url'] for x in s['servers']):
+            raise ValueError('that server is already added')
+        server = {'id': secrets.token_hex(4), 'name': unique_name(name or j['name'], s), 'url': j['url'], 'key': j['key'],
+                  'pin': j['pin'], 'enabled': True, 'info': {}, 'idmap': {}, 'seen': {}, 'added_at': int(time.time())}
+        if not sync_one(server, s):
+            raise ValueError('cannot reach that server: %s' % server['error'])
         db.set_settings(servers=db.settings()['servers'] + [server])
     return server
 

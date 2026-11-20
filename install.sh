@@ -310,23 +310,35 @@ do_install() {
   local first=1; [ -f "$VAR/vps2vpn.db" ] && first=0
   local json
   local auto=""; [ "${V2V_AUTO:-}" = 1 ] && auto="--auto"
-  json=$(PYTHONPATH="$LIB/app" python3 -m vps2vpn init --acme $auto | tail -1)
-  systemctl enable vps2vpn >/dev/null 2>&1
-  systemctl restart vps2vpn
+  if ! json=$(PYTHONPATH="$LIB/app" python3 -m vps2vpn init --acme $auto | tail -1); then
+    restore_previous_app
+    die "initialization failed; restored the previous panel code when available"
+  fi
+  if ! systemctl enable vps2vpn >/dev/null 2>&1 || ! systemctl restart vps2vpn; then
+    restore_previous_app
+    die "panel service failed; restored the previous panel code when available"
+  fi
   if [ "$first" = 0 ] || [ -n "$auto" ]; then
-    PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force >/dev/null 2>&1 || true
+    if ! PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force; then
+      restore_previous_app
+      die "core configuration failed; restored the previous panel code when available"
+    fi
   fi
   sleep 1
   if ! systemctl is-active --quiet vps2vpn; then
     journalctl -u vps2vpn -n 30 --no-pager
-    if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade broke the panel: put the previous version back
-      rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
-      systemctl restart vps2vpn
-      die "the new version failed to start, so the previous version was restored"
-    fi
-    die "panel failed to start"
+    restore_previous_app
+    die "panel failed to start; restored the previous panel code when available"
   fi
   show_result "$json"
+}
+
+restore_previous_app() {
+  if [ -d "$LIB/app/vps2vpn.old" ]; then
+    rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
+    systemctl restart vps2vpn || true
+    PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force || true
+  fi
 }
 
 do_uninstall() {

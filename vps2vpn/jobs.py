@@ -63,6 +63,12 @@ def enforce(now=None):
             db.update_user(u['id'], used_up=0, used_down=0, last_reset=month)
             u.update(used_up=0, used_down=0)
             log('monthly reset: %s' % u['name'])
+    # Reset every account before evaluating any shared quota. Descendants are created after their
+    # inviters; evaluate them first so released allocations are visible in this same pass.
+    for u in reversed(users):
+        if u['remote_id']:
+            continue
+        month = time.strftime('%Y-%m', time.localtime(t_now))
         quota = members.effective_quota(u, users, now)
         reason = over_limit(u, now, quota)
         if u['quota_gb'] and u['enabled'] and not reason and \
@@ -71,6 +77,7 @@ def enforce(now=None):
                         key='q80-%d-%s' % (u['id'], month), every=40 * 86400)
         if u['enabled'] and reason:
             db.update_user(u['id'], enabled=0, disabled_reason=reason)
+            u.update(enabled=0, disabled_reason=reason)
             log('disabled %s (%s)' % (u['name'], reason))
             notify.send('%s paused: %s / %s 已停用（%s）' % (u['name'], reason, u['name'],
                                                          '流量用完' if reason == 'quota' else '已到期'),
@@ -78,6 +85,7 @@ def enforce(now=None):
             changed = True
         elif not u['enabled'] and u['disabled_reason'] in ('quota', 'expired') and not reason:
             db.update_user(u['id'], enabled=1, disabled_reason='')
+            u.update(enabled=1, disabled_reason='')
             log('re-enabled %s' % u['name'])
             changed = True
     return changed

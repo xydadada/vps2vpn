@@ -41,20 +41,21 @@ def send(text, key=None, every=6 * 3600, s=None):
 
 
 def find_chat(token):
-    """The chat id of whoever last messaged the bot."""
+    """The private chat id of whoever last messaged the bot; never select a group."""
     res = _call(token, 'getUpdates', {'limit': 20})
     for upd in reversed(res.get('result', [])):
         msg = upd.get('message') or upd.get('my_chat_member') or {}
         chat = msg.get('chat', {})
-        if chat.get('id'):
+        if chat.get('type') == 'private' and isinstance(chat.get('id'), int) and chat['id'] > 0:
             return str(chat['id']), chat.get('username') or chat.get('title') or ''
     return None, None
 
 
 def send_file(name, data, caption='', s=None):
-    """Send a document (e.g. the daily backup) to the owner's chat. Never raises."""
+    """Send a document (e.g. the daily backup) only to the owner's private chat. Never raises."""
     s = s or db.settings()
-    if not (s.get('tg_token') and s.get('tg_chat')):
+    chat = str(s.get('tg_chat') or '')
+    if not (s.get('tg_token') and chat.isascii() and chat.isdecimal() and int(chat) > 0):
         return False
     boundary = 'v2v' + os.urandom(12).hex()
     nl = b'\r\n'
@@ -84,18 +85,22 @@ def reply(s, chat, text):
 def bot_loop(stop, handle, log):
     """Long-poll the bot for commands. Only the owner's chat (the one saved when alerts were connected) is
     answered; everything else is ignored. `handle(text) -> reply text or ('file', name, bytes, caption)`."""
-    offset, token = None, None
+    offset, token, started_at = None, None, int(time.time())
     while not stop.is_set():
         s = db.settings()
-        if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_bot') and s.get('setup_done')):
+        chat = str(s.get('tg_chat') or '')
+        if not (s.get('tg_token') and chat.isascii() and chat.isdecimal() and int(chat) > 0
+                and s.get('tg_bot') and s.get('setup_done')):
             offset = None
             stop.wait(30)
             continue
         if token != s['tg_token']:
-            token, offset = s['tg_token'], None
+            token, offset, started_at = s['tg_token'], None, int(time.time())
         try:
             params = {'timeout': 25, 'allowed_updates': '["message"]'}
-            if offset is not None:
+            if offset is None:
+                params.update(offset=-1, timeout=0)  # only the tail of any backlog
+            else:
                 params['offset'] = offset
             res = _call(token, 'getUpdates', params, timeout=35)
         except (OSError, ValueError):
@@ -104,11 +109,15 @@ def bot_loop(stop, handle, log):
         first = offset is None
         for upd in res.get('result', []):
             offset = upd['update_id'] + 1
-            if first:
-                continue              # old messages from before the panel started: do not act on them
             msg = upd.get('message') or {}
+            if first and msg.get('date', 0) < started_at:
+                continue              # old messages from before the panel started: do not act on them
             text = (msg.get('text') or '').strip()
-            if str((msg.get('chat') or {}).get('id')) != str(s['tg_chat']) or not text.startswith('/'):
+            chat = msg.get('chat') or {}
+            sender = msg.get('from') or {}
+            if (str(chat.get('id')) != str(s['tg_chat']) or chat.get('type', 'private') != 'private'
+                    or (sender.get('id') is not None and str(sender['id']) != str(s['tg_chat']))
+                    or not text.startswith('/')):
                 continue
             try:
                 out = handle(text)
@@ -119,3 +128,5 @@ def bot_loop(stop, handle, log):
                 send_file(out[1], out[2], out[3], s=s)
             elif out:
                 reply(s, s['tg_chat'], out)
+        if offset is None:
+            offset = 0  # an empty initial response must not discard the next real command

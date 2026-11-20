@@ -221,9 +221,12 @@ class Servers(tu.Base):
             users = [{'id': 7, 'name': 'x', 'uuid': '00000000-0000-4000-8000-000000000007', 'hy2_pass': 'pass-seven', 'enabled': True},
                      {'id': 9, 'name': 'own-user', 'uuid': '00000000-0000-4000-8000-000000000009', 'hy2_pass': 'pass-nine', 'enabled': False},
                      {'id': 11, 'name': 'bad', 'uuid': '"},{"x', 'hy2_pass': 'pass-eleven', 'enabled': True}]
-            ans = cluster.handle_sync(db.settings(), {'master': 'main', 'users': users})
+            with self.assertRaises(ValueError):
+                cluster.handle_sync(db.settings(), {'master': 'main', 'users': users})
+            self.assertEqual([u['id'] for u in db.users()], [local['id']])
+            ans = cluster.handle_sync(db.settings(), {'master': 'main', 'users': users[:2]})
             mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
-            self.assertEqual(set(mine), {7, 9})                 # 11 has a malformed uuid: skipped
+            self.assertEqual(set(mine), {7, 9})
             self.assertEqual(mine[7]['uuid'], '00000000-0000-4000-8000-000000000007')
             self.assertFalse(mine[9]['enabled'])
             self.assertEqual(ans['idmap'], {'7': mine[7]['id'], '9': mine[9]['id']})

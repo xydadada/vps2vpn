@@ -12,6 +12,7 @@ from . import certs, db, paths, system
 XRAY_UNIT = 'vps2vpn-xray'
 HY2_UNIT = 'vps2vpn-hysteria'
 TUIC_UNIT = 'vps2vpn-tuic'
+_apply_lock = threading.RLock()
 
 
 def active_users():
@@ -47,13 +48,13 @@ def xray_config(s, users):
                     'show': False, 'target': '%s:443' % s['reality_target'], 'xver': 0,
                     'serverNames': [s['reality_target']],
                     'privateKey': s['reality_private_key'], 'shortIds': [s['reality_short_id']]}},
-            'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'routeOnly': True},
+            'sniffing': {'enabled': bool(s['block_bt']), 'destOverride': [], 'routeOnly': True},
         }],
         'outbounds': [
             {'protocol': 'freedom', 'tag': 'direct', 'streamSettings': {'sockopt': {'domainStrategy': 'UseIP'}}},
             {'protocol': 'blackhole', 'tag': 'block'},
         ],
-        'routing': {'domainStrategy': 'AsIs', 'rules': rules},
+        'routing': {'domainStrategy': 'IPOnDemand', 'rules': rules},
     }
 
 
@@ -112,6 +113,11 @@ def tuic_config(s, users):
 
 
 def write_configs(s=None, errors=None):
+    with _apply_lock:
+        return _write_configs(s, errors)
+
+
+def _write_configs(s=None, errors=None):
     """Render the core configs. Returns the paths that changed; a config a core rejects is reported in `errors`."""
     s = s or db.settings()
     errors = [] if errors is None else errors
@@ -161,6 +167,11 @@ def check_path(path):
 
 
 def apply(s=None, force=False):
+    with _apply_lock:
+        return _apply(s, force)
+
+
+def _apply(s=None, force=False):
     """Write configs and restart only what changed. Safe to call any time."""
     s = s or db.settings()
     errors = []
@@ -173,13 +184,20 @@ def apply(s=None, force=False):
         restart.append(HY2_UNIT)
     if force or paths.TUIC_CONFIG in changed:
         restart.append(TUIC_UNIT)
+    def service(*args):
+        result = system.systemctl(*args)
+        if result.returncode:
+            errors.append('systemctl %s failed: %s' % (' '.join(args), (result.stderr or result.stdout or '')[-300:]))
+
     for unit, on in units.items():
         if not on:
-            system.systemctl('disable', '--now', unit)
+            service('disable', '--now', unit)
         elif unit in restart:
-            system.systemctl('enable', unit)
-            system.systemctl('restart', unit)
-    system.port_hopping(s)
+            service('enable', unit)
+            service('restart', unit)
+    hopping = system.port_hopping(s)
+    if hopping and hopping.startswith('failed:'):
+        errors.append('port hopping ' + hopping)
     if errors:
         raise RuntimeError('; '.join(errors))
     return changed
@@ -228,10 +246,12 @@ class TuicMeter:
     Open connections carry their user (the outbound tag) and byte counts; the panel samples them every
     couple of seconds. A connection that opens and closes between two samples is only visible in the
     server-wide totals, so that remainder is split between users in proportion to what they were recently
-    seen using (or given to the only user, when there is one). Per-user sums therefore match the server total."""
+    seen using (or given to the only user, when there is one). This remainder attribution is an estimate;
+    precise per-user accounting of connections that finish between samples needs native core counters."""
 
     def __init__(self):
         self.lock = threading.Lock()
+        self.sample_lock = threading.Lock()  # preserve poll order as well as state updates
         self.conns = {}            # connection id -> (uid, up, down) at the last sample
         self.total = None          # (up, down) server-wide at the last sample
         self.share = {}            # uid -> recent bytes (decaying): how to split the remainder
@@ -253,21 +273,31 @@ class TuicMeter:
         self.acc[uid] = (a + up, b + down)
 
     def sample(self, s, data=None, users=None):
+        with self.sample_lock:
+            return self._sample(s, data, users)
+
+    def _sample(self, s, data=None, users=None):
         """Take one reading. `users` (ids) lets a lone user receive traffic nobody else could have made."""
         try:
             d = data if data is not None else self.poll(s)
         except (OSError, ValueError):
-            with self.lock:
-                self.total, self.conns = None, {}      # down or restarting: count afresh from the next reading
+            # A transient API failure is not proof that the core restarted. Keeping the baseline avoids
+            # charging every still-open connection again when polling recovers.
             return False
         with self.lock:
+            total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
+            restarted = self.total is not None and any(a < b for a, b in zip(total, self.total))
+            if restarted:
+                self.conns, self.share, self.pending = {}, {}, [0, 0]
             seen, conns = {}, {}
             for c in d.get('connections') or []:
                 uid = self.owner(c)
                 if uid is None:
                     continue
                 up, down = int(c.get('upload', 0)), int(c.get('download', 0))
-                _, up0, down0 = self.conns.get(c.get('id'), (uid, 0, 0))
+                uid0, up0, down0 = self.conns.get(c.get('id'), (uid, 0, 0))
+                if uid != uid0 or up < up0 or down < down0:
+                    up0, down0 = 0, 0
                 conns[c.get('id')] = (uid, up, down)
                 a, b = seen.get(uid, (0, 0))
                 seen[uid] = (a + max(0, up - up0), b + max(0, down - down0))
@@ -275,18 +305,22 @@ class TuicMeter:
                 self._add(uid, a, b)
             for uid in set(self.share) | set(seen):
                 self.share[uid] = self.share.get(uid, 0) * 0.9 + sum(seen.get(uid, (0, 0)))
-            total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
-            if self.total is not None and total[0] >= self.total[0] and total[1] >= self.total[1]:
+            if self.total is not None and not restarted:
                 self.pending[0] += max(0, total[0] - self.total[0] - sum(v[0] for v in seen.values()))
                 self.pending[1] += max(0, total[1] - self.total[1] - sum(v[1] for v in seen.values()))
             self.total, self.conns = total, conns
-            weights = {k: v for k, v in self.share.items() if v > 0}
+            self.share = {k: v for k, v in self.share.items() if v >= 1 and (users is None or k in users)}
+            weights = self.share
             if not weights and users is not None and len(users) == 1:
                 weights = {next(iter(users)): 1}
             if any(self.pending) and weights:
                 w = float(sum(weights.values()))
-                for uid, v in weights.items():
-                    self._add(uid, int(self.pending[0] * v / w), int(self.pending[1] * v / w))
+                shares = {uid: [int(n * v / w) for n in self.pending] for uid, v in weights.items()}
+                largest = max(weights, key=weights.get)
+                for i in range(2):
+                    shares[largest][i] += self.pending[i] - sum(x[i] for x in shares.values())
+                for uid, (up, down) in shares.items():
+                    self._add(uid, up, down)
                 self.pending = [0, 0]
             return True
 

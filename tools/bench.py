@@ -28,11 +28,11 @@ def free_port():
         return s.getsockname()[1]
 
 
-def fetch_proxies(url):
+def fetch_proxies(url, ca_cert=None):
     sep = '&' if '?' in url else '?'
     req = urllib.request.Request(url + sep + 'format=clash', headers={'User-Agent': 'clash.meta'})
-    # a fresh server may still use its self-signed certificate; the subscription itself is not secret-bearing here
-    ctx = ssl._create_unverified_context()
+    # Subscriptions contain credentials. A private CA/fallback certificate must be obtained separately.
+    ctx = ssl.create_default_context(cafile=ca_cert)
     with urllib.request.urlopen(req, timeout=20, context=ctx) as r:
         text = r.read().decode('utf-8')
     # the Clash file is JSON (valid YAML) after a few '#' comment lines with the name and date
@@ -55,6 +55,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('subscription', nargs='?', help='your subscription link')
     ap.add_argument('--config', help='use a Clash config file instead of a link')
+    ap.add_argument('--ca-cert', help='PEM CA/certificate obtained through a trusted channel for HTTPS')
     ap.add_argument('--mihomo', default=shutil.which('mihomo') or shutil.which('mihomo.exe'))
     ap.add_argument('--quick', action='store_true', help='shorter tests')
     ap.add_argument('--no-direct', action='store_true', help='skip the direct (no proxy) baseline')
@@ -68,7 +69,7 @@ def main():
         with open(a.config, encoding='utf-8') as f:
             proxies = json.load(f)['proxies']
     else:
-        proxies = fetch_proxies(a.subscription)
+        proxies = fetch_proxies(a.subscription, a.ca_cert)
     work = tempfile.mkdtemp(prefix='v2v-bench-')
     ports = {p['name']: free_port() for p in proxies}
     conf = {'mode': 'rule', 'log-level': 'warning', 'ipv6': True, 'allow-lan': False, 'proxies': proxies,
@@ -94,6 +95,7 @@ def main():
             proc.wait(5)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait()
         shutil.rmtree(work, ignore_errors=True)
     print()
     print(bench.table(rows))

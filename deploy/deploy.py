@@ -294,7 +294,12 @@ def join_main(main, rec, name):
 
 # --- ssh ---------------------------------------------------------------------------------------
 def ssh_base(job):
-    kh = os.path.join(WORK, 'known_hosts')     # our own file: never touches ~/.ssh
+    os.makedirs(RECORDS, exist_ok=True)
+    restrict(RECORDS)
+    kh = os.path.join(RECORDS, 'known_hosts')   # retained across runs so changed server keys are rejected
+    fd = os.open(kh, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.close(fd)
+    restrict(kh)
     # -F none: ignore the user's own ssh config (it may route through proxies or have bad permissions)
     cmd = ['ssh', '-F', 'none', '-p', str(job['port']), '-o', 'StrictHostKeyChecking=accept-new', '-o', 'UserKnownHostsFile=' + kh,
            '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8']
@@ -513,7 +518,7 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
  box.append(el('h3',{text:(r.main?'':'② ')+'防火墙检查（从你这台电脑测试）'}));
  const bad=(s.ports||[]).filter(c=>!c.ok);
  (s.ports||[]).forEach(c=>box.append(el('div',{class:'chk'},el('span',{text:c.name+'  '+c.proto.toUpperCase()+' '+c.port}),el('span',{class:c.ok?'ok':'bad',text:c.ok?'✓ 通了':'✗ 不通'}))));
- if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商的网页控制台，找“防火墙 / 安全组”，添加一条规则：协议选“全部/所有”，来源 0.0.0.0/0。'}),
+ if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商控制台的“防火墙 / 安全组”，仅添加所列 TCP/UDP 端口；端口跳跃还须添加服务器配置的 UDP 跳跃范围。'}),
   el('div',{class:'mute',text:'需要放行：'+bad.map(c=>c.proto.toUpperCase()+' '+c.port).join('、')})));
   const rb=el('button',{text:'我已放行，再检查一次'});rb.onclick=async()=>{rb.disabled=true;rb.textContent='正在检查…';
    const x=await (await fetch('/recheck?t='+T+'&id='+jobId,{method:'POST'})).json();render(x)};box.append(el('p',{},rb))}
@@ -548,6 +553,9 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Type', ctype + '; charset=utf-8')
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
         self.end_headers()
         self.wfile.write(b)
 
@@ -584,7 +592,16 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(200, json.dumps(page_view(recheck(job))))
         if path != '/start':
             return self.reply(404, '{}')
-        d = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+            if not 0 < length <= 128 * 1024 or self.headers.get('Transfer-Encoding'):
+                raise ValueError('invalid request size')
+            self.connection.settimeout(10)
+            d = json.loads(self.rfile.read(length))
+            if not isinstance(d, dict):
+                raise ValueError('expected an object')
+        except (ValueError, OSError):
+            return self.reply(400, json.dumps({'error': 'invalid deployment request'}))
         job, err = new_job(str(d.get('host', '')), str(d.get('user', 'root')), str(d.get('port', '22')),
                            str(d.get('main', '')))
         if err:
@@ -605,7 +622,8 @@ def new_job(host, user, port, main=''):
     host, user, port = host.strip().strip('[]'), user.strip(), port.strip()
     if not re.fullmatch(r'[A-Za-z0-9.:\-]{3,255}', host):
         return None, 'IP 地址格式不对'
-    if not re.fullmatch(r'[a-z_][a-z0-9_.-]{0,31}', user) or not port.isdigit():
+    if (not re.fullmatch(r'[a-z_][a-z0-9_.-]{0,31}', user) or not re.fullmatch(r'[0-9]{1,5}', port)
+            or not 1 <= int(port) <= 65535):
         return None, '用户名或端口格式不对'
     if main and (main == host or not load_record(main).get('admin_password')):
         return None, '选的主服务器不能用（不能加到它自己下面，或者没保存它的面板密码）'

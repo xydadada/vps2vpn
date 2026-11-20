@@ -30,9 +30,17 @@ read -r -p "登录用户名 / login user [$USER_DEF]: " LUSER
 LUSER=${LUSER:-$USER_DEF}
 read -r -p "SSH 端口 / port [22]: " PORT
 PORT=${PORT:-22}
+if ! [[ "$HOST" =~ ^[A-Za-z0-9.:-]{3,255}$ && "$LUSER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ && "$PORT" =~ ^[0-9]{1,5}$ ]] \
+   || ! (( 10#$PORT >= 1 && 10#$PORT <= 65535 )); then
+  echo "服务器 IP、用户名或 SSH 端口格式不对 / invalid server, user or SSH port"
+  exit 1
+fi
+REC_DIR="$HOME/vps2vpn"; mkdir -p "$REC_DIR"; chmod 700 "$REC_DIR"
+(umask 077; touch "$REC_DIR/known_hosts")
+chmod 600 "$REC_DIR/known_hosts"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$WORK/known_hosts"
+OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$REC_DIR/known_hosts"
       -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
 if [ -n "$KEY" ]; then
   [ -f "$KEY" ] || { echo "找不到这个文件 / file not found: $KEY"; exit 1; }
@@ -94,7 +102,7 @@ for p in $(read_json "$MERGED" '.checks.filter(function(c){return c[0]=="tcp"}).
 done
 if [ "$BAD" = 1 ]; then
   echo "  有端口被云服务商的防火墙挡住了。$(read_json "$MERGED" .cloud_firewall)"
-  echo "  请到云服务商控制台的「防火墙 / 安全组」放行：协议选「全部」，来源 0.0.0.0/0。"
+  echo "  请在云服务商控制台的「防火墙 / 安全组」仅放行所列 TCP/UDP 端口及配置的 UDP 跳跃范围。"
 fi
 
 APP=""
