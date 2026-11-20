@@ -242,7 +242,7 @@ class RuleMirrorDownloads(tu.Base):
     def test_mrs_magic_is_inside_a_zstandard_frame_not_at_file_start(self):
         # Mihomo's ConvertToMrs writes MRS! through zstd.NewWriter;
         # real .mrs files have Zstandard frame magic on disk.
-        frame = rules.MRS_ZSTD_MAGIC + b'controlled-compressed-frame'
+        frame = bytes.fromhex('28b52ffd04585900004d525321666978747572652c1026bc')  # zstd('MRS!fixture')
         with mock.patch.object(rules, '_fetch', return_value=frame) as fetch:
             self.assertEqual(rules.fetch_converted('private', 'clash'), frame)
             self.assertEqual(fetch.call_count, 1)
