@@ -156,6 +156,7 @@ def _valid_srs_zlib_stream(data):
         total = 0
         for offset in range(4, len(data), 65536):
             chunk = memoryview(data)[offset:offset + 65536]
+            chunk_end = offset + len(chunk)
             while chunk:
                 before = len(chunk)
                 decoded = decoder.decompress(chunk, 1 << 20)
@@ -163,7 +164,7 @@ def _valid_srs_zlib_stream(data):
                 if total > MAX_SRS_DECODE_BYTES:
                     return False
                 if decoder.eof:
-                    return not decoder.unused_data and offset + before == len(data)
+                    return not decoder.unused_data and chunk_end == len(data)
                 chunk = decoder.unconsumed_tail
                 if len(chunk) == before and not decoded:
                     return False
