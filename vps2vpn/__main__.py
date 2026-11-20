@@ -84,6 +84,8 @@ def cmd_init(a):
     done = s['setup_done']
     cloud = system.cloud_provider()
     name, how = system.CLOUD_HINTS.get(cloud, ('', ''))
+    ports = ', '.join('%s/%s' % (p, proto) for proto, p in system.needed_ports(s))
+    how = (how or 'Cloud firewall / 云防火墙：仅开放列出的 TCP/UDP 端口。') + ' Ports / 端口: ' + ports
     out = {'url': panel_url(s, setup=not done), 'setup_done': done, 'ports': system.needed_ports(s),
            'warnings': warnings, 'cloud': name, 'cloud_firewall': how}
     if a.auto:
@@ -127,8 +129,8 @@ def result_info(s):
     from . import cluster, subscription
     host = s['domain'] or s['public_host'] or '<server-ip>'
     h = '[%s]' % host if ':' in host else host
-    base = '%s://%s:%d' % ('https' if certs.trusted(host) else 'http', h, s['panel_port'])
-    crt, _ = certs.current(s['public_host'])
+    base = '%s://%s:%d' % ('https' if certs.using_acme(s) else 'http', h, s['panel_port'])
+    crt, _ = certs.current(s['public_host'], s['cert_mode'])
     try:
         pin = certs.fingerprint(crt)
     except OSError:
@@ -189,17 +191,19 @@ def cmd_info(a):
     print('vps2vpn %s' % VERSION)
     print('panel:  %s' % panel_url(s, setup=not s['setup_done']))
     print('setup:  %s' % ('done' if s['setup_done'] else 'waiting - open the link above'))
-    print('cert:   %s' % ('trusted (Let\'s Encrypt)' if certs.trusted(s['domain'] or s['public_host']) else 'self-signed'))
+    print('cert:   %s' % ('trusted (Let\'s Encrypt)' if certs.using_acme(s) else 'self-signed'))
     print('users:  %d' % len(db.users()))
     print('ports:  %s' % ', '.join('%s/%s' % (p, proto) for proto, p in system.needed_ports(s)))
 
 
 def cmd_reset_password(a):
     pw = a.password or getpass.getpass('new admin password: ')
-    if len(pw) < 8:
-        sys.exit('password must be at least 8 characters')
-    db.set_settings(admin_hash=secure.hash_password(pw), admin_user=a.username or db.settings()['admin_user'])
-    db.end_all_sessions()
+    if not 8 <= len(pw) <= 128:
+        sys.exit('password must be 8 to 128 characters')
+    password_hash = secure.hash_password(pw)
+    with db.transaction():
+        db.set_settings(admin_hash=password_hash, admin_user=a.username or db.settings()['admin_user'])
+        db.end_all_sessions()
     print('password changed, all sessions logged out')
 
 
@@ -210,8 +214,9 @@ def cmd_rules(a):
 def cmd_cert(a):
     s = db.settings()
     certs.issue(s['domain'] or s['public_host'], s['acme_email'], staging=a.staging)
-    db.set_settings(cert_status='ok')
-    cores.apply()
+    if not a.staging:
+        db.set_settings(cert_status='ok')
+        cores.apply(force=True)
 
 
 def cmd_doctor(a):

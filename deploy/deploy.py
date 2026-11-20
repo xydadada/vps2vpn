@@ -18,6 +18,7 @@ import hashlib
 import http.client
 import http.server
 import io
+import ipaddress
 import json
 import os
 import re
@@ -85,12 +86,18 @@ def save_record(host, rec):
     os.makedirs(RECORDS, exist_ok=True)
     restrict(RECORDS)
     p = record_path(host)
-    tmp = p + '.tmp'
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
-        json.dump(rec, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, p)
-    restrict(p)
+    fd, tmp = tempfile.mkstemp(prefix='.record-', dir=RECORDS)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
+            restrict(tmp)
+            json.dump(rec, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+        restrict(p)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
     return p
 
 
@@ -125,10 +132,14 @@ def quic_probe(host, port, timeout=3.0):
     fam = socket.AF_INET6 if ':' in host else socket.AF_INET
     with socket.socket(fam, socket.SOCK_DGRAM) as s:
         s.settimeout(timeout)
+        try:
+            s.connect((host, int(port)))
+        except OSError:
+            return False
         for _ in range(2):
             try:
-                s.sendto(pkt, (host, int(port)))
-                d, _ = s.recvfrom(2048)
+                s.send(pkt)
+                d = s.recv(2048)
                 if len(d) >= 7 and d[0] & 0x80 and d[1:5] == b'\0\0\0\0':
                     return True
             except socket.timeout:
@@ -244,6 +255,8 @@ def panel_call(rec, path, body, cookie=''):
     """POST to a saved server's panel API over HTTPS. The certificate must be the one saved when it was
     deployed, or one any browser trusts (it may have switched to Let's Encrypt since)."""
     url = urllib.parse.urlsplit(rec['panel'])
+    if url.scheme != 'https' or not url.hostname or url.username is not None or url.password is not None:
+        raise PanelError('Panel URL must use HTTPS without user information')
     attempts = ('pin', 'public') if rec.get('pin') else ('public',)
     for attempt in attempts:
         ctx = ssl.create_default_context()
@@ -294,7 +307,12 @@ def join_main(main, rec, name):
 
 # --- ssh ---------------------------------------------------------------------------------------
 def ssh_base(job):
-    kh = os.path.join(WORK, 'known_hosts')     # our own file: never touches ~/.ssh
+    os.makedirs(RECORDS, exist_ok=True)
+    restrict(RECORDS)
+    kh = os.path.join(RECORDS, 'known_hosts')
+    fd = os.open(kh, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.close(fd)
+    restrict(kh)
     # -F none: ignore the user's own ssh config (it may route through proxies or have bad permissions)
     cmd = ['ssh', '-F', 'none', '-p', str(job['port']), '-o', 'StrictHostKeyChecking=accept-new', '-o', 'UserKnownHostsFile=' + kh,
            '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8']
@@ -302,6 +320,7 @@ def ssh_base(job):
     if job.get('key'):
         cmd += ['-i', job['key'], '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes']
     elif job.get('password'):
+        restrict(WORK)
         # ssh asks this helper for the password instead of the keyboard
         reader = os.path.join(WORK, 'askpass.py')
         with open(reader, 'w') as f:
@@ -322,6 +341,8 @@ def ssh_base(job):
 
 def run_job(job):
     log = job['log']
+    process, deadline = None, None
+    timed_out = threading.Event()
 
     def say(line):
         log.append(line.rstrip())
@@ -351,6 +372,18 @@ def run_job(job):
                   '%sV2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install; rm -rf "$T"') % run_as
         p = subprocess.Popen(cmd + [remote], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              env=env)
+        process = p
+
+        def expire():
+            timed_out.set()
+            try:
+                p.kill()
+            except OSError:
+                pass
+
+        deadline = threading.Timer(20 * 60, expire)
+        deadline.daemon = True
+        deadline.start()
 
         def feed():
             try:
@@ -362,14 +395,16 @@ def run_job(job):
         res = None
         for raw in p.stdout:
             line = re.sub(r'\x1b\[[0-9;]*m', '', raw.decode('utf-8', 'replace'))
-            if line.startswith('V2V_RESULT:'):          # holds the new admin password: never shown in the log
+            if 'V2V_RESULT:' in line:          # holds the new admin password: never shown in the log
                 try:
-                    res = json.loads(base64.b64decode(line.split(':', 1)[1].strip()))
+                    res = json.loads(base64.b64decode(line.split('V2V_RESULT:', 1)[1].strip()))
                 except ValueError:
                     pass
                 continue
             say(line)
         p.wait()
+        if timed_out.is_set():
+            raise RuntimeError('installation exceeded 20 minutes; the SSH process was stopped')
         if p.returncode != 0 or not res:
             raise RuntimeError('安装过程出错了，详情见上面的日志')
         finish(job, res, say)
@@ -379,6 +414,21 @@ def run_job(job):
         job['state'] = 'error'
         job['error'] = str(e)
     finally:
+        if deadline is not None:
+            deadline.cancel()
+        if process is not None:
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            process.wait()
+            for pipe in (process.stdin, process.stdout):
+                if pipe:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
         if job.get('key'):
             try:
                 os.unlink(job['key'])
@@ -513,7 +563,7 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
  box.append(el('h3',{text:(r.main?'':'② ')+'防火墙检查（从你这台电脑测试）'}));
  const bad=(s.ports||[]).filter(c=>!c.ok);
  (s.ports||[]).forEach(c=>box.append(el('div',{class:'chk'},el('span',{text:c.name+'  '+c.proto.toUpperCase()+' '+c.port}),el('span',{class:c.ok?'ok':'bad',text:c.ok?'✓ 通了':'✗ 不通'}))));
- if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商的网页控制台，找“防火墙 / 安全组”，添加一条规则：协议选“全部/所有”，来源 0.0.0.0/0。'}),
+ if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商的网页控制台，找“防火墙 / 安全组”，按下方列表分别开放需要的 TCP/UDP 端口。'}),
   el('div',{class:'mute',text:'需要放行：'+bad.map(c=>c.proto.toUpperCase()+' '+c.port).join('、')})));
   const rb=el('button',{text:'我已放行，再检查一次'});rb.onclick=async()=>{rb.disabled=true;rb.textContent='正在检查…';
    const x=await (await fetch('/recheck?t='+T+'&id='+jobId,{method:'POST'})).json();render(x)};box.append(el('p',{},rb))}
@@ -548,6 +598,8 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Type', ctype + '; charset=utf-8')
         self.send_header('Content-Length', str(len(b)))
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('X-Content-Type-Options', 'nosniff')
         self.end_headers()
         self.wfile.write(b)
 
@@ -584,7 +636,23 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(200, json.dumps(page_view(recheck(job))))
         if path != '/start':
             return self.reply(404, '{}')
-        d = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+        try:
+            lengths = self.headers.get_all('Content-Length', [])
+            if len(lengths) != 1 or not re.fullmatch(r'[0-9]+', lengths[0].strip()) or self.headers.get('Transfer-Encoding'):
+                raise ValueError('invalid request framing')
+            n = int(lengths[0])
+            if not 0 <= n <= 65536:
+                raise ValueError('request too large')
+            self.connection.settimeout(15)
+            raw = self.rfile.read(n)
+            if len(raw) != n:
+                raise ValueError('incomplete request')
+            d = json.loads(raw or b'{}')
+            if not isinstance(d, dict):
+                raise ValueError('object required')
+        except (ValueError, UnicodeError, OSError):
+            self.close_connection = True
+            return self.reply(400, json.dumps({'error': 'invalid request'}))
         job, err = new_job(str(d.get('host', '')), str(d.get('user', 'root')), str(d.get('port', '22')),
                            str(d.get('main', '')))
         if err:
@@ -603,9 +671,12 @@ class H(http.server.BaseHTTPRequestHandler):
 
 def new_job(host, user, port, main=''):
     host, user, port = host.strip().strip('[]'), user.strip(), port.strip()
-    if not re.fullmatch(r'[A-Za-z0-9.:\-]{3,255}', host):
-        return None, 'IP 地址格式不对'
-    if not re.fullmatch(r'[a-z_][a-z0-9_.-]{0,31}', user) or not port.isdigit():
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if len(host) > 253 or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*', host):
+            return None, 'IP 地址格式不对'
+    if not re.fullmatch(r'[a-z_][a-z0-9_.-]{0,31}', user) or not re.fullmatch(r'[0-9]{1,5}', port) or not 1 <= int(port) <= 65535:
         return None, '用户名或端口格式不对'
     if main and (main == host or not load_record(main).get('admin_password')):
         return None, '选的主服务器不能用（不能加到它自己下面，或者没保存它的面板密码）'
@@ -613,6 +684,7 @@ def new_job(host, user, port, main=''):
 
 
 def write_key(text):
+    restrict(WORK)
     path = os.path.join(WORK, 'key-' + secrets.token_hex(4))
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'w', newline='\n') as f:
@@ -628,7 +700,9 @@ def restrict(path):
         return
     user = os.environ.get('USERNAME', '')
     grant = '%s:(OI)(CI)F' % user if os.path.isdir(path) else '%s:F' % user
-    subprocess.run(['icacls', path, '/inheritance:r', '/grant:r', grant], capture_output=True)
+    result = subprocess.run(['icacls', path, '/inheritance:r', '/grant:r', grant], capture_output=True)
+    if result.returncode:
+        raise OSError('could not restrict access to deployment secrets')
 
 
 restrict_key_file = restrict      # old name

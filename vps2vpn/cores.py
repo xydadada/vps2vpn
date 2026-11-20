@@ -1,5 +1,9 @@
 """Server-side configs for Xray (VLESS+REALITY), Hysteria 2 and sing-box (TUIC), applying them, and reading
 traffic and who is online."""
+import functools
+import hashlib
+import hmac
+import http.client
 import json
 import os
 import re
@@ -12,6 +16,15 @@ from . import certs, db, paths, system
 XRAY_UNIT = 'vps2vpn-xray'
 HY2_UNIT = 'vps2vpn-hysteria'
 TUIC_UNIT = 'vps2vpn-tuic'
+_apply_lock = threading.RLock()
+
+
+def _serial_apply(fn):
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        with _apply_lock:
+            return fn(*args, **kwargs)
+    return run
 
 
 def active_users():
@@ -47,22 +60,33 @@ def xray_config(s, users):
                     'show': False, 'target': '%s:443' % s['reality_target'], 'xver': 0,
                     'serverNames': [s['reality_target']],
                     'privateKey': s['reality_private_key'], 'shortIds': [s['reality_short_id']]}},
-            'sniffing': {'enabled': True, 'destOverride': ['http', 'tls', 'quic'], 'routeOnly': True},
+            # Sniff protocol for BT blocking, but never let untrusted Host/SNI replace the
+            # destination used by the private-address routing check.
+            'sniffing': {'enabled': True, 'destOverride': []},
         }],
         'outbounds': [
             {'protocol': 'freedom', 'tag': 'direct', 'streamSettings': {'sockopt': {'domainStrategy': 'UseIP'}}},
             {'protocol': 'blackhole', 'tag': 'block'},
         ],
-        'routing': {'domainStrategy': 'AsIs', 'rules': rules},
+        'routing': {'domainStrategy': 'IPOnDemand', 'rules': rules},
     }
 
 
 def hysteria_config(s, users):
-    cert, key = certs.current()
+    cert, key = certs.current(s['public_host'], s['cert_mode'])
+    credentials = {email(u): u['hy2_pass'] for u in users}
+    if not credentials:
+        # Hysteria rejects an empty map. Keep the service healthy after the last user is paused,
+        # without publishing a usable account or a fixed placeholder password. Domain separation
+        # prevents this internal credential from being reused as the statistics API bearer token.
+        if not s['stats_secret']:
+            raise ValueError('statistics secret is required for empty-user authentication')
+        credentials = {'_v2v_no_active_users': hmac.new(
+            s['stats_secret'].encode(), b'vps2vpn/empty-userpass/v1', hashlib.sha256).hexdigest()}
     conf = {
         'listen': ':%d' % s['hy2_port'],
         'tls': {'cert': cert, 'key': key},
-        'auth': {'type': 'userpass', 'userpass': {email(u): u['hy2_pass'] for u in users}},
+        'auth': {'type': 'userpass', 'userpass': credentials},
         'trafficStats': {'listen': '127.0.0.1:%d' % s['hy2_stats_port'], 'secret': s['stats_secret']},
         # Bigger receive windows than the defaults help on long, fast routes (e.g. China <-> US, ~200-300 ms).
         'quic': {'initStreamReceiveWindow': 16777216, 'maxStreamReceiveWindow': 16777216,
@@ -87,7 +111,7 @@ def hysteria_config(s, users):
 def tuic_config(s, users):
     """sing-box serving TUIC v5. Each user leaves through an outbound tagged with their stats key, so the
     Clash API's connection list tells whose traffic is whose (official builds have no per-user counters)."""
-    cert, key = certs.current()
+    cert, key = certs.current(s['public_host'], s['cert_mode'])
     conf = {
         'log': {'level': 'warn'},
         'experimental': {'clash_api': {'external_controller': '127.0.0.1:%d' % s['tuic_api_port'],
@@ -99,18 +123,22 @@ def tuic_config(s, users):
             'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': cert, 'key_path': key}}],
         'outbounds': [{'type': 'direct', 'tag': 'direct'}] + [{'type': 'direct', 'tag': email(u)} for u in users],
         'route': {'rules': ([{'action': 'sniff'}, {'protocol': 'bittorrent', 'action': 'reject'}] if s['block_bt'] else [])
-                  + [{'ip_is_private': True, 'action': 'reject'}]
+                  + [{'action': 'resolve'}, {'ip_is_private': True, 'action': 'reject'}]
                   + [{'auth_user': [email(u)], 'outbound': email(u)} for u in users],
                   'final': 'direct'},
     }
+    conf['dns'] = {'servers': [{'type': 'local', 'tag': 'local'}], 'final': 'local'}
+    conf['route']['default_domain_resolver'] = 'local'
     doh = system.doh_servers()
-    if doh:                      # encrypted DNS when reachable from this server, the system resolver otherwise
-        conf['dns'] = {'servers': [{'type': 'https', 'tag': 'doh', 'server': doh[0][0], 'tls': {'server_name': doh[0][1]}},
-                                   {'type': 'local', 'tag': 'local'}], 'final': 'doh'}
+    if doh:
+        conf['dns']['servers'].insert(0, {'type': 'https', 'tag': 'doh', 'server': doh[0][0],
+                                        'tls': {'server_name': doh[0][1]}})
+        conf['dns']['final'] = 'doh'
         conf['route']['default_domain_resolver'] = 'doh'
     return conf
 
 
+@_serial_apply
 def write_configs(s=None, errors=None):
     """Render the core configs. Returns the paths that changed; a config a core rejects is reported in `errors`."""
     s = s or db.settings()
@@ -160,6 +188,7 @@ def check_path(path):
     return base + '.check' + (ext or '.json')
 
 
+@_serial_apply
 def apply(s=None, force=False):
     """Write configs and restart only what changed. Safe to call any time."""
     s = s or db.settings()
@@ -175,14 +204,33 @@ def apply(s=None, force=False):
         restart.append(TUIC_UNIT)
     for unit, on in units.items():
         if not on:
-            system.systemctl('disable', '--now', unit)
-        elif unit in restart:
-            system.systemctl('enable', unit)
-            system.systemctl('restart', unit)
-    system.port_hopping(s)
+            commands = [('disable', '--now', unit)]
+        elif unit in restart or system.unit_active(unit) is False:
+            commands = [('enable', unit), ('restart', unit)]
+        else:
+            continue
+        for command in commands:
+            result = system.systemctl(*command)
+            if result.returncode:
+                errors.append('%s failed: %s' % (' '.join(command), (result.stderr or result.stdout)[-300:]))
+    hopping = system.port_hopping(s)
+    if hopping and hopping.startswith('failed:'):
+        errors.append('port hopping ' + hopping)
     if errors:
         raise RuntimeError('; '.join(errors))
     return changed
+
+
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _local_json(request, timeout):
+    # Stats secrets and loopback requests must never be forwarded to an environment HTTP proxy.
+    with _LOCAL_OPENER.open(request, timeout=timeout) as response:
+        data = response.read((8 << 20) + 1)
+    if len(data) > 8 << 20:
+        raise ValueError('local statistics response is too large')
+    return json.loads(data)
 
 
 def collect_traffic(s=None):
@@ -209,15 +257,15 @@ def collect_traffic(s=None):
         try:
             req = urllib.request.Request('http://127.0.0.1:%d/traffic?clear=1' % s['hy2_stats_port'],
                                          headers={'Authorization': s['stats_secret']})
-            data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            data = _local_json(req, 10)
             for name, t in data.items():
                 if name.startswith('u') and name[1:].isdigit():
                     # Hysteria reports tx = bytes from the client (upload), rx = bytes to the client (download)
                     add(int(name[1:]), int(t.get('tx', 0)), int(t.get('rx', 0)))
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             pass
     if s['tuic_enabled']:
-        for uid, (up, down) in _tuic.collect(s, users={u['id'] for u in active_users()}).items():
+        for uid, (up, down) in _tuic.collect(s, users={u['id'] for u in db.users()}).items():
             add(uid, up, down)
     return out
 
@@ -228,7 +276,8 @@ class TuicMeter:
     Open connections carry their user (the outbound tag) and byte counts; the panel samples them every
     couple of seconds. A connection that opens and closes between two samples is only visible in the
     server-wide totals, so that remainder is split between users in proportion to what they were recently
-    seen using (or given to the only user, when there is one). Per-user sums therefore match the server total."""
+    seen using (or given to the only user, when there is one). This conserves attributed bytes but cannot
+    reconstruct exact ownership of unobserved short connections; it is an estimate, not a billing ledger."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -242,7 +291,7 @@ class TuicMeter:
     def poll(s, timeout=3):
         req = urllib.request.Request('http://127.0.0.1:%d/connections' % s['tuic_api_port'],
                                      headers={'Authorization': 'Bearer ' + s['stats_secret']})
-        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+        return _local_json(req, timeout)
 
     @staticmethod
     def owner(c):
@@ -253,18 +302,22 @@ class TuicMeter:
         self.acc[uid] = (a + up, b + down)
 
     def sample(self, s, data=None, users=None):
-        """Take one reading. `users` (ids) lets a lone user receive traffic nobody else could have made."""
-        try:
-            d = data if data is not None else self.poll(s)
-        except (OSError, ValueError):
-            with self.lock:
-                self.total, self.conns = None, {}      # down or restarting: count afresh from the next reading
-            return False
+        """Serialize polling as well as accounting, so older responses cannot overwrite newer samples."""
         with self.lock:
+            try:
+                d = data if data is not None else self.poll(s)
+            except (OSError, ValueError, http.client.HTTPException):
+                return False
+            total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
+            reset = self.total is not None and any(new < old for new, old in zip(total, self.total))
+            if reset:
+                self.conns, self.share, self.pending = {}, {}, [0, 0]
+            if users is not None:
+                self.share = {uid: value for uid, value in self.share.items() if uid in users}
             seen, conns = {}, {}
             for c in d.get('connections') or []:
                 uid = self.owner(c)
-                if uid is None:
+                if uid is None or (users is not None and uid not in users):
                     continue
                 up, down = int(c.get('upload', 0)), int(c.get('download', 0))
                 _, up0, down0 = self.conns.get(c.get('id'), (uid, 0, 0))
@@ -275,18 +328,26 @@ class TuicMeter:
                 self._add(uid, a, b)
             for uid in set(self.share) | set(seen):
                 self.share[uid] = self.share.get(uid, 0) * 0.9 + sum(seen.get(uid, (0, 0)))
-            total = (int(d.get('uploadTotal', 0)), int(d.get('downloadTotal', 0)))
-            if self.total is not None and total[0] >= self.total[0] and total[1] >= self.total[1]:
+            if self.total is not None and not reset:
                 self.pending[0] += max(0, total[0] - self.total[0] - sum(v[0] for v in seen.values()))
                 self.pending[1] += max(0, total[1] - self.total[1] - sum(v[1] for v in seen.values()))
             self.total, self.conns = total, conns
-            weights = {k: v for k, v in self.share.items() if v > 0}
+            weights = {k: max(1, int(v)) for k, v in self.share.items() if v > 0}
             if not weights and users is not None and len(users) == 1:
                 weights = {next(iter(users)): 1}
             if any(self.pending) and weights:
-                w = float(sum(weights.values()))
-                for uid, v in weights.items():
-                    self._add(uid, int(self.pending[0] * v / w), int(self.pending[1] * v / w))
+                w = sum(weights.values())
+                allocated = {uid: [0, 0] for uid in weights}
+                for direction, amount in enumerate(self.pending):
+                    fractions = {}
+                    for uid, value in weights.items():
+                        allocated[uid][direction], fractions[uid] = divmod(amount * value, w)
+                    remainder = amount - sum(value[direction] for value in allocated.values())
+                    ranked = sorted(weights, key=lambda uid: (-fractions[uid], uid))
+                    for uid in ranked[:remainder]:
+                        allocated[uid][direction] += 1
+                for uid, (up, down) in allocated.items():
+                    self._add(uid, up, down)
                 self.pending = [0, 0]
             return True
 
@@ -299,7 +360,7 @@ class TuicMeter:
     def online(self, s):
         try:
             return {'u%d' % u for u in (self.owner(c) for c in self.poll(s, 1.5).get('connections') or []) if u is not None}
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             return None
 
 
@@ -355,11 +416,11 @@ def _online_detail(s):
         try:
             req = urllib.request.Request('http://127.0.0.1:%d/online' % s['hy2_stats_port'],
                                          headers={'Authorization': s['stats_secret']})
-            for name, n in json.loads(urllib.request.urlopen(req, timeout=1.5).read()).items():
+            for name, n in _local_json(req, 1.5).items():
                 if name[:1] == 'u' and name[1:].isdigit():
                     mark(int(name[1:]), 'hy2', conns=int(n or 1))
             known = True
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             pass
     if s['tuic_enabled']:
         try:
@@ -368,7 +429,7 @@ def _online_detail(s):
                 if uid is not None:
                     mark(uid, 'tuic', [(c.get('metadata') or {}).get('sourceIP', '')], 1)
             known = True
-        except (OSError, ValueError):
+        except (OSError, ValueError, http.client.HTTPException):
             pass
     if not known:
         return None

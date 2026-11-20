@@ -148,15 +148,15 @@ sudo bash install.sh
 
 ## 实测（本项目的测试都是真程序真流量）
 
-`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops` —— 92 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 命令只认主人、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
+`python -m unittest discover -s tests -t . -p 'test_*.py' -v` —— 176 项 Python 测试（Python 3.8 / 3.12 均通过）：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 命令只认主人、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
 
-`python tests/e2e_local.py <放官方程序的目录>` —— 在一台电脑上启动**真的** Xray 和 Hysteria 服务端，再用**真的** mihomo（Clash 内核）和 sing-box 客户端发流量，共 28 项检查：
+`python tests/e2e_local.py <放官方程序的目录>` —— 在一台电脑上启动**真的** Xray、Hysteria 和 sing-box（TUIC）服务端，再用**真的** mihomo（Clash 内核）和 sing-box 客户端发流量，共 44 项检查：
 
 - 服务端配置被 Xray 自己的校验通过；REALITY 公钥与 `xray x25519` 结果一致
 - 完整订阅被 `mihomo -t` 和 `sing-box check` 校验通过（含端口跳跃、混淆）
-- mihomo、sing-box 两个客户端 × Hysteria 2、REALITY、TUIC 三种协议，六条路全部真实上网成功；TUIC 流量能准确记到对应使用者头上
-- 每个用户的流量被两个核心正确计数；错误密码被拒绝
-- 测速工具 `tools/bench.py` 能通过两个协议分别跑完
+- mihomo、sing-box 两个客户端 × Hysteria 2、REALITY、TUIC 三种协议，六条路全部真实上网成功；单用户 TUIC 流量能归到对应使用者（多用户短连接的计量边界见审计报告）
+- 流量计量及错误密码拒绝；生产配置阻断私网 IP 和解析到私网的域名；零有效用户的 Hysteria 仍正常运行并拒绝普通凭据
+- 测速工具 `tools/bench.py` 通过三种协议访问受控测试端，验证真实下载/上传字节和失败诊断；这些回环结果不代表公网吞吐
 - 连接保持期间，三种协议都能正确识别在线用户和设备；防滥用扫描能读到流向；小火箭规则转换和配置生成；网站监控探测
 
 **测试中发现的一个上游兼容问题**：Xray **v26.10.21 及更新版本**的 REALITY 服务端会拒绝 mihomo 1.19.34 和 sing-box 1.14.4 客户端的登录（Xray 自己的客户端不受影响）。v26.3.27 三种客户端全部正常。因为大多数人用的是 Clash 类 App 和小火箭，安装脚本**固定使用 Xray v26.3.27**，等上游修复后再升级。
@@ -171,6 +171,12 @@ python tools/bench.py "你的订阅链接" --mihomo <mihomo程序路径>   # 在
 电脑端会临时启动一个只监听本机的 mihomo，逐个协议测：延迟（每次都是全新 HTTPS 握手，中位数和 p90）、单连接下载、4 连接下载、上传，并和直连对比，可以 `--json` 存结果。不会改你电脑上的任何代理设置。
 
 ---
+
+## 本轮审计记录
+
+[审计总表、文件覆盖和验证记录](docs/audit/2026-11-20.md)说明了确认问题、修复方式及未验证的边界。[后端明细](docs/audit/backend.md)记录数据库、配额、集群同步和协议核心的根因与测试。
+
+电脑端测速工具默认验证 HTTPS 订阅证书。自签证书可通过 `--ca-file cert.pem` 提供信任；`--insecure` 必须显式选择，会关闭该次订阅下载的证书校验。测试自己的测速服务可使用 `--origin https://your-origin.example`，服务需实现 `/generate_204`、`/__down?bytes=N`、`/__up`。公共测速返回限流时会报告 HTTP 状态及 Retry-After，不再把失败静默呈现为有效零速率。
 
 ## 命令行（服务器上）
 
@@ -192,7 +198,7 @@ bash install.sh uninstall # 卸载（保留数据）；加 --purge 连数据一�
 ## 开发
 
 ```bash
-python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops -v   # 离线测试
+python -m unittest discover -s tests -t . -p 'test_*.py' -v   # 全部 Python 测试
 python tests/dev_server.py 8443           # 本机跑面板（开发模式，不动系统）
 python tests/e2e_local.py ./bins          # 真程序端到端测试
 sudo bash tests/vps_acceptance.sh --full  # 在一台可以随便折腾的真 VPS 上做验收（含重装、卸载再装）
@@ -246,7 +252,7 @@ Then open the link it prints, set an admin password, click **Build my VPN**, and
 - Benchmarks you can run yourself: `vps2vpn bench` on the server, `tools/bench.py <subscription>` on your computer (latency median/p90 with fresh handshakes, 1- and 4-connection download, upload, next to a direct baseline).
 - Standard-library Python panel: no Docker, no database server, no third-party scripts in the browser. PBKDF2, login rate limiting, strict cookies and CSP, panel behind a random path.
 
-**Tested** with real Xray/Hysteria servers and real mihomo/sing-box clients (`tests/e2e_local.py`, 28 checks) plus 92 offline tests, and `tests/vps_acceptance.sh` for a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
+**Tested** with real Xray/Hysteria servers and real mihomo/sing-box clients (`tests/e2e_local.py`, 44 checks) plus 176 Python tests, and `tests/vps_acceptance.sh` for a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
 
 **Ports to open** in your provider's firewall: the panel's TCP port (shown at install), TCP 80 (certificates), TCP 443 (REALITY), UDP 443 and UDP 20000-40000 (Hysteria 2), UDP 8443 (TUIC).
 

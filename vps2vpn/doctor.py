@@ -82,7 +82,7 @@ def port_hopping(s):
 
 def certificate(s):
     host = s['domain'] or s['public_host']
-    if certs.trusted(host):
+    if certs.using_acme(s):
         return [_check('certificate', certs.acme_valid(24), "Let's Encrypt for %s" % host,
                        'expires within a day and renewal is failing: open TCP 80, then run  vps2vpn cert')]
     if s['cert_mode'] == 'self':
@@ -132,7 +132,8 @@ def public_address(s):
 def outbound():
     t0 = time.time()
     try:
-        urllib.request.urlopen('https://www.gstatic.com/generate_204', timeout=8).read()
+        with urllib.request.urlopen('https://www.gstatic.com/generate_204', timeout=8) as response:
+            response.read(4096)
         return [_check('internet', True, '%d ms' % ((time.time() - t0) * 1000))]
     except OSError as e:
         return [_check('internet', False, str(e)[:160], 'this server cannot reach the internet; check its network / DNS')]

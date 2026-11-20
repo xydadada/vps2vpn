@@ -1,4 +1,5 @@
 """Talking to the operating system: services, kernel tuning, port hopping, firewall, health."""
+import ipaddress
 import json
 import os
 import re
@@ -55,7 +56,11 @@ def sysctl_text(mem_mb=None):
         cap = 16 << 20
     else:
         cap = 8 << 20
-    pages = mem_mb * 256                      # 4 KiB pages in RAM
+    try:
+        page_size = os.sysconf('SC_PAGE_SIZE')
+    except (AttributeError, OSError, ValueError):
+        page_size = 4096
+    pages = mem_mb * (1 << 20) // page_size
     lines = {
         'net.core.default_qdisc': 'fq',
         'net.ipv4.tcp_congestion_control': 'bbr',
@@ -131,10 +136,14 @@ def port_hopping(s):
     """Clients pick random UDP ports in the range; the kernel sends them all to Hysteria."""
     if not paths.LIVE or not shutil.which('nft'):
         return None
-    run(['nft', 'delete', 'table', 'inet', NFT_TABLE])
     if not (s['hy2_enabled'] and s['hy2_hop']):
+        run(['nft', 'delete', 'table', 'inet', NFT_TABLE])
         return 'off'
-    r = subprocess.run(['nft', '-f', '-'], input=nft_rules(s), capture_output=True, text=True)
+    rules = nft_rules(s)  # validate before touching the working table
+    if run(['nft', 'list', 'table', 'inet', NFT_TABLE]).returncode == 0:
+        rules = 'delete table inet %s\n' % NFT_TABLE + rules
+    # nft applies this whole batch atomically; a rejected replacement keeps the old table.
+    r = subprocess.run(['nft', '-f', '-'], input=rules, capture_output=True, text=True, timeout=30)
     return 'ok' if r.returncode == 0 else 'failed: ' + r.stderr[-200:]
 
 
@@ -229,12 +238,11 @@ def public_ip(v6=False):
     for url in ('https://%s/cdn-cgi/trace' % host, 'https://%s/cdn-cgi/trace' % ('one.one.one.one')):
         try:
             ctx = ssl.create_default_context()
-            ctx.check_hostname = False if url.startswith('https://1') or url.startswith('https://[') else True
-            ctx.verify_mode = ssl.CERT_REQUIRED if ctx.check_hostname else ssl.CERT_NONE
-            text = urllib.request.urlopen(url, timeout=6, context=ctx).read().decode()
-            ip = re.search(r'^ip=(.+)$', text, re.M).group(1).strip()
-            if (':' in ip) == v6:
-                return ip
+            with urllib.request.urlopen(url, timeout=6, context=ctx) as response:
+                text = response.read(4096).decode()
+            ip = ipaddress.ip_address(re.search(r'^ip=(.+)$', text, re.M).group(1).strip())
+            if (ip.version == 6) == v6 and ip.is_global:
+                return str(ip)
         except (OSError, AttributeError, ValueError):
             continue
     return ''
@@ -330,20 +338,21 @@ def dump(obj):
 # Cloud firewalls live in the provider's web console, outside the server, so the installer cannot open them.
 # Name the provider and the exact place, which beats a bare list of port numbers.
 CLOUD_HINTS = {
-    'lightsail': ('AWS Lightsail', 'Lightsail console > your instance > Networking > IPv4 firewall > Add rule > '
-                  'Application "All protocols" > Create. 控制台 > 点实例 > 联网 > IPv4 防火墙 > 添加规则 > '
-                  '应用程序选「所有协议」> 创建。'),
-    'ec2': ('AWS EC2', 'EC2 console > Instances > your instance > Security > the security group > Edit inbound rules > '
-            'Add rule "All traffic", source 0.0.0.0/0 > Save. 实例 > 安全 > 安全组 > 编辑入站规则 > 添加「所有流量」'
-            '来源 0.0.0.0/0 > 保存。'),
-    'oracle': ('Oracle Cloud', 'Instance > Subnet > Security List > Add Ingress Rules: source 0.0.0.0/0, IP protocol "All". '
-               '实例 > 子网 > 安全列表 > 添加入站规则：来源 0.0.0.0/0，协议选「所有协议」。'),
-    'gcp': ('Google Cloud', 'VPC network > Firewall > Create firewall rule: targets "All instances", source 0.0.0.0/0, '
-            '"Allow all". VPC 网络 > 防火墙 > 创建规则：所有实例，来源 0.0.0.0/0，全部允许。'),
-    'azure': ('Azure', 'Virtual machine > Networking > Add inbound port rule: Any port, Any protocol, Allow. '
-              '虚拟机 > 网络 > 添加入站端口规则：任意端口、任意协议、允许。'),
-    'aliyun': ('Alibaba Cloud', '实例 > 安全组 > 配置规则 > 入方向 > 手动添加：协议「全部」，来源 0.0.0.0/0（轻量服务器：防火墙 > 添加规则）。'),
-    'tencent': ('Tencent Cloud', '实例 > 安全组 > 修改规则 > 入站规则 > 添加：来源 0.0.0.0/0，协议端口 ALL（轻量服务器：防火墙 > 添加规则 > 全部）。'),
+    'lightsail': ('AWS Lightsail', 'Lightsail console > instance > Networking > Firewall > Add rule. '
+                  'Use Custom TCP/UDP and only the listed ports. 控制台 > 实例 > 联网 > 防火墙 > 添加规则，'
+                  '仅放行下方列出的 TCP/UDP 端口。'),
+    'ec2': ('AWS EC2', 'EC2 console > instance > Security > security group > Edit inbound rules. '
+            'Allow only the listed TCP/UDP ports. 实例 > 安全 > 安全组 > 编辑入站规则，仅开放下方列出的端口。'),
+    'oracle': ('Oracle Cloud', 'Instance > Subnet > Security List > Add Ingress Rules. '
+               'Allow only the listed TCP/UDP ports. 实例 > 子网 > 安全列表 > 添加入站规则，仅开放列出的端口。'),
+    'gcp': ('Google Cloud', 'VPC network > Firewall > Create firewall rule for this instance, '
+            'allowing only the listed TCP/UDP ports. 为本实例创建规则，仅开放列出的 TCP/UDP 端口。'),
+    'azure': ('Azure', 'Virtual machine > Networking > Add inbound port rule for the listed TCP/UDP ports. '
+              '虚拟机 > 网络 > 添加入站端口规则，仅开放列出的 TCP/UDP 端口。'),
+    'aliyun': ('Alibaba Cloud', '实例 > 安全组 > 配置规则 > 入方向，仅开放下方列出的 TCP/UDP 端口'
+               '（轻量服务器：防火墙 > 添加规则）。'),
+    'tencent': ('Tencent Cloud', '实例 > 安全组 > 修改规则 > 入站规则，仅开放下方列出的 TCP/UDP 端口'
+                '（轻量服务器：防火墙 > 添加规则）。'),
 }
 
 

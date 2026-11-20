@@ -5,6 +5,7 @@ IPv6 and times each step (DNS, TCP connect, TLS, first byte). ChatGPT's trace pa
 the site sees, which tells you whether it will let your users in. A small Cloudflare download measures
 the server's own bandwidth. The last 288 rounds (24 hours) are kept.
 """
+import http.client
 import json
 import os
 import socket
@@ -31,6 +32,7 @@ FILE = paths.VAR + '/monitor.json'
 BLOCKED_REGIONS = {'CN', 'HK', 'MO', 'RU', 'IR', 'KP', 'SY', 'CU', 'BY', 'VE'}
 
 _lock = threading.Lock()
+_run_lock = threading.Lock()
 _hist = None
 
 
@@ -48,25 +50,24 @@ def probe(host, path, family, timeout=8):
         addr = infos[0][4]
         r['ip'] = addr[0]
         t1 = time.perf_counter()
-        sock = socket.create_connection(addr[:2], timeout=timeout)
-        r['connect'] = _ms(t1)
-        t2 = time.perf_counter()
-        ctx = ssl.create_default_context()
-        tls = ctx.wrap_socket(sock, server_hostname=host)
-        r['tls'] = _ms(t2)
-        t3 = time.perf_counter()
-        tls.sendall(('GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n'
-                     % (path, host)).encode())
-        first = tls.recv(4096)
-        r['ttfb'] = _ms(t3)
-        body = first
-        if path.endswith('/trace'):
-            while len(body) < 16384:
-                more = tls.recv(4096)
-                if not more:
-                    break
-                body += more
-        tls.close()
+        with socket.create_connection(addr[:2], timeout=timeout) as sock:
+            r['connect'] = _ms(t1)
+            t2 = time.perf_counter()
+            ctx = ssl.create_default_context()
+            with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                r['tls'] = _ms(t2)
+                t3 = time.perf_counter()
+                tls.sendall(('GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n'
+                             % (path, host)).encode())
+                first = tls.recv(4096)
+                r['ttfb'] = _ms(t3)
+                body = first
+                if path.endswith('/trace'):
+                    while len(body) < 16384:
+                        more = tls.recv(4096)
+                        if not more:
+                            break
+                        body += more
         line = first.split(b'\r\n', 1)[0].decode('latin-1')
         r['status'] = int(line.split()[1]) if len(line.split()) > 1 else 0
         r['ok'] = 100 <= r['status'] < 500 and r['status'] != 403
@@ -86,32 +87,35 @@ def speed(timeout=20):
     t0 = time.perf_counter()
     got = 0
     try:
-        sock = socket.create_connection((host, 443), timeout=timeout)
-        tls = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
-        tls.sendall(('GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: vps2vpn\r\nConnection: close\r\n\r\n'
-                     % (path % SPEED_BYTES, host)).encode())
-        t1 = None
-        while time.perf_counter() - t0 < timeout:
-            chunk = tls.recv(65536)
-            if not chunk:
-                break
-            if t1 is None:
-                t1 = time.perf_counter()
-            got += len(chunk)
-        tls.close()
-        dt = max(time.perf_counter() - (t1 or t0), 0.001)
+        with socket.create_connection((host, 443), timeout=timeout) as sock:
+            with ssl.create_default_context().wrap_socket(sock, server_hostname=host) as tls:
+                tls.sendall(('GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: vps2vpn\r\nConnection: close\r\n\r\n'
+                             % (path % SPEED_BYTES, host)).encode())
+                with http.client.HTTPResponse(tls) as response:
+                    response.begin()
+                    if response.status != 200:
+                        return {'ok': False, 'bytes': 0, 'error': 'HTTP %d' % response.status}
+                    t1 = time.perf_counter()
+                    while got < SPEED_BYTES:
+                        remaining = timeout - (time.perf_counter() - t0)
+                        if remaining <= 0:
+                            break
+                        tls.settimeout(remaining)
+                        chunk = response.read1(min(65536, SPEED_BYTES - got))
+                        if not chunk:
+                            break
+                        got += len(chunk)
+                    dt = max(time.perf_counter() - t1, 0.001)
         return {'ok': got > SPEED_BYTES // 2, 'bytes': got, 'mbps': round(got * 8 / dt / 1e6, 1)}
-    except OSError as e:
+    except (OSError, http.client.HTTPException) as e:
         return {'ok': False, 'bytes': got, 'error': str(e)[:120]}
 
 
 def has_ipv6():
     try:
-        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        s.connect(('2606:4700:4700::1111', 53))
-        ok = not s.getsockname()[0].startswith('fe80')
-        s.close()
-        return ok
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.connect(('2606:4700:4700::1111', 53))
+            return not s.getsockname()[0].startswith('fe80')
     except OSError:
         return False
 
@@ -193,6 +197,9 @@ def summary():
 
 
 def run_in_background(log=print):
+    if not _run_lock.acquire(blocking=False):
+        return
+
     def go():
         try:
             e = run_once()
@@ -201,7 +208,13 @@ def run_in_background(log=print):
                 log('monitor: cannot reach %s' % ', '.join(k.split('/')[0] for k in down))
         except Exception as ex:          # never take the scheduler down
             log('monitor error: %r' % ex)
-    threading.Thread(target=go, daemon=True, name='monitor').start()
+        finally:
+            _run_lock.release()
+    try:
+        threading.Thread(target=go, daemon=True, name='monitor').start()
+    except Exception:
+        _run_lock.release()
+        raise
 
 
 if __name__ == '__main__':

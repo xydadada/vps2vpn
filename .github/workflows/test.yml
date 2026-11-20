@@ -1,5 +1,9 @@
 name: test
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 
@@ -14,21 +18,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m unittest -v tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops
-      - run: python -m compileall -q vps2vpn tools deploy
+      - run: python -m unittest discover -s tests -t . -p 'test_*.py' -v
+      - run: python -m compileall -q vps2vpn tools deploy tests
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: shellcheck -S warning install.sh deploy-mac.command tests/vps_acceptance.sh
-      - run: node --check vps2vpn/static/app.js
-      - name: PowerShell deployer parses and builds its window
+      - run: node --check vps2vpn/static/app.js && node --check vps2vpn/static/kit.js && node --check vps2vpn/static/member.js
+      - run: node --test tests/test_frontend.js tests/test_ui.js
+      - name: PowerShell deployment regressions
         shell: pwsh
         run: |
-          $e = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/deploy/deploy.ps1", [ref]$null, [ref]$e)
-          if ($e) { $e; exit 1 }
+          ./tests/test_deploy_powershell.ps1
 
   e2e:
     # real servers (Xray, Hysteria 2) and real clients (mihomo, sing-box) on one machine
@@ -52,6 +55,13 @@ jobs:
         env:
           V2V_E2E_TARGET: www.amd.com
         run: python3 tests/e2e_local.py bins
+      - name: Integration failure diagnostics
+        if: failure()
+        run: |
+          for log in /tmp/v2v-e2e-*/benchmark.*.log; do
+            [ -f "$log" ] || continue
+            tail -n 40 "$log"
+          done
 
   install:
     # the real installer on a fresh Ubuntu runner, then the acceptance checks
@@ -62,5 +72,13 @@ jobs:
         run: |
           tar -czf /tmp/v.tgz --exclude=__pycache__ install.sh vps2vpn
           sudo V2V_SRC=/tmp/v.tgz bash install.sh install
+      - name: Complete initial setup before active-service acceptance
+        run: |
+          sudo env PYTHONPATH=/usr/local/lib/vps2vpn/app python3 -c 'from vps2vpn.__main__ import quick_setup; quick_setup()'
+          sudo vps2vpn apply --force
+          sudo vps2vpn rules
       - name: Acceptance checks
         run: sudo bash tests/vps_acceptance.sh --full
+      - name: Service failure diagnostics
+        if: failure()
+        run: sudo journalctl -u vps2vpn -u vps2vpn-xray -u vps2vpn-hysteria -u vps2vpn-tuic -n 100 --no-pager

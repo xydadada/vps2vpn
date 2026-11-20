@@ -170,6 +170,7 @@ class AICheck(tu.Base):
         self.assertEqual(res['ip']['kind'], 'hosting')
         self.assertEqual(aicheck.place_name(res), '西雅图')
         self.assertEqual(aicheck.latest()['at'], res['at'])          # saved for the panel
+        self.assertEqual(os.stat(aicheck.FILE).st_mode & 0o077, 0)
 
     def test_blocked_region(self):
         from vps2vpn import aicheck

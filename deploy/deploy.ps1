@@ -67,7 +67,11 @@ function Restrict-Path([string]$p) {
   # only this Windows account may read it (ssh refuses keys others can read; logins stay private)
   $grant = if (Test-Path -LiteralPath $p -PathType Container) { "$($env:USERNAME):(OI)(CI)F" } else { "$($env:USERNAME):F" }
   & icacls.exe $p /inheritance:r /grant:r $grant | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'Could not restrict access to deployment secrets' }
 }
+
+# Redirected installer output contains the one-time administrator password.
+Restrict-Path $Work
 
 function Copy-Key([string]$src) {
   # Windows ssh refuses keys that other accounts can read, so use a private copy (deleted afterwards).
@@ -81,7 +85,11 @@ function Copy-Key([string]$src) {
 }
 
 function Get-SshArgs([string]$keyPath, [bool]$usePassword) {
-  $kh = Join-Path $Work 'known_hosts'
+  if (-not (Test-Path -LiteralPath $Records)) { New-Item -ItemType Directory -Force $Records | Out-Null }
+  Restrict-Path $Records
+  $kh = Join-Path $Records 'known_hosts'
+  if (-not (Test-Path -LiteralPath $kh)) { [IO.File]::WriteAllText($kh, '') }
+  Restrict-Path $kh
   $a = @('-F', 'none', '-p', "$Port", '-o', 'StrictHostKeyChecking=accept-new', '-o', "UserKnownHostsFile=`"$kh`"",
     '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8')
   if ($keyPath) { $a += @('-i', "`"$keyPath`"", '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes') }
@@ -120,7 +128,8 @@ function Start-Ssh([string[]]$sshArgs, [string]$remote, [string]$stdinFile) {
   $p = Start-Process -FilePath $SshExe -ArgumentList $argLine -RedirectStandardInput $stdinFile `
     -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden -PassThru
   $null = $p.Handle      # keep the handle, or ExitCode reads as empty once the process has finished
-  return @{ Proc = $p; Out = $out; Err = $err; Pos = 0; ErrPos = 0; Text = ''; Pending = '' }
+  return @{ Proc = $p; Out = $out; Err = $err; Pos = 0; ErrPos = 0; Text = ''; ResultText = ''; Show = '';
+    LineBuffers = @{}; Decoders = @{}; Deadline = [DateTime]::UtcNow.AddMinutes(20) }
 }
 
 function Read-New($job) {
@@ -136,21 +145,42 @@ function Read-New($job) {
         $buf = New-Object byte[] ($fs.Length - $job[$k[1]])
         $n = $fs.Read($buf, 0, $buf.Length)
         $job[$k[1]] += $n
-        $txt += [Text.Encoding]::UTF8.GetString($buf, 0, $n)
+        if (-not $job.Decoders[$k[0]]) { $job.Decoders[$k[0]] = [Text.Encoding]::UTF8.GetDecoder() }
+        $chars = New-Object char[] ([Text.Encoding]::UTF8.GetMaxCharCount($n))
+        $count = $job.Decoders[$k[0]].GetChars($buf, 0, $n, $chars, 0, $false)
+        $decoded = (-join $chars[0..($count - 1)]) -replace "\x1b\[[0-9;]*m", ''
+        if ($count -eq 0) { $decoded = '' }
+        $txt += $decoded
+        if ($k[0] -eq 'Out') { $job.ResultText += $decoded }
+        $job.Show += Get-ShowLines $job $decoded $false $k[0]
       }
     } finally { $fs.Close() }
   }
   return ($txt -replace "\x1b\[[0-9;]*m", '')
 }
 
-function Get-ShowLines($job, [string]$t, [bool]$final) {
-  # Complete lines to show in the log. The result line holds the new admin password, so it is never shown.
-  $job.Pending += $t
-  $parts = $job.Pending -split "`n"
-  if ($final) { $job.Pending = '' } else { $job.Pending = $parts[-1]; $parts = $parts[0..($parts.Count - 2)] }
-  $keep = @($parts | Where-Object { $_ -notmatch '^V2V_RESULT:' })
+function Get-ShowLines($job, [string]$t, [bool]$final, [string]$stream = 'Out') {
+  # Each stream has its own decoder and line buffer: stderr cannot splice a secret stdout prefix.
+  if (-not $job.LineBuffers) { $job.LineBuffers = @{} }
+  $pending = [string]$job.LineBuffers[$stream] + $t
+  $parts = $pending -split "`n"
+  if ($final) { $job.LineBuffers[$stream] = '' }
+  else {
+    $job.LineBuffers[$stream] = $parts[-1]
+    if ($parts.Count -eq 1) { return '' }
+    $parts = $parts[0..($parts.Count - 2)]
+  }
+  $keep = @($parts | Where-Object { $_ -notmatch 'V2V_RESULT:' })
   if ($keep.Count -eq 0) { return '' }
   return (($keep -join "`n") + $(if ($final) { '' } else { "`n" }))
+}
+
+function Take-ShowLines($job, [bool]$final) {
+  $show = [string]$job.Show; $job.Show = ''
+  if ($final) {
+    foreach ($stream in 'Out', 'Err') { $show += Get-ShowLines $job '' $true $stream }
+  }
+  return $show
 }
 
 function Get-Result([string]$text) {
@@ -185,6 +215,12 @@ $InstallCmd = {
 }
 
 function Check-Prereqs {
+  $address = $null
+  $validIp = [Net.IPAddress]::TryParse($Server, [ref]$address)
+  $validName = $Server.Length -le 253 -and $Server -cmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$'
+  if ((-not $validIp -and -not $validName) -or $User -cnotmatch '^[a-z_][a-z0-9_.-]{0,31}$' -or $Port -lt 1 -or $Port -gt 65535) {
+    throw '服务器地址、用户名或端口格式不对。'
+  }
   if (-not $SshExe) {
     throw '这台电脑没有 ssh 程序。Windows 10/11：设置 > 应用 > 可选功能 > 添加「OpenSSH 客户端」，然后再试。'
   }
@@ -228,10 +264,26 @@ function Merge-Record($res, [string]$mainHost) {
 }
 
 function Save-Record($rec) {
-  if (-not (Test-Path -LiteralPath $Records)) { New-Item -ItemType Directory -Force $Records | Out-Null; Restrict-Path $Records }
+  if (-not (Test-Path -LiteralPath $Records)) { New-Item -ItemType Directory -Force $Records | Out-Null }
+  Restrict-Path $Records
   $p = Get-RecordPath $Server
-  [IO.File]::WriteAllText($p, (ConvertTo-Json -InputObject $rec -Depth 8), (New-Object Text.UTF8Encoding($false)))
-  Restrict-Path $p
+  $tmp = Join-Path $Records ('.record-' + [Guid]::NewGuid().ToString('N'))
+  try {
+    [IO.File]::WriteAllText($tmp, '')
+    Restrict-Path $tmp
+    [IO.File]::WriteAllText($tmp, (ConvertTo-Json -InputObject $rec -Depth 8), (New-Object Text.UTF8Encoding($false)))
+    if ([IO.File]::Exists($p)) {
+      Restrict-Path $p
+      [IO.File]::Replace($tmp, $p, [NullString]::Value)
+    } else {
+      try { [IO.File]::Move($tmp, $p) }
+      catch [IO.IOException] {
+        if (-not [IO.File]::Exists($p)) { throw }
+        Restrict-Path $p
+        [IO.File]::Replace($tmp, $p, [NullString]::Value)
+      }
+    }
+  } finally { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } }
   return $p
 }
 
@@ -253,15 +305,17 @@ function Test-Quic([string]$h, [int]$p) {
   $u = New-Object Net.Sockets.UdpClient($fam)
   $u.Client.ReceiveTimeout = 3000
   try {
+    $u.Connect($h, $p)
     for ($i = 0; $i -lt 2; $i++) {
       try {
-        [void]$u.Send($pkt, $pkt.Length, $h, $p)
-        $ep = New-Object Net.IPEndPoint([Net.IPAddress]::Any, 0)
+        [void]$u.Send($pkt, $pkt.Length)
+        $any = if ($fam -eq [Net.Sockets.AddressFamily]::InterNetworkV6) { [Net.IPAddress]::IPv6Any } else { [Net.IPAddress]::Any }
+        $ep = New-Object Net.IPEndPoint($any, 0)
         $d = $u.Receive([ref]$ep)
         if ($d.Length -ge 7 -and ($d[0] -band 0x80) -and $d[1] -eq 0 -and $d[2] -eq 0 -and $d[3] -eq 0 -and $d[4] -eq 0) { return $true }
       } catch {}
     }
-  } finally { $u.Close() }
+  } catch { return $false } finally { $u.Close() }
   return $false
 }
 
@@ -308,6 +362,9 @@ using System.Security.Cryptography; using System.Security.Cryptography.X509Certi
 public static class V2VHttp {
   // POST to a panel. The certificate must be one any browser trusts, or the one saved at deploy time.
   public static string[] Post(string url, string body, string cookie, string pin) {
+    Uri target = new Uri(url);
+    if (target.Scheme != Uri.UriSchemeHttps || !String.IsNullOrEmpty(target.UserInfo))
+      throw new ArgumentException("Panel URL must use HTTPS without user information");
     ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
     req.ServerCertificateValidationCallback = delegate (object s, X509Certificate c, X509Chain ch, SslPolicyErrors e) {
@@ -316,6 +373,7 @@ public static class V2VHttp {
       byte[] h = SHA256.Create().ComputeHash(c.GetRawCertData());
       return BitConverter.ToString(h).Replace("-", "").ToLowerInvariant() == pin;
     };
+    req.AllowAutoRedirect = false;
     req.Method = "POST"; req.ContentType = "application/json"; req.Timeout = 30000;
     req.Headers["X-V2V"] = "1";
     if (!String.IsNullOrEmpty(cookie)) req.Headers["Cookie"] = cookie;
@@ -396,17 +454,18 @@ if ($Headless) {
     elseif ($Pass) { Set-AskPass $Pass }
     $a = Get-SshArgs $kp ([bool]$Pass)
     $j = Start-Ssh $a (& $ProbeCmd) $null
-    $j.Proc.WaitForExit()
+    if (-not $j.Proc.WaitForExit(60000)) { $j.Proc.Kill(); throw 'SSH connection timed out' }
     $t = Read-New $j
     if ($t -notmatch 'connected') { throw (Explain $t.Trim()) }
     Write-Output $t.Trim()
     $j = Start-Ssh $a (& $InstallCmd) (New-Payload)
     while (-not $j.Proc.HasExited) {
+      if ([DateTime]::UtcNow -ge $j.Deadline) { $j.Proc.Kill(); throw 'Installation exceeded 20 minutes' }
       Start-Sleep -Milliseconds 300; $x = Read-New $j; $j.Text += $x
-      $show = Get-ShowLines $j $x $false; if ($show) { Write-Host -NoNewline $show }
+      $show = Take-ShowLines $j $false; if ($show) { Write-Host -NoNewline $show }
     }
-    $x = Read-New $j; $j.Text += $x; Write-Host (Get-ShowLines $j $x $true)
-    $res = Get-Result $j.Text
+    $x = Read-New $j; $j.Text += $x; Write-Host (Take-ShowLines $j $true)
+    $res = Get-Result $j.ResultText
     Remove-Secrets
     if ($j.Proc.ExitCode -ne 0 -or -not $res) { throw "installer failed (exit $($j.Proc.ExitCode))" }
     $st = Complete-Deploy $res $Main $true
@@ -575,7 +634,7 @@ function Fill-Result($p, $st) {
   }
   $bad = @($st.Ports | Where-Object { -not $_.ok })
   if ($bad.Count) {
-    $how = if ($rec['cloud_firewall']) { "这台在 $($rec['cloud']) 上。$($rec['cloud_firewall'])" } else { '请到云服务商的网页控制台，找「防火墙 / 安全组」，添加一条规则：协议选「全部/所有」，来源 0.0.0.0/0。' }
+    $how = if ($rec['cloud_firewall']) { "这台在 $($rec['cloud']) 上。$($rec['cloud_firewall'])" } else { '请到云服务商的网页控制台，找「防火墙 / 安全组」，按检查列表分别开放需要的 TCP/UDP 端口。' }
     Add-Label ('有端口被云服务商的防火墙挡住了。' + $how) $y 88 $red $p | Out-Null; $y += 92
     $p.Controls.Add((New-Btn '我已放行，再检查一次' 20 $y 220 {
       $this.Enabled = $false; $this.Text = '正在检查…'; [Windows.Forms.Application]::DoEvents()
@@ -613,8 +672,8 @@ function Finish([bool]$ok, [string]$msg) {
   $timer.Stop()
   $btn.Enabled = $true; $btn.Text = '一键部署'
   if ($ok) {
-    $res = Get-Result $script:job.Text
-    $script:job.Text = ''
+    $res = Get-Result $script:job.ResultText
+    $script:job.Text = ''; $script:job.ResultText = ''
     Remove-Secrets
     $status.Text = '装好了，正在从这台电脑检查防火墙…'; [Windows.Forms.Application]::DoEvents()
     try { $st = Complete-Deploy $res $script:main $false }
@@ -631,10 +690,13 @@ function Finish([bool]$ok, [string]$msg) {
 
 $timer.Add_Tick({
   $j = $script:job
+  if (-not $j.Proc.HasExited -and [DateTime]::UtcNow -ge $j.Deadline) {
+    $j.Proc.Kill(); Finish $false 'SSH operation exceeded 20 minutes'; return
+  }
   $t = Read-New $j
   if ($t) {
     $j.Text += $t
-    if ($script:stage -eq 'install') { $show = Get-ShowLines $j $t $false; if ($show) { Say $show } }
+    if ($script:stage -eq 'install') { $show = Take-ShowLines $j $false; if ($show) { Say $show } }
   }
   if (-not $j.Proc.HasExited) { return }
   $t = Read-New $j; $j.Text += $t
@@ -645,8 +707,8 @@ $timer.Add_Tick({
     $script:stage = 'install'
     $script:job = Start-Ssh $script:sshArgs (& $InstallCmd) (New-Payload)
   } else {
-    $show = Get-ShowLines $j $t $true; if ($show) { Say $show }
-    if ($j.Proc.ExitCode -eq 0 -and (Get-Result $j.Text)) { Finish $true '' } else { Finish $false '安装过程出错了，详情见上面的日志。' }
+    $show = Take-ShowLines $j $true; if ($show) { Say $show }
+    if ($j.Proc.ExitCode -eq 0 -and (Get-Result $j.ResultText)) { Finish $true '' } else { Finish $false '安装过程出错了，详情见上面的日志。' }
   }
 })
 

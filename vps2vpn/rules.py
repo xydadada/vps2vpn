@@ -5,6 +5,7 @@ GeoIP data): `.mrs` files for Clash/mihomo, `.srs` files for sing-box, and `.lis
 rewritten into Shadowrocket's rule-set syntax (DOMAIN-SUFFIX / DOMAIN / IP-CIDR lines).
 """
 import ipaddress
+import http.client
 import os
 import threading
 import time
@@ -135,7 +136,10 @@ def mrs_behavior(name):
 def _fetch(url, timeout=60):
     req = urllib.request.Request(url, headers={'User-Agent': 'vps2vpn-rules'})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read(50 << 20)
+        data = r.read((50 << 20) + 1)
+    if len(data) > 50 << 20:
+        raise ValueError('rule set exceeds 50 MiB')
+    return data
 
 
 def refresh(log=print):
@@ -147,7 +151,7 @@ def refresh(log=print):
             dst = local_file(name, fmt)
             try:
                 data = fetch_converted(name, fmt)
-            except OSError as e:
+            except (OSError, ValueError, http.client.HTTPException) as e:
                 log('rules: %s.%s download failed: %s' % (name, ext(fmt), e))
                 continue
             old = os.path.getsize(dst) if os.path.exists(dst) else 0
@@ -170,10 +174,16 @@ _refresh_lock = threading.Lock()
 
 
 def refresh_in_background(log=print):
+    if not _refresh_lock.acquire(blocking=False):
+        return
+
     def go():
-        if _refresh_lock.acquire(blocking=False):
-            try:
-                refresh(log)
-            finally:
-                _refresh_lock.release()
-    threading.Thread(target=go, daemon=True).start()
+        try:
+            refresh(log)
+        finally:
+            _refresh_lock.release()
+    try:
+        threading.Thread(target=go, daemon=True).start()
+    except Exception:
+        _refresh_lock.release()
+        raise

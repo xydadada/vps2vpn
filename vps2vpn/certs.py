@@ -6,12 +6,15 @@ Hysteria 2 use a trusted certificate even when the owner has no domain name.
 The client below uses only the standard library plus the `openssl` command.
 """
 import base64
+import errno
+import functools
 import hashlib
 import http.server
 import ipaddress
 import json
 import os
 import re
+import socket
 import ssl
 import subprocess
 import tempfile
@@ -24,6 +27,16 @@ from . import paths, secure
 
 LE_DIRECTORY = 'https://acme-v02.api.letsencrypt.org/directory'
 LE_STAGING = 'https://acme-staging-v02.api.letsencrypt.org/directory'
+CERT_LOCK = threading.RLock()
+_issue_lock = threading.Lock()
+
+
+def _cert_locked(fn):
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        with CERT_LOCK:
+            return fn(*args, **kwargs)
+    return run
 
 
 def _openssl(*args, data=None):
@@ -52,12 +65,20 @@ def _san(host):
 
 
 # --- self-signed ----------------------------------------------------------------
+@_cert_locked
 def ensure_self_signed(host):
     """Create (or recreate for a new host) a 10-year self-signed ECDSA certificate."""
     paths.ensure_dirs()
     marker = paths.SELF_CRT + '.host'
-    if os.path.exists(paths.SELF_CRT) and os.path.exists(marker) and open(marker).read() == host:
-        return
+    if all(os.path.exists(p) for p in (paths.SELF_CRT, paths.SELF_KEY, marker)):
+        try:
+            with open(marker) as f:
+                matches = f.read() == host
+            if matches:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(paths.SELF_CRT, paths.SELF_KEY)
+                return
+        except (OSError, ssl.SSLError):
+            pass  # missing, corrupt or mismatched key: regenerate the complete fallback pair
     with tempfile.TemporaryDirectory() as d:
         key, crt = os.path.join(d, 'k'), os.path.join(d, 'c')
         _openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
@@ -90,36 +111,56 @@ def acme_names():
 _trust_cache = {}
 
 
+def _identity(host):
+    return str(ipaddress.ip_address(host)) if is_ip(host) else host.lower().rstrip('.')
+
+
+@_cert_locked
 def trusted(host):
     """A publicly trusted certificate for `host` is in place. Cached per file version and per minute."""
     if not host:
         return False
     try:
-        stamp = os.path.getmtime(paths.ACME_CRT)
+        stamp = (os.stat(paths.ACME_CRT).st_mtime_ns, os.stat(paths.ACME_KEY).st_mtime_ns)
     except OSError:
         return False
-    key = (host.lower(), stamp, int(time.time() // 60))
+    key = (_identity(host), stamp, int(time.time() // 60))
     if key not in _trust_cache:
         _trust_cache.clear()
-        _trust_cache[key] = acme_valid(1) and host.lower() in [n.lower() for n in acme_names()]
+        valid = acme_valid(1) and _identity(host) in [_identity(n) for n in acme_names()]
+        if valid:
+            try:
+                # Checking expiry/SAN alone also accepts staging and arbitrary self-signed certificates.
+                _openssl('verify', '-purpose', 'sslserver', '-untrusted', paths.ACME_CRT, paths.ACME_CRT)
+                ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(paths.ACME_CRT, paths.ACME_KEY)
+            except (OSError, RuntimeError):
+                valid = False
+        _trust_cache[key] = valid
     return _trust_cache[key]
 
 
-def current(host=None):
-    """(cert, key) paths to use right now."""
+def current(host=None, mode=None):
+    """(cert, key) for the selected mode; explicit self-signed mode never serves ACME files."""
     if host is None:
         from . import db
-        host = db.settings()['public_host']
-    if host and trusted(host):
+        s = db.settings()
+        host, mode = s['public_host'], s['cert_mode']
+    if mode != 'self' and host and trusted(host):
         return paths.ACME_CRT, paths.ACME_KEY
     return paths.SELF_CRT, paths.SELF_KEY
 
+
+def using_acme(s):
+    return s.get('cert_mode') != 'self' and trusted(s['domain'] or s['public_host'])
 
 def fingerprint(cert_path):
     """SHA-256 of the certificate (hex), what clients pin for a self-signed cert."""
     with open(cert_path) as f:
         pem = f.read()
-    der = ssl.PEM_cert_to_DER_cert(pem)
+    leaf = re.search(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', pem, re.S)
+    if not leaf:
+        raise ValueError('no certificate in PEM file')
+    der = ssl.PEM_cert_to_DER_cert(leaf.group(0))
     return hashlib.sha256(der).hexdigest()
 
 
@@ -213,16 +254,22 @@ class _ChallengeServer:
                 pass
 
         class S(http.server.ThreadingHTTPServer):
-            address_family = __import__('socket').AF_INET6
+            address_family = socket.AF_INET6
             daemon_threads = True
 
             def server_bind(self):
-                import socket
                 self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
                 super().server_bind()
 
         try:
-            self.httpd = S(('::', 80), H)
+            try:
+                self.httpd = S(('::', 80), H)
+            except OSError as e:
+                if e.errno not in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL):
+                    raise
+                # IPv6 may be disabled in the kernel or network namespace. Never hide EADDRINUSE:
+                # a different server owning port 80 still needs an actionable error.
+                self.httpd = http.server.ThreadingHTTPServer(('0.0.0.0', 80), H)
         except OSError as e:
             raise AcmeError('port 80 is busy or blocked (%s); Let\'s Encrypt needs it for a few seconds' % e)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
@@ -234,6 +281,11 @@ class _ChallengeServer:
 
 def issue(host, email='', staging=False, log=print):
     """Get a Let's Encrypt certificate for a domain or an IP address. Raises AcmeError on failure."""
+    with _issue_lock:
+        return _issue(host, email, staging, log)
+
+
+def _issue(host, email, staging, log):
     paths.ensure_dirs()
     if not os.path.exists(paths.ACME_ACCOUNT):
         pem = _openssl('genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048')
@@ -284,8 +336,11 @@ def issue(host, email='', staging=False, log=print):
             chain = chain.decode()
         if '-----BEGIN CERTIFICATE-----' not in chain:
             raise AcmeError('unexpected certificate response')
-        paths.write_atomic(paths.ACME_KEY, _pem(key), 0o640, 'vps2vpn')
-        paths.write_atomic(paths.ACME_CRT, chain.replace('\r', ''), 0o644, 'vps2vpn')
+        with CERT_LOCK:
+            suffix = '.staging' if staging else ''
+            paths.write_atomic(paths.ACME_KEY + suffix, _pem(key), 0o640, 'vps2vpn')
+            paths.write_atomic(paths.ACME_CRT + suffix, chain.replace('\r', ''), 0o644, 'vps2vpn')
+            _trust_cache.clear()
     log('ACME: certificate installed for %s' % host)
     return True
 

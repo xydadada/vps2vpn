@@ -190,7 +190,7 @@ def run():
     res = {'at': int(time.time()), 'country': cc, 'ip': ip, 'sites': {k: out[k] for k in SITES}}
     res['advice'] = advice(res)
     try:
-        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False), 0o644)
+        paths.write_atomic(FILE, json.dumps(res, ensure_ascii=False))
     except OSError:
         pass
     return res
@@ -209,14 +209,15 @@ def summary(res):
     if not res:
         return ''
     s = res['sites']
-    claude = 'ok' if s['claude']['status'] == 'ok' and s['claude_api']['status'] == 'ok' else \
-        ('blocked' if 'blocked' in (s['claude']['status'], s['claude_api']['status']) else s['claude_api']['status'])
+    statuses = (s['claude']['status'], s['claude_api']['status'])
+    claude = next((status for status in ('blocked', 'unreachable', 'unknown') if status in statuses),
+                  'ok' if statuses == ('ok', 'ok') else 'unknown')
     parts = [('Claude', claude), ('ChatGPT', s['chatgpt']['status']), ('Gemini', s['gemini']['status'])]
     return '  '.join('%s %s' % (n, MARK.get(st, '?')) for n, st in parts)
 
 
 def score(res):
-    """0-3: how many of Claude / ChatGPT / Gemini look usable (Claude counted twice as heavy for ties)."""
+    """0-4: how many of Claude / ChatGPT / Gemini look usable (Claude counted twice as heavy for ties)."""
     if not res:
         return -1
     s = res['sites']

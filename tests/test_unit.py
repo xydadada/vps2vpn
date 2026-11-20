@@ -109,7 +109,7 @@ class Users(Base):
         self.assertEqual(db.user(uid)['enabled'], 0)       # manual pause is never undone automatically
 
     def test_monthly_reset(self):
-        uid = db.add_user('bob', reset_day=1)
+        uid = db.add_user('bob', reset_day=1, last_reset='1970-01')
         db.add_traffic(uid, 10, 20)
         jobs.enforce()
         u = db.user(uid)

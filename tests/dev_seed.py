@@ -10,7 +10,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault('VPS2VPN_ROOT', os.path.join(HERE, '.dev'))
+os.environ['VPS2VPN_ROOT'] = os.environ.get('VPS2VPN_ROOT') or os.path.join(HERE, '.dev')
 os.environ['VPS2VPN_DEV'] = '1'
 sys.path.insert(0, HERE)
 
@@ -42,6 +42,6 @@ if not db.invites():
     members.register(rec['code'], '同事小王', secure.token(12))
     members.create_invite('admin', 100, 14, max_uses=5, expire_days=90, note='新朋友')
     members.request_more(ids['Bob'], 30, '这个月要考试，查资料多')
-open(os.path.join(os.environ['VPS2VPN_ROOT'], 'dev-logins.txt'), 'w', encoding='utf-8').write(
+paths.write_atomic(os.path.join(os.environ['VPS2VPN_ROOT'], 'dev-logins.txt'),
     'admin / %s\n小明 (member centre /member/) / %s\n' % (admin_pw, member_pw))
 print('seeded; logins in .dev/dev-logins.txt')

@@ -20,12 +20,19 @@ def names(s):
 
 def tls_info(s):
     """What clients need to trust Hysteria's certificate."""
+    with certs.CERT_LOCK:
+        return _tls_info(s)
+
+
+def _tls_info(s):
     host = s['public_host']
-    if certs.trusted(host):
+    if certs.using_acme(s):
         return {'sni': host, 'pin': '', 'pem': ''}
-    cert, _ = certs.current(host)
+    cert, _ = certs.current(host, s['cert_mode'])
     try:
-        return {'sni': host, 'pin': certs.fingerprint(cert), 'pem': open(cert).read()}
+        with open(cert, encoding='utf-8') as f:
+            pem = f.read()
+        return {'sni': host, 'pin': certs.fingerprint(cert), 'pem': pem}
     except OSError:
         return {'sni': host, 'pin': '', 'pem': ''}
 
@@ -56,22 +63,34 @@ def server_nodes(s, tls, label, local_id, u):
 
 
 def nodes(s, u):
-    """Protocol-neutral description of this user's proxies: this server first, then joined servers."""
+    """Protocol-neutral entries with one collision-free namespace for proxies and server groups."""
     from . import aicheck
-    out = server_nodes(s, tls_info(s), s['node_name'] or 'vps2vpn', u['id'], u)
-    for n in out:
-        n['ai_score'] = aicheck.score(aicheck.latest())
-    names = {n['name'] for n in out}
+    out = []
+    reserved = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL', 'direct'}
+    reserved.update(value for group in GROUP_NAMES.values() for value in group.values())
+
+    def append(settings, tls, label, local_id, score):
+        base = ' '.join(str(label or 'vps2vpn').replace(',', ' ').replace('=', '-').split()) or 'vps2vpn'
+        label, suffix = base, 1
+        while True:
+            more = server_nodes(settings, tls, label, local_id, u)
+            emitted = {n['name'] for n in more} | {label}
+            if not reserved.intersection(emitted):
+                break
+            suffix += 1
+            label = '%s %d' % (base, suffix)
+        reserved.update(emitted)
+        for n in more:
+            n['ai_score'] = score
+        out.extend(more)
+
+    append(s, tls_info(s), s['node_name'], u['id'], aicheck.score(aicheck.latest()))
     for x in s.get('servers') or []:
         info, lid = x.get('info'), (x.get('idmap') or {}).get(str(u['id']))
         if not x.get('enabled', True) or not info or lid is None:
-            continue                       # not synced yet: the next sync (within a minute) adds it
-        label = x['name'] if x['name'] not in names else x['name'] + ' ' + x['id'][:4]
-        more = server_nodes(info, info.get('tls') or {'sni': info['public_host'], 'pin': '', 'pem': ''}, label, lid, u)
-        for n in more:
-            n['ai_score'] = info.get('ai_score', -1)
-        names |= {n['name'] for n in more}
-        out += more
+            continue
+        append(info, info.get('tls') or {'sni': info['public_host'], 'pin': '', 'pem': ''},
+               x['name'], lid, info.get('ai_score', -1))
     return out
 
 
@@ -96,7 +115,8 @@ def ai_servers(ns, per):
 
 
 def userinfo_header(u):
-    total = int(u['quota_gb'] * (1 << 30)) if u['quota_gb'] else 0
+    from . import members
+    total = max(1, int(members.effective_quota(u) * (1 << 30))) if u['quota_gb'] else 0
     return 'upload=%d; download=%d; total=%d; expire=%d' % (u['used_up'], u['used_down'], total, u['expire_at'] or 0)
 
 
@@ -169,7 +189,7 @@ def clash(s, u, base_url):
         {'name': g['proxy'], 'type': 'select', 'proxies': [g['auto']] + ([x[0] for x in per] if many else []) + pn},
         # Hysteria 2 first: it copes best with lossy routes; Reality takes over when UDP is blocked.
         {'name': g['auto'], 'type': 'fallback' if not many else 'url-test',
-         'proxies': pn if not many else [x[0] for x in per], 'url': 'https://www.gstatic.com/generate_204',
+         'proxies': (pn or ['REJECT']) if not many else [x[0] for x in per], 'url': 'https://www.gstatic.com/generate_204',
          'interval': 300, 'lazy': True, **({'tolerance': 80} if many else {})},
     ]
     if many:      # one group per server: its protocols in fallback order; "Auto" picks the fastest server
@@ -226,7 +246,7 @@ def clash(s, u, base_url):
 
 def clash_yaml(s, u, base_url):
     """JSON is valid YAML 1.2, and every Clash/mihomo build reads it as a YAML profile."""
-    return '# vps2vpn %s - %s\n' % (u['name'], time.strftime('%Y-%m-%d %H:%M')) + \
+    return '# vps2vpn %s - %s\n' % (' '.join(u['name'].split()), time.strftime('%Y-%m-%d %H:%M')) + \
         json.dumps(clash(s, u, base_url), ensure_ascii=False, indent=1)
 
 
@@ -259,6 +279,19 @@ def singbox(s, u, base_url):
                          'reality': {'enabled': True, 'public_key': n['pbk'], 'short_id': n['sid']}}}
         outs.append(o)
     tags = [o['tag'] for o in outs]
+    if not tags:
+        # An empty urltest/selector is invalid. A disabled account must not
+        # silently turn its proxy route into a direct Internet connection.
+        return {
+            'log': {'level': 'warn'},
+            'inbounds': [
+                {'type': 'tun', 'tag': 'tun-in', 'address': ['172.19.0.1/30', 'fdfe:dcba:9876::1/126'],
+                 'auto_route': True, 'strict_route': True, 'stack': 'mixed'},
+                {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 7890},
+            ],
+            'outbounds': [{'type': 'direct', 'tag': 'direct'}],
+            'route': {'rules': [{'action': 'reject'}], 'auto_detect_interface': True},
+        }
     per = server_groups(ns)
     many = len(per) > 1
     groups = [{'type': 'selector', 'tag': g['proxy'], 'outbounds': [g['auto']] + ([x[0] for x in per] if many else []) + tags,
@@ -378,7 +411,7 @@ def shadowrocket(s, u, base_url, sub_url=''):
         groups.append('%s = url-test, %s, %s, tolerance=80' % (g['auto'], ', '.join(p[0] for p in per), test))
         groups += ['%s = fallback, %s, %s' % (label, ', '.join(m), test) for label, m in per if m]
     else:
-        groups.append('%s = fallback, %s, %s' % (g['auto'], ', '.join(pn) or 'DIRECT', test))
+        groups.append('%s = fallback, %s, %s' % (g['auto'], ', '.join(pn) or 'REJECT', test))
     if s.get('ai_group', True):
         groups.append('%s = select, %s' % (g['ai'], ', '.join((ai_servers(ok, per) if many else []) + [g['proxy']] + pn)))
     groups += ['%s = select, DIRECT, %s' % (g['cn'], g['proxy']), '%s = select, %s, DIRECT' % (g['final'], g['proxy'])]
@@ -417,7 +450,7 @@ def shadowrocket(s, u, base_url, sub_url=''):
     if sub_url:
         general.append('update-url = %s?format=shadowrocket' % sub_url)
     head = '# vps2vpn %s - %s\n# Nodes, routing and DNS in one file. Pick this config, set Global Routing to "Config".\n' % (
-        u['name'], time.strftime('%Y-%m-%d %H:%M'))
+        ' '.join(u['name'].split()), time.strftime('%Y-%m-%d %H:%M'))
     return head + '\n'.join(general) + '\n\n[Proxy]\n' + '\n'.join(lines) + '\n\n[Proxy Group]\n' + \
         '\n'.join(groups) + '\n\n[Rule]\n' + '\n'.join(rule_lines) + '\n'
 
