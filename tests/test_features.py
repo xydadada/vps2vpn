@@ -222,11 +222,10 @@ class Servers(tu.Base):
         web.apply_async = lambda force=False: None
         try:
             users = [{'id': 7, 'name': 'x', 'uuid': '00000000-0000-4000-8000-000000000007', 'hy2_pass': 'pass-seven', 'enabled': True},
-                     {'id': 9, 'name': 'own-user', 'uuid': '00000000-0000-4000-8000-000000000009', 'hy2_pass': 'pass-nine', 'enabled': False},
-                     {'id': 11, 'name': 'bad', 'uuid': '"},{"x', 'hy2_pass': 'pass-eleven', 'enabled': True}]
+                     {'id': 9, 'name': 'own-user', 'uuid': '00000000-0000-4000-8000-000000000009', 'hy2_pass': 'pass-nine', 'enabled': False}]
             ans = cluster.handle_sync(db.settings(), {'master': 'main', 'users': users})
             mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
-            self.assertEqual(set(mine), {7, 9})                 # 11 has a malformed uuid: skipped
+            self.assertEqual(set(mine), {7, 9})
             self.assertEqual(mine[7]['uuid'], '00000000-0000-4000-8000-000000000007')
             self.assertFalse(mine[9]['enabled'])
             self.assertEqual(ans['idmap'], {'7': mine[7]['id'], '9': mine[9]['id']})
@@ -249,6 +248,58 @@ class Servers(tu.Base):
                                                                           'users': users[:1]}))
         finally:
             web.apply_async = orig
+
+    def test_malformed_node_snapshot_cannot_delete_or_rewrite_accounts(self):
+        original = web.apply_async
+        web.apply_async = lambda force=False: None
+        legitimate = {'id': 7, 'name': 'remote', 'uuid': '00000000-0000-4000-8000-000000000007',
+                      'hy2_pass': 'pass-seven', 'enabled': True}
+        local = mk('local')
+        try:
+            cluster.handle_sync(db.settings(), {'master': 'main', 'master_id': 'main-one', 'users': [legitimate]})
+            before = [(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()]
+            scenarios = [
+                {'master': 'main', 'master_id': 'main-one', 'users': [dict(legitimate, id=8), dict(legitimate, id=8)]},
+                {'master': 'main', 'master_id': 'main-one', 'users': [legitimate, dict(legitimate, id=8)]},
+                {'master': 'main', 'master_id': 'main-one', 'users': [dict(legitimate, uuid='broken')]},
+                {'master': 'main', 'master_id': 'main-one', 'users': 'bad-not-a-list'},
+                {'master': 'main', 'master_id': 'main-one',
+                 'users': [dict(legitimate, uuid=db.user(local['id'])['uuid'])]},
+                {'master': 'main', 'master_id': 'main-one', 'users': [dict(legitimate, enabled='true')]},
+            ]
+            for value in scenarios:
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    cluster.handle_sync(db.settings(), value)
+                self.assertEqual([(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()], before)
+            self.assertEqual(db.settings()['node_master_id'], 'main-one')
+            rejected = cluster.handle_sync(db.settings(), {'master': 'legacy', 'users': []})
+            self.assertTrue(rejected['conflict'])
+        finally:
+            web.apply_async = original
+
+    def test_node_snapshot_rolls_back_after_second_insert_fails(self):
+        original_add, original_apply = db.add_user, web.apply_async
+        web.apply_async = lambda force=False: None
+        count = [0]
+        target = [{'id': i, 'name': 'remote%d' % i,
+                   'uuid': '00000000-0000-4000-8000-%012d' % i,
+                   'hy2_pass': 'pass-%d' % i, 'enabled': True} for i in (51, 52)]
+        before = [(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()]
+        def fail_second(*args, **kw):
+            count[0] += 1
+            if count[0] == 2:
+                raise RuntimeError('injected second account failure')
+            return original_add(*args, **kw)
+        db.add_user = fail_second
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'second account failure'):
+                cluster.handle_sync(db.settings(), {'master': 'main', 'master_id': 'new-main', 'users': target})
+        finally:
+            db.add_user = original_add
+            web.apply_async = original_apply
+        self.assertEqual([(u['id'], u['name'], u['uuid'], u['remote_id']) for u in db.users()], before)
+        self.assertEqual(db.settings()['node_master_id'], '')
+        self.assertEqual(count, [2])
 
     def test_main_side_counts_and_subscribes(self):
         u = mk('ann', 10)
