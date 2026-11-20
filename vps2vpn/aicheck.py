@@ -214,9 +214,17 @@ def latest():
     except (OSError, ValueError):
         return None
     sites = res.get('sites') if isinstance(res, dict) else None
-    if not isinstance(sites, dict) or not all(isinstance(sites.get(k), dict) and 'status' in sites[k]
-                                              for k in SITES):
+    if not isinstance(sites, dict) or not isinstance(res.get('ip', {}), dict):
         return None
+    if not isinstance(res.get('country', ''), str):
+        return None
+    # Merely having a status key is insufficient: malformed JSON may contain
+    # lists/dicts, which later crash summary() when used as dictionary keys.
+    allowed = {'ok', 'blocked', 'unreachable', 'unknown'}
+    for name in SITES:
+        site = sites.get(name)
+        if not isinstance(site, dict) or type(site.get('status')) is not str or site['status'] not in allowed:
+            return None
     return res
 
 
