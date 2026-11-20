@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6 (unreleased)
+
+**Reliability**
+- Rule mirror: a downloaded `.mrs` must be a complete Zstandard frame sequence and a `.srs` a complete zlib stream with a valid checksum (decoded in small pieces, never held in memory), so a cut-off download is not published (from #48). Any SRS version from 1 up is accepted, so a newer sing-box format is not refused.
+
 ## 0.2.5
 
 Follow-up on the integrated review of all earlier audit reports, plus review PRs #9, #11, #12, #18, #20, #22, #24–#26, #30, #31, #34, #36, #39, #41–#44 and #46.

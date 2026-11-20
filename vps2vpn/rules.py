@@ -149,7 +149,7 @@ def _valid_mrs_zstd_frame(data):
 
 def _valid_srs_zlib_stream(data):
     """Check SRS version and zlib checksum without allocating its expanded rule set."""
-    if len(data) <= 6 or not data.startswith(b'SRS') or not 1 <= data[3] <= 5:
+    if len(data) <= 6 or not data.startswith(b'SRS') or data[3] < 1:
         return False
     try:
         decoder = zlib.decompressobj()
