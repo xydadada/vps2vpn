@@ -493,6 +493,46 @@ class CoreOnlineTelemetry(tu.Base):
         self.assertTrue(meter.sample({}, data=second, users={7}))
         self.assertEqual(meter.acc[7], (20, 20))
 
+    def test_bounded_core_account_ids(self):
+        for value in (None, 'u0', 'u' + '9' * 5000, 'u４４', 'user7', 'u9223372036854775808'):
+            self.assertIsNone(cores._stat_uid(value))
+        self.assertEqual(cores._stat_uid('u7'), 7)
+        self.assertEqual(cores._stat_uid('u9223372036854775807'), (1 << 63) - 1)
+
+    def test_bad_xray_user_id_does_not_discard_good_traffic(self):
+        settings = dict(db.settings(), reality_enabled=True, hy2_enabled=False, tuic_enabled=False)
+        bad_name = 'user>>>u' + '9' * 5000 + '>>>traffic>>>uplink'
+        stats = {'stat': [
+            {'name': bad_name, 'value': 10},
+            {'name': 'user>>>u7>>>traffic>>>uplink', 'value': 100},
+            {'name': 'user>>>u8>>>traffic>>>downlink', 'value': 50},
+        ]}
+        with mock.patch.object(cores.os.path, 'exists', return_value=True), \
+             mock.patch.object(cores.subprocess, 'run',
+                               return_value=mock.Mock(returncode=0, stdout=json.dumps(stats))):
+            result = cores.collect_traffic(settings)
+        self.assertEqual(result, {7: (100, 0), 8: (0, 50)})
+
+    def test_bad_hysteria_user_id_does_not_discard_good_traffic(self):
+        settings = dict(db.settings(), reality_enabled=False, hy2_enabled=True, tuic_enabled=False)
+        counters = {'u' + '9' * 5000: {'tx': 10, 'rx': 10},
+                    'u7': {'tx': 5, 'rx': 6}}
+        with mock.patch.object(cores.urllib.request, 'urlopen',
+                               return_value=io.BytesIO(json.dumps(counters).encode())):
+            self.assertEqual(cores.collect_traffic(settings), {7: (5, 6)})
+
+    def test_bad_xray_online_marker_keeps_valid_online_users(self):
+        settings = dict(db.settings(), reality_enabled=True, hy2_enabled=False, tuic_enabled=False)
+
+        def answer(settings, command, *extra):
+            return 'u' + '9' * 5000 + ' u7 u8' if command == 'statsgetallonlineusers' else '"1.1.1.1": 1'
+
+        with mock.patch.object(cores.os.path, 'exists', return_value=True), \
+             mock.patch.object(cores, '_xray_api', side_effect=answer):
+            result = cores._online_detail(settings)
+        self.assertEqual(sorted(result), [7, 8])
+        self.assertEqual(result[7]['ips'], ['1.1.1.1'])
+
     def test_tuic_owner_rejects_bad_tags_and_unhashable_connection_ids(self):
         meter = cores.TuicMeter()
         self.assertIsNone(meter.owner(None))
