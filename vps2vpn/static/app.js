@@ -50,6 +50,7 @@ const T = {
     fix: '怎么修', tg: 'Telegram 告警', tg_tip: '流量快用完、有人被停用、服务挂了、IP 变了时发消息给你。① 在 Telegram 找 @BotFather 发 /newbot 建一个机器人，把它给的 token 贴到下面；② 将下面的配对命令发给你与机器人的私聊；③ 点「连接」。',
     tg_token: '机器人 token', tg_connect: '连接', tg_off: '关闭告警', tg_on: '告警已开启', tg_no_chat: '找不到匹配的私聊配对消息：发送下面的完整命令后再点连接。', tg_bad: 'token 不对，请从 @BotFather 重新复制。',
     tg_pair: '请把下面这行命令发送到与机器人的私聊（不要发送到群组）：',
+    tg_repair: '旧版或备份恢复的 Telegram 收件人尚未验证，告警和备份已暂停。请向原机器人私聊发送下面的配对命令，再点连接；如果沿用原 token，可以留空。',
     refresh: '刷新', syncing: '正在同步…', synced: '已同步', theme_auto: '跟随系统', theme_light: '浅色', theme_dark: '深色',
     no_users: '还没有使用者，点右上角添加。', proto_one: '至少要开一种协议',
     copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
@@ -153,6 +154,7 @@ const T = {
     fix: 'Fix', tg: 'Telegram alerts', tg_tip: 'Get a message when quota runs low, a user is paused, a service is down or the IP changes. 1) In Telegram, message @BotFather with /newbot and paste the token below. 2) Send the pairing command below to the bot in a private chat. 3) Press Connect.',
     tg_token: 'Bot token', tg_connect: 'Connect', tg_off: 'Turn off', tg_on: 'Alerts are on', tg_no_chat: 'No matching private-chat pairing message: send the full command below, then press Connect.', tg_bad: 'That token is not valid; copy it again from @BotFather.',
     tg_pair: 'Send this command to your bot in a private chat (not a group):',
+    tg_repair: 'This legacy or restored Telegram recipient is unverified. Alerts and backups are paused. Send the pairing command below to your bot in a private chat, then reconnect. Leave the token blank to reuse the existing bot.',
     refresh: 'Refresh', syncing: 'Syncing…', synced: 'Synced', theme_auto: 'System', theme_light: 'Light', theme_dark: 'Dark',
     no_users: 'No users yet. Add one with the button above.', proto_one: 'Turn on at least one protocol',
     copy_btn: 'Copy', nav_members: 'Members & invites', nav_servers: 'Servers', nav_monitor: 'Monitor & abuse', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
@@ -1232,6 +1234,7 @@ function drawSystem() {
   const tgTok = h('input', {type: 'password', placeholder: '123456789:AA…', autocomplete: 'off'});
   const tgPairCode = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
   const tgPairCommand = '/bind ' + tgPairCode;
+  const tgIntro = d.settings.tg_repair_needed ? t('tg_repair') : t('tg_tip');
   const tgCb = k => { const e = h('input', {type: 'checkbox', checked: !!d.settings[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
   const tgOffBtn = h('button', {class: 'btn sm'}, t('tg_off'));
   tgOffBtn.onclick = async () => { tgOffBtn.disabled = true; try { await api('telegram', {off: true}); await load(); drawSystem(); } catch (e) { err(e); tgOffBtn.disabled = false; } };
@@ -1243,7 +1246,7 @@ function drawSystem() {
   };
   const tgBody = tg ? h('div', {class: 'stack'}, h('div', null, chip('ok', t('tg_on'))), h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_cmds')),
       tgCb('tg_bot'), tgCb('tg_backup'), h('div', null, tgOffBtn))
-    : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_tip')), field(t('tg_token'), tgTok),
+    : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, tgIntro), field(t('tg_token'), tgTok),
       h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_pair')),
       h('code', {style: 'display:block;padding:12px;overflow-wrap:anywhere;user-select:all'}, tgPairCommand),
       h('div', null, tgConnBtn));

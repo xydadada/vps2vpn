@@ -129,6 +129,7 @@ DEFAULTS = {
     # Telegram alerts
     'tg_token': '',
     'tg_chat': '',
+    'tg_verified': False,       # old bindings are untrusted until an admin completes a fresh /bind
     'tg_backup': True,          # send the daily backup to the Telegram chat as well
     'tg_bot': True,             # answer /status, /users, /backup ... from the owner's chat
     'stats_secret': '',
@@ -581,6 +582,9 @@ def import_all(data):
     if not isinstance(data.get('settings'), dict) or not isinstance(data.get('users'), list):
         raise ValueError('not a vps2vpn backup file')
     keep = {k: v for k, v in data['settings'].items() if k in DEFAULTS}
+    # A backup can be old, copied from another install, or edited: it is never
+    # evidence that this bot/chat was verified on the restored installation.
+    keep['tg_verified'] = False
     cols = ('id', 'name', 'uuid', 'hy2_pass', 'sub_token', 'quota_gb', 'expire_at', 'reset_day', 'used_up',
             'used_down', 'enabled', 'disabled_reason', 'note', 'last_seen', 'last_reset', 'created_at',
             'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days')

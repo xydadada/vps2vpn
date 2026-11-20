@@ -32,13 +32,14 @@ def _target(s):
     s = dict(s or db.settings())
     cur = db.settings()
     s['tg_token'], s['tg_chat'] = cur.get('tg_token'), cur.get('tg_chat')
+    s['tg_verified'] = cur.get('tg_verified', False)
     return s
 
 
 def send(text, key=None, every=6 * 3600, s=None):
     """Send unless the same `key` was sent within `every` seconds. Never raises."""
     s = _target(s)
-    if not (s.get('tg_token') and s.get('tg_chat')):
+    if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True):
         return False
     now = time.monotonic()            # wall-clock jumps (NTP, manual set) must not mute or unmute alerts
     if key:
@@ -106,7 +107,7 @@ def find_chat(token, challenge):
 def send_file(name, data, caption='', s=None):
     """Send a document (e.g. the daily backup) to the owner's chat. Never raises."""
     s = _target(s)
-    if not (s.get('tg_token') and s.get('tg_chat')):
+    if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True):
         return False
     if isinstance(data, str):
         data = data.encode()
@@ -133,6 +134,7 @@ def _bot_binding_active(s):
     """A long-poll result or command response is valid only for the current owner binding."""
     cur = db.settings()
     return bool(cur.get('setup_done') and cur.get('tg_bot') and
+                cur.get('tg_verified') is True and s.get('tg_verified') is True and
                 cur.get('tg_token') and cur.get('tg_chat') and
                 cur['tg_token'] == s.get('tg_token') and
                 str(cur['tg_chat']) == str(s.get('tg_chat')))
@@ -158,7 +160,8 @@ def bot_loop(stop, handle, log):
     offset, token, primed = None, None, False
     while not stop.is_set():
         s = db.settings()
-        if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_bot') and s.get('setup_done')):
+        if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True
+                and s.get('tg_bot') and s.get('setup_done')):
             offset, primed = None, False
             stop.wait(30)
             continue

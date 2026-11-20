@@ -109,7 +109,7 @@ class TelegramCommands(tu.Base):
         self.assertEqual(json.loads(data)['format'], 'vps2vpn-backup-1')
 
     def test_bot_answers_only_the_owner(self):
-        db.set_settings(tg_token='1:x', tg_chat='42', setup_done=True)
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_verified=True, setup_done=True)
         calls, sent = [], []
         stop = threading.Event()
         batches = [{'result': [{'update_id': 1, 'message': {'chat': {'id': 42, 'type': 'private'}, 'from': {'id': 42}, 'text': '/old'}}]},   # before start
@@ -147,7 +147,7 @@ class TelegramCommands(tu.Base):
         )
         for changed in changes:
             with self.subTest(changed=changed):
-                db.set_settings(tg_token='1:x', tg_chat='42', tg_bot=True, setup_done=True)
+                db.set_settings(tg_token='1:x', tg_chat='42', tg_verified=True, tg_bot=True, setup_done=True)
                 handled, sent = [], []
                 stop = threading.Event()
                 poll_count = [0]
@@ -178,7 +178,7 @@ class TelegramCommands(tu.Base):
                 self.assertEqual(sent, [])
 
     def test_disabling_during_handler_cancels_reply_and_later_commands(self):
-        db.set_settings(tg_token='1:x', tg_chat='42', tg_bot=True, setup_done=True)
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_verified=True, tg_bot=True, setup_done=True)
         handled, sent = [], []
         stop = threading.Event()
         polls = [0]
@@ -209,7 +209,7 @@ class TelegramCommands(tu.Base):
         self.assertEqual(sent, [])
 
     def test_long_reply_stops_between_chunks_after_revocation(self):
-        db.set_settings(tg_token='1:x', tg_chat='42', tg_bot=True, setup_done=True)
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_verified=True, tg_bot=True, setup_done=True)
         snapshot = db.settings()
         sent = []
         orig = notify._call
