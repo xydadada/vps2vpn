@@ -2,7 +2,7 @@
 
 ## 0.2.5
 
-Follow-up on the integrated review of all earlier audit reports, plus review PRs #9, #11, #12, #18, #20, #22, #24–#26, #30, #31, #34 and #36.
+Follow-up on the integrated review of all earlier audit reports, plus review PRs #9, #11, #12, #18, #20, #22, #24–#26, #30, #31, #34, #36, #39 and #41–#44.
 
 **Security**
 - Telegram pairing: the panel shows a one-time `/bind` code; only the private chat whose own user sends it can become the alert and backup recipient (from #11). Bot commands are answered only in that private chat and only when the owner sent them, never from a group that happens to share the id (from #9).
@@ -22,6 +22,10 @@ Follow-up on the integrated review of all earlier audit reports, plus review PRs
 - Rule mirror: truncated downloads and HTTP-200 error pages are no longer published as rule sets (from #12), and a first Shadowrocket request that converts to nothing is not cached as an empty rule set (from #25).
 - Monitor: the bandwidth probe counts only a complete, uncompressed payload (from #18); a damaged history or AI-check file is skipped row by row instead of breaking the page (from #22); one malformed stream in the abuse scan no longer hides all the others (from #20).
 - Online-user and TUIC traffic counting skip malformed records from Hysteria and sing-box instead of stopping (an oversized or non-ASCII account tag included), and a malformed connection list no longer resets the traffic baseline (from #30).
+- Sync: a node answer must say `ok: true` (every version since 0.2.0 does), and a join code or saved node address with a broken or zero port is refused instead of failing later (from #43, #44).
+- The abuse scan treats a malformed Hysteria or TUIC stream list as "not measured" instead of as zero streams (from #42).
+- Rule mirror: a `.mrs` file must start with a Zstandard frame and a `.srs` file with `SRS`, so a plain-text HTTP-200 error page can no longer replace a good rule set (from #39).
+- Client updates: the panel also recognises the client's current file names (`vps2vpn-dev-1.0.4-…-windows-amd64-setup.exe`, nightly and `rs` builds), picks one default file per system, and orders versions correctly (1.0.4 above 1.0.4-nightly, rs.10 above rs.2) (from #41).
 - QR codes refuse text that does not fit instead of cutting the link short; the invite "revoke" button works again; with no users, configs no longer change (and restart the cores) on every apply; the "server unreachable" alert is sent outside the database transaction.
 
 ## 0.2.4

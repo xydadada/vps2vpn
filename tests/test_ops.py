@@ -9,7 +9,7 @@ import unittest
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
 from tests import test_features as tf
-from vps2vpn import aicheck, db, jobs, notify, paths
+from vps2vpn import aicheck, db, jobs, notify, paths, web
 
 
 class Renewal(tu.Base):
