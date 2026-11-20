@@ -49,6 +49,20 @@ class Secure(unittest.TestCase):
         self.assertFalse(secure.hmac_eq('', ''))
 
 
+class AdminEnabledValues(unittest.TestCase):
+
+    def test_user_enabled_values_share_settings_boolean_contract(self):
+        for val in (False, 0, 'false', '0', 'off', 'no', ''):
+            with self.subTest(value=val):
+                self.assertEqual(web.user_fields({'enabled': val}), {'enabled': 0})
+        for val in (True, 1, 'true', '1', 'on', 'yes'):
+            with self.subTest(value=val):
+                self.assertEqual(web.user_fields({'enabled': val}), {'enabled': 1})
+        for val in ('maybe', 2, None, [], {}, ['false']):
+            with self.subTest(value=val):
+                self.assertEqual(web.user_fields({'enabled': val}), 'enabled: expected true or false')
+
+
 class BenchSources(unittest.TestCase):
     """A refusing or breaking Cloudflare must not show up as a 0 Mb download."""
 
@@ -480,6 +494,45 @@ class Web(Base):
             return r.status, data, r
         finally:
             c.close()
+
+    def test_user_and_node_enabled_endpoints_reject_ambiguous_values(self):
+        db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
+        status, _, _ = self.req('POST', self.pp + '/api/login',
+                                {'username': 'admin', 'password': 'rightpassword'})
+        self.assertEqual(status, 200)
+        uid = db.add_user('toggle-test', 0)
+
+        for val, enabled in (('false', 0), ('yes', 1), (False, 0), (True, 1)):
+            with self.subTest(user_value=val):
+                status, _, _ = self.req('POST', self.pp + '/api/users/%d/save' % uid,
+                                        {'enabled': val})
+                self.assertEqual(status, 200)
+                self.assertEqual(db.user(uid)['enabled'], enabled)
+        for bad in ('unknown', [], 2, None):
+            with self.subTest(user_invalid=bad):
+                status, body, _ = self.req('POST', self.pp + '/api/users/%d/save' % uid,
+                                           {'enabled': bad})
+                self.assertEqual(status, 400)
+                self.assertIn(b'enabled', body)
+                self.assertEqual(db.user(uid)['enabled'], 1)
+
+        server_id = 'deadbeef'
+        db.set_settings(servers=[{'id': server_id, 'name': 'backup',
+                                  'url': 'https://example.org:443/admin', 'key': 'redacted',
+                                  'enabled': True, 'info': {}, 'idmap': {}}])
+        for val, enabled in (('false', False), ('yes', True), (0, False), (1, True)):
+            with self.subTest(node_value=val):
+                status, _, _ = self.req('POST', self.pp + '/api/servers/%s/save' % server_id,
+                                        {'enabled': val})
+                self.assertEqual(status, 200)
+                self.assertIs(db.settings()['servers'][0]['enabled'], enabled)
+        for bad in ('unknown', [], 2, None):
+            with self.subTest(node_invalid=bad):
+                status, body, _ = self.req('POST', self.pp + '/api/servers/%s/save' % server_id,
+                                           {'enabled': bad})
+                self.assertEqual(status, 400)
+                self.assertIn(b'enabled', body)
+                self.assertIs(db.settings()['servers'][0]['enabled'], True)
 
     def test_full_flow(self):
         st, body, _ = self.req('GET', '/')
