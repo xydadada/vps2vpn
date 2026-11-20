@@ -1,4 +1,4 @@
-<#
+﻿<#
   vps2vpn one-click deployer for Windows 10/11. Needs nothing extra: PowerShell, tar.exe and ssh.exe ship with Windows.
   Double-click deploy-windows.bat. Fill in the server IP, drop the SSH key file (or the whole .ssh folder) on the
   window or type the root password, press the button. Everything else is automatic: the server creates the admin
