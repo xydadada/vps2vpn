@@ -7,6 +7,7 @@ the server's own bandwidth. The last 288 rounds (24 hours) are kept.
 """
 import ipaddress
 import json
+import math
 import os
 import socket
 import ssl
@@ -186,12 +187,40 @@ def run_once(force_speed=False):
     return entry
 
 
+def _valid_history_entry(item):
+    """Skip corrupted rows: summary() assumes every site's result is a well-formed probe."""
+    if not isinstance(item, dict) or type(item.get('at')) is not int:
+        return False
+    sites = item.get('sites')
+    if not isinstance(sites, dict):
+        return False
+    for probe in sites.values():
+        if not isinstance(probe, dict) or type(probe.get('ok')) is not bool:
+            return False
+        if probe['ok']:
+            elapsed = probe.get('total')
+            if type(elapsed) not in (int, float) or not math.isfinite(elapsed):
+                return False
+    speed = item.get('speed')
+    if speed is not None:
+        if not isinstance(speed, dict) or type(speed.get('at', item['at'])) is not int:
+            return False
+        if 'mbps' in speed and (type(speed['mbps']) not in (int, float) or not math.isfinite(speed['mbps'])):
+            return False
+    return True
+
+
 def _load():
     global _hist
     if _hist is None:
         try:
             with open(FILE, encoding='utf-8') as f:
-                _hist = json.load(f)[-KEEP:]
+                saved = json.load(f)
+            # A valid JSON object is still a corrupt history file. Slicing it
+            # used to raise KeyError, taking the panel's monitor API down.
+            if not isinstance(saved, list):
+                raise ValueError('monitor history must be an array')
+            _hist = [item for item in saved[-KEEP:] if _valid_history_entry(item)]
         except (OSError, ValueError):
             _hist = []
     return _hist
