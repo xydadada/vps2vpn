@@ -1024,7 +1024,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                            'node_key', 'servers', 'server_month', 'admin_totp',
                                                            'line_reports')}
         public['totp_on'] = bool(s['admin_totp'])
-        public['tg_ready'] = bool(s['tg_token'] and s['tg_chat'])
+        public['tg_ready'] = bool(s['tg_token'] and s['tg_chat'] and s.get('tg_verified') is True)
+        public['tg_repair_needed'] = bool(s['tg_token'] and s['tg_chat'] and s.get('tg_verified') is not True)
         public['tg_token_set'] = bool(s['tg_token'])
         host = s['domain'] or s['public_host']
         return self.json({
@@ -1582,7 +1583,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'POST only'}, 405)
         d = self.body_json()
         if d.get('off'):
-            db.set_settings(tg_token='', tg_chat='')
+            db.set_settings(tg_token='', tg_chat='', tg_verified=False)
             return self.json({'ok': True})
         token = str(d.get('token') or s['tg_token']).strip()
         if not re.fullmatch(r'\d{5,15}:[A-Za-z0-9_-]{30,64}', token):
@@ -1598,7 +1599,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'cannot reach api.telegram.org: %s' % e}, 502)
         if not chat:
             return self.json({'error': 'no_chat'}, 400)
-        db.set_settings(tg_token=token, tg_chat=chat)
+        # Only this authenticated panel flow can trust a Telegram recipient.
+        # Old/restored chat IDs deliberately remain unverified until /bind.
+        db.set_settings(tg_token=token, tg_chat=chat, tg_verified=True)
         ok = notify.send('alerts are on / 告警已开启', s=db.settings())
         return self.json({'ok': ok, 'who': who})
 
