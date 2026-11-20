@@ -1,0 +1,1178 @@
+'use strict';
+/* vps2vpn panel. Built on kit.js, the component kit of the original admin console. No framework, no external scripts. */
+const T = {
+  zh: {
+    welcome: '欢迎使用 vps2vpn', welcome_sub: '三步把这台服务器变成你自己的 VPN，其它都已经自动设好。',
+    art_h: '一台服务器，\n一个属于你的 VPN。', art_p: '三种协议随时切换，订阅一键导入 Clash 和小火箭，流量、到期、证书、告警全自动。',
+    art_1: 'VLESS + REALITY · Hysteria 2 · TUIC v5', art_2: '自动证书、自动调优、自动备份', art_3: '一键体检，出问题告诉你怎么修',
+    admin: '管理员账号', username: '用户名', password: '密码（至少 8 位）', password2: '再输一次密码',
+    first_user: '第一个使用者的名字', server_addr: '服务器地址（IP 或域名，已自动识别）',
+    next: '下一步', back: '上一步', build: '一键建好 VPN', building: '正在搭建，大约 10 秒…',
+    advanced: '高级选项（不懂就别动）', lang: '语言 / Language',
+    login: '登录', login_intro: '输入安装时设置的管理员账号。连续输错 8 次会锁定 10 分钟。', logout: '退出登录', wrong: '用户名或密码错误',
+    nav_main: '运营', nav_infra: '服务器', nav_home: '总览', nav_users: '使用者', nav_settings: '协议与设置', nav_system: '体检与维护',
+    k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
+    live: '实时吞吐', down: '下行', up_: '上行', online: '在线连接', users_n: '个使用者', active_n: '正常', paused_n: '停用',
+    month: '近 30 天流量', today: '今日', avg7: '近 7 日均', server: '服务器', mem: '内存', load: '负载', uptime: '已运行',
+    live_chart: '实时流量', live_sub: '服务器网卡 · 3 分钟', days_chart: '每日流量', days_sub: '近 30 天，全部使用者',
+    services: '服务状态', running: '运行中', stopped: '未运行', off: '已关闭', unknown: '未知',
+    users: '使用者', add_user: '添加使用者', name: '名字', quota: '流量上限 (GB，0 = 不限)', expire: '到期日（留空 = 永久）',
+    reset_day: '每月几号重置流量（0 = 不重置）', note: '备注', save: '保存', cancel: '取消', del: '删除',
+    used: '已用', unlimited: '不限', never: '永久', status: '状态', expires: '到期', last_seen: '最近使用',
+    enabled: '正常', r_quota: '流量用完', r_expired: '已到期', r_manual: '手动停用', search: '搜索名字或备注',
+    share: '订阅', share_tip: '把链接或二维码发给使用者：手机扫码，或在 App 里「从 URL 导入」。',
+    copy: '复制订阅链接', open_page: '打开导入页面', rotate: '更换链接', reset: '清零流量',
+    confirm_del: '删除后他的链接立即失效，不能恢复。', confirm_rotate: '旧链接会立刻失效，需要把新链接重新发给他。',
+    confirm_reset: '把本月已用流量清零？', enable: '启用', disable: '停用', edit: '编辑', usage: '用量', actions: '操作',
+    s_basic: '基本', s_proto: '协议（可同时开，App 里随时切换）', s_route: '分流', s_cert: '证书',
+    node_name: '节点名字（显示在 App 里）', tune: '自动网络调优（BBR + 按内存调整缓冲区）',
+    reality: 'VLESS + REALITY', reality_d: 'TCP。最稳，伪装成访问大网站，几乎不会被识别。默认首选。',
+    reality_target: '伪装网站', reality_port: 'TCP 端口', test_targets: '自动挑最快的伪装网站',
+    hy2: 'Hysteria 2', hy2_d: 'UDP + QUIC。丢包严重、晚高峰拥堵的线路上最快。', hy2_port: 'UDP 端口', hy2_hop: 'UDP 端口跳跃（防运营商对单一端口限速）',
+    hy2_hop_range: '跳跃端口范围', hy2_obfs: '混淆密码（留空 = 不混淆，最快；UDP 被封时再开）',
+    tuic: 'TUIC v5', tuic_d: 'UDP + QUIC。另一种 QUIC 协议，Hysteria 2 被限速时的备选，0-RTT 握手延迟低。', tuic_port: 'UDP 端口',
+    block_ads: '屏蔽广告', block_bt: '禁止 BT 下载走服务器（防止机房投诉）', ai_group: '单独的「AI 服务」分组（ChatGPT、Claude、Gemini 等）',
+    ipv6_nodes: '同时提供 IPv6 节点（IPv4 线路卡的时候可以换着用）',
+    cert_mode: '证书方式', cert_auto: '自动申请免费证书（Let\'s Encrypt，支持纯 IP）', cert_self: '只用自签名证书',
+    domain: '域名（可选，有就填）', email: '邮箱（可选，证书快过期时提醒）', cert_now: '立即申请证书',
+    cert_ok: '受信任证书', cert_self_s: '自签名证书', cert_self_tip: '仍然全程加密，只是浏览器会提示不安全。',
+    saved: '已保存，正在生效…', change_pw: '修改管理员密码', old_pw: '当前密码', new_pw: '新密码',
+    backup: '备份与恢复', backup_tip: '每天自动备份一次（保留 14 天）。换服务器时下载备份，在新服务器上恢复即可。',
+    download_backup: '下载备份', restore: '从备份恢复', restore_ok: '已恢复',
+    ports: '防火墙端口', ports_tip: '需要在云服务商的防火墙 / 安全组里放行这些端口（服务器自己的防火墙已自动放行）。',
+    logs: '最近日志', restart: '重启代理服务', rules_refresh: '立即更新分流规则', rules_age: '分流规则更新于', ago: '前', version: '版本',
+    days: '天', hours: '小时', minutes: '分钟', bbr: 'BBR 加速', yes: '已开启', no: '未开启',
+    setup_bad: '这个设置链接无效。请用安装完成时屏幕上显示的完整链接打开。',
+    pw_mismatch: '两次密码不一样', pw_short: '密码至少 8 位', done_title: '搞定！', done_sub: '下面是你的订阅，扫码或点按钮导入到 App 就能用了。',
+    import_to: '一键导入', apps_hint: '电脑用 Clash Verge Rev / FlClash，安卓用 FlClash / Hiddify，苹果用 Shadowrocket / Stash / Karing。',
+    ai: 'AI 可用性', ai_tip: '从这台服务器测试能不能用 Claude、ChatGPT、Gemini。结果只作参考，封号还和支付方式、使用习惯有关。', ai_run: '重新检测', ai_never: '还没检测过，点「重新检测」（约 10 秒）。', ai_where: '位置', ai_net: '网络', ai_kind: 'IP 类型', ai_at: '检测时间', ai_others: '其他服务器', ai_ok: '能用', ai_blocked: '地区不支持', ai_unreachable: '连不上', ai_unknown: '不确定',
+    doctor: '一键体检', doctor_tip: '连不上、变慢时先点这里，它会逐项检查并告诉你怎么修。', doctor_run: '开始体检', doctor_ok: '全部正常', doctor_bad: '个问题',
+    fix: '怎么修', tg: 'Telegram 告警', tg_tip: '流量快用完、有人被停用、服务挂了、IP 变了时发消息给你。① 在 Telegram 找 @BotFather 发 /newbot 建一个机器人，把它给的 token 贴到下面；② 给你的新机器人随便发一句话；③ 点「连接」。',
+    tg_token: '机器人 token', tg_connect: '连接', tg_off: '关闭告警', tg_on: '告警已开启', tg_no_chat: '还没收到消息：请先在 Telegram 里给你的机器人发一句话，再点连接。', tg_bad: 'token 不对，请从 @BotFather 重新复制。',
+    refresh: '刷新', syncing: '正在同步…', synced: '已同步', theme_auto: '跟随系统', theme_light: '浅色', theme_dark: '深色',
+    no_users: '还没有使用者，点右上角添加。', proto_one: '至少要开一种协议',
+    copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
+    tab_home: '总览', tab_users: '用户', tab_members: '会员', tab_servers: '服务器', tab_monitor: '监控', tab_settings: '设置', tab_system: '体检',
+    online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', invited_by: '邀请人', eff_quota: '实际可用额度', history: '每日用量', history_sub: '近 30 天',
+    member_login: '会员中心登录', member_login_tip: '设置密码后，他可以用名字 + 密码登录会员中心（看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
+    login_on: '已设置密码', login_off: '未设置密码', set_pw: '设置 / 重置密码', clear_pw: '取消密码登录', pw_cleared: '已取消',
+    requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', answer: '回复（可选）',
+    pending: '待处理', approved: '已批准', rejected: '已拒绝',
+    invites: '邀请码', inv_tip: '管理员邀请码：自定义额度和有效期，不扣任何人的流量。会员也可以在会员中心用自己的额度生成邀请码。',
+    inv_make: '生成邀请码', inv_quota: '每个账号的流量 (GB，0 = 不限)', inv_life: '账号有效期（天，0 = 永久）', inv_uses: '可以用几次', inv_valid: '邀请码几天内有效', inv_reset: '每月几号重置（0 = 不重置）',
+    inv_none: '还没有邀请码。', inv_by: '生成者', inv_admin: '管理员', revoke: '撤销', copy_code: '复制邀请码', copy_link: '复制注册链接',
+    st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', used_by: '注册了',
+    member_centre: '会员中心', member_url: '会员中心地址（发给会员，或附在邀请码后面）', member_enabled: '开启会员中心', member_invites: '允许会员用自己的额度邀请朋友', member_requests: '允许会员申请增加流量', member_notice: '给会员的公告（显示在每个会员页面顶部，留空不显示）', save_notice: '保存公告',
+    servers: '已加入的服务器', servers_tip: '只有一台服务器？这一页不用管。有第二台（比如新加坡 + 美国）时：在另一台的面板复制它的「加入码」，贴到下面，点「添加服务器」。之后每个人的订阅里会同时有两台的节点，流量算在同一个额度里，用户只在这台管理。',
+    join_code: '本机加入码', join_tip: '只有反过来、要让这台被另一台管理时才用：把这串字复制到另一台面板的「多服务器」页面。它相当于这台服务器的钥匙，别发给别人。', reset_key: '换一个加入码',
+    reset_key_tip: '旧加入码立刻失效，主服务器那边要删掉本机重新添加。', add_server: '添加服务器', paste_code: '粘贴子服务器的加入码', server_name: '显示名字（如「东京」）',
+    no_servers: '还没有加入其它服务器。', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。那台服务器上的用户会在它下次同步时保留，可在那边删除。',
+    client_upd: 'vps2vpn 客户端更新', client_ver: '最新版本号（留空 = 按服务器上的安装包自动判断）', client_url: '下载链接（留空 = 用服务器上的安装包）', client_notes: '更新说明（显示给大家看，可不填）',
+    client_tip: '大家的 vps2vpn 客户端会在设置里提示「有新版本」，点一下用浏览器下载。不会自动安装。最省事的做法：把安装包（文件名像 vps2vpn-1.2.3-windows-setup.exe、vps2vpn-1.2.3-android.apk）放进服务器上的下面这个文件夹，什么都不用填。',
+    client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`,
+    renew: '服务器到期提醒', renew_at: '这台 VPS 哪天到期（续费日）', renew_note: '在哪里续费（例如 AWS Lightsail）',
+    renew_tip: '填了以后，到期前 7 天、3 天、1 天和当天用 Telegram 提醒你，总览页也会提示。不填就不提醒。按月付费的话每次续费后改成下个月的日期。',
+    renew_left: n => n > 0 ? `服务器还有 ${n} 天到期，记得续费` : n === 0 ? '服务器今天到期，请马上续费' : `服务器已过期 ${-n} 天，请检查是否已续费`,
+    renew_clear: '不提醒',
+    line_down: (n, name) => `最近 24 小时有 ${n} 个使用者的软件报告「${name}」连不上`,
+    line_far: '（是其他服务器的线路，请到那台的面板处理）',
+    change_port: '换一个端口', change_port_q: name => `把「${name}」换到一个新的随机端口？`,
+    change_port_tip: '端口被运营商封了或限速时用。换好后大家的软件更新一下订阅就能用（vps2vpn 客户端和多数软件 12 小时内会自动更新）。云服务器自带防火墙的（如 AWS Lightsail、阿里云、腾讯云），还要在云控制台放行新端口。',
+    port_changed: p => `已换到端口 ${p}。请让大家更新订阅；云防火墙也要放行这个端口。`,
+    managed_by: '本机正被主服务器管理：', server_month: '本机本月流量', cap: '每月流量上限 (GB，0 = 不限)', cap_day: '每月几号开始计算', cap_tip: '很多 VPS 按月限流量。到 80% 和 100% 时 Telegram 提醒你（不会自动断网）。',
+    monitor: '网站连通监控', monitor_tip: '服务器每 5 分钟自己访问一次这些网站，记录能不能打开、多快。用户说「某某网站打不开」时先看这里。', run_now: '立即检测',
+    region: '网站看到的地区', chatgpt_ok: 'ChatGPT 可用', chatgpt_bad: 'ChatGPT 不支持这个地区', speed: '服务器下载速度', uptime24: '24 小时可用率', median: '中位延迟',
+    no_data: '还没有数据，点「立即检测」。', monitor_enabled: '自动监控（每 5 分钟）',
+    abuse: '风控观察', abuse_tip: '只观察、不自动封：发现有人短时间连几百个目标（像扫描/跳板）、很多 IP 同时用一个账号（链接被转发）、大量发邮件端口连接时，记下来并发 Telegram 提醒，由你决定要不要停用。',
+    abuse_guard: '开启风控观察', scan_now: '立即扫描', streams: '连接', targets: '目标', ports_n: '端口', addrs: 'IP', flags: '信号', f_fanout: '大范围扫描', f_shared: '多人共用', f_mail: '发邮件',
+    e_timeout: '超时', e_reset: '连接被重置', e_dns: '域名解析失败', e_tls: 'TLS 握手失败', e_other: '打不开', events: '最近记录', no_events: '还没有记录。', coverage: '覆盖', abuse_none: '当前没有在线连接。', ok_quiet: '正常',
+    f_all: '全部', f_online: '在线', f_active: '正常', f_paused: '已停用', f_soon: '7 天内到期', f_low: '快用完',
+    s_id: '按添加顺序', s_name: '按名字', s_used: '按用量', s_exp: '按到期日', s_seen: '按最近使用',
+    selected: '已选', sel_all: '全选', clear_sel: '取消选择', b_reset: '清零流量', b_extend: '延期', b_addgb: '加流量', b_rotate: '换链接',
+    extend_days: '延长多少天（没设到期日的人不受影响）', add_gb_q: '每人增加多少 GB（不限量的人不受影响）', bulk_done: '已处理',
+    confirm_bulk_del: '删除后这些人的链接立即失效，不能恢复。', confirm_bulk_rotate: '这些人的旧链接会立刻失效，需要把新链接重新发给他们。',
+    batch_add: '批量添加', export_csv: '导出表格', batch_prefix: '名字前缀（生成 前缀-01、前缀-02…）', batch_count: '数量（1–200）', batch_made: '已创建',
+    max_ips: '同时在线设备上限（0 = 不限）', exp_mode: '到期方式', exp_never: '永久有效', exp_date: '指定日期', exp_first: '首次使用后开始计时', exp_days: '从今天起多少天',
+    exp_first_days: '首次使用后多少天到期', exp_waiting: '首用后', r_devices: '设备超限', dev_limit: '设备上限', no_match: '没有符合条件的使用者。',
+    sec: '登录安全', totp: '两步验证（2FA）', totp_tip: '开启后，登录时除了密码，还要输入手机验证器 App（Google Authenticator、Microsoft Authenticator、1Password 等）里的 6 位数字。就算密码泄露也登不进来。',
+    totp_on: '已开启', totp_off: '未开启', totp_enable: '开启两步验证', totp_disable: '关闭两步验证', totp_scan: '① 用验证器 App 扫码（或手动输入下面的密钥）　② 填入 App 显示的 6 位数字',
+    totp_code: '6 位验证码', totp_need: '请输入验证器 App 里的 6 位数字', totp_pw: '输入管理员密码确认关闭', totp_confirm: '确认开启',
+    logins: '最近登录', login_ok: '登录成功', login_fail: '密码错误', login_fail2fa: '验证码错误', sessions: '已登录的设备', logout_others: '退出其它所有设备', no_logins: '还没有记录。',
+    routing_custom: '自定义分流', routing_tip: '每行一个域名，自动包含子域名（写 example.com 就包括 www.example.com）。优先级：屏蔽 > 直连 > 走代理，都排在内置规则之前。保存后，App 下次更新订阅时生效。',
+    c_direct: '直连（不走代理）', c_proxy: '走代理', c_block: '屏蔽（拒绝连接）', ip_limit_pause: '设备超过上限时暂停 10 分钟（关掉则只提醒）',
+    tg_bot: '接受机器人命令', tg_backup: '每天把备份发到 Telegram', tg_cmds: '在 Telegram 里给机器人发：/status 服务器状态 · /users 每人用量 · /user 名字 · /doctor 体检 · /ai AI 可用性 · /backup 立即要一份备份。只回复你自己的聊天。',
+    sys24: '服务器负载', sys24_sub: 'CPU、内存 · 24 小时', net24: '服务器网络', net24_sub: '24 小时 · 每分钟一个点', cpu: 'CPU', no_hist: '每分钟记录一次，稍后再来看。', dev_events: '设备超限记录'
+  },
+  en: {
+    welcome: 'Welcome to vps2vpn', welcome_sub: 'Three steps turn this server into your own VPN. Everything else is set up for you.',
+    art_h: 'One server,\nyour own VPN.', art_p: 'Three protocols you can switch between, one-tap import into Clash and Shadowrocket, and quotas, expiry, certificates and alerts handled for you.',
+    art_1: 'VLESS + REALITY · Hysteria 2 · TUIC v5', art_2: 'Automatic certificates, tuning and backups', art_3: 'One-click health check that tells you how to fix things',
+    admin: 'Admin account', username: 'Username', password: 'Password (8+ characters)', password2: 'Repeat password',
+    first_user: 'Name of the first user', server_addr: 'Server address (IP or domain, detected automatically)',
+    next: 'Next', back: 'Back', build: 'Build my VPN', building: 'Building, about 10 seconds…',
+    advanced: 'Advanced (safe to skip)', lang: 'Language / 语言',
+    login: 'Log in', login_intro: 'Use the admin account you created during setup. 8 wrong tries lock sign-in for 10 minutes.', logout: 'Log out', wrong: 'Wrong username or password',
+    nav_main: 'Operate', nav_infra: 'Server', nav_home: 'Overview', nav_users: 'Users', nav_settings: 'Protocols & settings', nav_system: 'Health & upkeep',
+    k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
+    live: 'Live throughput', down: 'down', up_: 'up', online: 'Online', users_n: 'users', active_n: 'active', paused_n: 'paused',
+    month: 'Traffic, 30 days', today: 'Today', avg7: '7-day avg', server: 'Server', mem: 'Memory', load: 'Load', uptime: 'Uptime',
+    live_chart: 'Live traffic', live_sub: 'Server network · 3 minutes', days_chart: 'Daily traffic', days_sub: 'Last 30 days, all users',
+    services: 'Services', running: 'running', stopped: 'stopped', off: 'off', unknown: 'unknown',
+    users: 'Users', add_user: 'Add user', name: 'Name', quota: 'Quota (GB, 0 = unlimited)', expire: 'Expires (empty = never)',
+    reset_day: 'Monthly reset day (0 = never)', note: 'Note', save: 'Save', cancel: 'Cancel', del: 'Delete',
+    used: 'Used', unlimited: 'unlimited', never: 'never', status: 'Status', expires: 'Expires', last_seen: 'Last seen',
+    enabled: 'active', r_quota: 'quota used', r_expired: 'expired', r_manual: 'paused', search: 'Search name or note',
+    share: 'Subscription', share_tip: 'Send this link or QR code to the user. Scan it, or use "Import from URL" in the app.',
+    copy: 'Copy link', open_page: 'Open import page', rotate: 'New link', reset: 'Reset usage',
+    confirm_del: 'Their link stops working immediately. This cannot be undone.', confirm_rotate: 'The old link stops working immediately; send them the new one.',
+    confirm_reset: 'Reset this month\'s usage to zero?', enable: 'Enable', disable: 'Pause', edit: 'Edit', usage: 'Usage', actions: 'Actions',
+    s_basic: 'Basics', s_proto: 'Protocols (turn on several and switch in the app)', s_route: 'Routing', s_cert: 'Certificate',
+    node_name: 'Node name (shown in apps)', tune: 'Automatic network tuning (BBR + buffers sized to RAM)',
+    reality: 'VLESS + REALITY', reality_d: 'TCP. The most robust: looks like a visit to a big website. Default choice.',
+    reality_target: 'Camouflage site', reality_port: 'TCP port', test_targets: 'Pick the fastest camouflage site',
+    hy2: 'Hysteria 2', hy2_d: 'UDP + QUIC. Fastest on lossy or congested routes.', hy2_port: 'UDP port', hy2_hop: 'UDP port hopping (beats per-port throttling)',
+    hy2_hop_range: 'Hopping range', hy2_obfs: 'Obfuscation password (empty = off and fastest; turn on if UDP gets blocked)',
+    tuic: 'TUIC v5', tuic_d: 'UDP + QUIC. A second QUIC protocol to switch to if Hysteria 2 gets throttled; 0-RTT handshakes.', tuic_port: 'UDP port',
+    block_ads: 'Block ads', block_bt: 'Block BitTorrent through the server (avoids abuse complaints)', ai_group: 'Separate "AI" group (ChatGPT, Claude, Gemini…)',
+    ipv6_nodes: 'Also offer IPv6 entries (handy when the IPv4 route is slow)',
+    cert_mode: 'Certificate', cert_auto: 'Free certificate from Let\'s Encrypt (works with a bare IP)', cert_self: 'Self-signed only',
+    domain: 'Domain (optional)', email: 'E-mail (optional, expiry notices)', cert_now: 'Get certificate now',
+    cert_ok: 'Trusted certificate', cert_self_s: 'Self-signed', cert_self_tip: 'Still fully encrypted; browsers just show a warning.',
+    saved: 'Saved, applying…', change_pw: 'Change admin password', old_pw: 'Current password', new_pw: 'New password',
+    backup: 'Backup & restore', backup_tip: 'A backup is made every day (14 kept). To move servers, download one here and restore it on the new server.',
+    download_backup: 'Download backup', restore: 'Restore from backup', restore_ok: 'Restored',
+    ports: 'Firewall ports', ports_tip: 'Open these in your cloud provider\'s firewall / security group (the server\'s own firewall is already open).',
+    logs: 'Recent log', restart: 'Restart proxy services', rules_refresh: 'Update routing rules now', rules_age: 'Routing rules updated', ago: 'ago', version: 'Version',
+    days: 'd', hours: 'h', minutes: 'min', bbr: 'BBR', yes: 'on', no: 'off',
+    setup_bad: 'This setup link is not valid. Open the full link shown when installation finished.',
+    pw_mismatch: 'Passwords do not match', pw_short: 'Password needs 8+ characters', done_title: 'Done!', done_sub: 'Here is your subscription. Scan it or tap a button to import it into an app.',
+    import_to: 'Import', apps_hint: 'Desktop: Clash Verge Rev / FlClash. Android: FlClash / Hiddify. iPhone: Shadowrocket / Stash / Karing.',
+    ai: 'AI availability', ai_tip: 'Tests from this server whether Claude, ChatGPT and Gemini work. For reference only: bans also depend on payment and usage.', ai_run: 'Check again', ai_never: 'Not checked yet. Click "Check again" (about 10 s).', ai_where: 'Location', ai_net: 'Network', ai_kind: 'IP type', ai_at: 'Checked', ai_others: 'Other servers', ai_ok: 'works', ai_blocked: 'region blocked', ai_unreachable: 'unreachable', ai_unknown: 'unsure',
+    doctor: 'Health check', doctor_tip: 'Not connecting or slow? Run this first: it checks everything and tells you how to fix it.', doctor_run: 'Run check', doctor_ok: 'All good', doctor_bad: 'problem(s)',
+    fix: 'Fix', tg: 'Telegram alerts', tg_tip: 'Get a message when quota runs low, a user is paused, a service is down or the IP changes. 1) In Telegram, message @BotFather with /newbot and paste the token below. 2) Send your new bot any message. 3) Press Connect.',
+    tg_token: 'Bot token', tg_connect: 'Connect', tg_off: 'Turn off', tg_on: 'Alerts are on', tg_no_chat: 'No message yet: send your bot any message in Telegram, then press Connect.', tg_bad: 'That token is not valid; copy it again from @BotFather.',
+    refresh: 'Refresh', syncing: 'Syncing…', synced: 'Synced', theme_auto: 'System', theme_light: 'Light', theme_dark: 'Dark',
+    no_users: 'No users yet. Add one with the button above.', proto_one: 'Turn on at least one protocol',
+    copy_btn: 'Copy', nav_members: 'Members & invites', nav_servers: 'Servers', nav_monitor: 'Monitor & abuse', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
+    tab_home: 'Home', tab_users: 'Users', tab_members: 'Members', tab_servers: 'Servers', tab_monitor: 'Monitor', tab_settings: 'Settings', tab_system: 'Health',
+    online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', invited_by: 'Invited by', eff_quota: 'Effective quota', history: 'Daily usage', history_sub: 'last 30 days',
+    member_login: 'Member centre login', member_login_tip: 'With a password they can log in to the member centre by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
+    login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password login', pw_cleared: 'Removed',
+    requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', answer: 'Reply (optional)',
+    pending: 'pending', approved: 'approved', rejected: 'declined',
+    invites: 'Invite codes', inv_tip: 'Admin codes: any quota and lifetime, nobody is charged. Members can also make codes from their own quota in the member centre.',
+    inv_make: 'Create code', inv_quota: 'Quota per account (GB, 0 = unlimited)', inv_life: 'Account lifetime (days, 0 = forever)', inv_uses: 'Uses', inv_valid: 'Code valid for (days)', inv_reset: 'Monthly reset day (0 = never)',
+    inv_none: 'No invite codes yet.', inv_by: 'By', inv_admin: 'admin', revoke: 'Revoke', copy_code: 'Copy code', copy_link: 'Copy sign-up link',
+    st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', used_by: 'registered',
+    member_centre: 'Member centre', member_url: 'Member centre address (send it to members or with an invite code)', member_enabled: 'Member centre on', member_invites: 'Members may invite friends from their own quota', member_requests: 'Members may ask for more quota', member_notice: 'Notice for members (shown at the top of every member page; empty = none)', save_notice: 'Save notice',
+    servers: 'Joined servers', servers_tip: 'Only one server? You can ignore this page. With a second one (say Singapore + US): copy the other server\'s join code from its panel, paste it below and press Add server. Every subscription then lists both servers, traffic counts against the same quota, and users are managed here only.',
+    join_code: 'Join code of this server', join_tip: 'Only for the other way round, when another server should manage this one: paste this code into that server\'s Servers page. It is a key to this server: keep it private.', reset_key: 'New join code',
+    reset_key_tip: 'The old code stops working at once; remove and re-add this server on the main server.', add_server: 'Add server', paste_code: 'Paste the join code of the node', server_name: 'Display name (e.g. "Tokyo")',
+    no_servers: 'No other servers yet.', last_sync: 'synced', sync_now: 'Sync now', remove: 'Remove', remove_tip: 'Its entries disappear from subscriptions. Accounts on that server stay until removed there.',
+    client_upd: 'vps2vpn app updates', client_ver: 'Latest version (empty = from the installers on the server)', client_url: 'Download link (empty = the installers on the server)', client_notes: 'What is new (shown to everyone, optional)',
+    client_tip: 'The vps2vpn app shows "new version" in its settings and opens the download in the browser; it never installs by itself. Easiest: put the installers (named like vps2vpn-1.2.3-windows-setup.exe, vps2vpn-1.2.3-android.apk) in the folder below and leave these empty.',
+    client_found: (v, p) => `Installers found on the server: version ${v} (${p}); only people with a valid subscription link can download them.`, client_none: d => `No installers on the server yet. Put them in ${d}.`,
+    renew: 'Renewal reminder', renew_at: 'Date this VPS must be renewed', renew_note: 'Where to renew (e.g. AWS Lightsail)',
+    renew_tip: 'You get a Telegram reminder 7, 3 and 1 days before and on the day, and a note on the overview. Leave empty for no reminder.',
+    renew_left: n => n > 0 ? `The server must be renewed in ${n} day(s)` : n === 0 ? 'The server must be renewed today' : `The renewal date passed ${-n} day(s) ago`,
+    renew_clear: 'No reminder',
+    line_down: (n, name) => `In the last 24 hours ${n} account(s) reported that ${name} does not connect`,
+    line_far: ' (a line of another server: fix it in that server panel)',
+    change_port: 'Use another port', change_port_q: name => `Move ${name} to a new random port?`,
+    change_port_tip: 'For a port that gets blocked or throttled. Everyone then updates the subscription (most apps do it within 12 hours). With a cloud firewall (AWS Lightsail, Alibaba, Tencent...) also open the new port there.',
+    port_changed: p => `Moved to port ${p}. Ask everyone to update the subscription and open the port in the cloud firewall.`,
+    managed_by: 'This server is managed by main server: ', server_month: 'This server, this month', cap: 'Monthly traffic cap (GB, 0 = none)', cap_day: 'Billing period starts on day', cap_tip: 'Many VPS plans cap monthly traffic. You get a Telegram alert at 80% and 100% (nothing is cut off).',
+    monitor: 'Site reachability', monitor_tip: 'Every 5 minutes the server opens these sites itself and records whether and how fast they load. Check here first when someone says a site does not work.', run_now: 'Check now',
+    region: 'Region sites see', chatgpt_ok: 'ChatGPT available', chatgpt_bad: 'ChatGPT does not serve this region', speed: 'Server download speed', uptime24: '24 h availability', median: 'median',
+    no_data: 'No data yet. Press "Check now".', monitor_enabled: 'Automatic checks (every 5 minutes)',
+    abuse: 'Abuse watch', abuse_tip: 'Observation only, never automatic bans: accounts that hit hundreds of targets at once (scanner/relay), are used from many addresses (shared link) or send lots of mail are logged and announced on Telegram; you decide.',
+    abuse_guard: 'Abuse watch on', scan_now: 'Scan now', streams: 'Streams', targets: 'Targets', ports_n: 'Ports', addrs: 'IPs', flags: 'Signals', f_fanout: 'wide scan', f_shared: 'shared', f_mail: 'mail',
+    e_timeout: 'timed out', e_reset: 'connection reset', e_dns: 'DNS failed', e_tls: 'TLS failed', e_other: 'failed', events: 'Recent events', no_events: 'Nothing recorded yet.', coverage: 'Coverage', abuse_none: 'No open connections right now.', ok_quiet: 'normal',
+    f_all: 'All', f_online: 'Online', f_active: 'Active', f_paused: 'Paused', f_soon: 'Expiring in 7 days', f_low: 'Almost used up',
+    s_id: 'Order added', s_name: 'Name', s_used: 'Usage', s_exp: 'Expiry', s_seen: 'Last seen',
+    selected: 'Selected', sel_all: 'Select all', clear_sel: 'Clear', b_reset: 'Reset usage', b_extend: 'Extend', b_addgb: 'Add GB', b_rotate: 'New links',
+    extend_days: 'Days to add (accounts without an expiry are unchanged)', add_gb_q: 'GB to add per person (unlimited accounts are unchanged)', bulk_done: 'Done:',
+    confirm_bulk_del: 'Their links stop working immediately. This cannot be undone.', confirm_bulk_rotate: 'Their old links stop working at once; send them the new ones.',
+    batch_add: 'Add many', export_csv: 'Export CSV', batch_prefix: 'Name prefix (makes prefix-01, prefix-02 …)', batch_count: 'How many (1–200)', batch_made: 'Created',
+    max_ips: 'Devices online at once (0 = no limit)', exp_mode: 'Expiry', exp_never: 'Never expires', exp_date: 'On a date', exp_first: 'Counted from first use', exp_days: 'Days from today',
+    exp_first_days: 'Days after first use', exp_waiting: 'after first use', r_devices: 'too many devices', dev_limit: 'Device limit', no_match: 'No users match.',
+    sec: 'Sign-in security', totp: 'Two-step verification (2FA)', totp_tip: 'When on, signing in also needs the 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password …). A leaked password alone is not enough.',
+    totp_on: 'on', totp_off: 'off', totp_enable: 'Turn on 2FA', totp_disable: 'Turn off 2FA', totp_scan: '1) Scan with your authenticator app (or type the key below)  2) Enter the 6-digit code it shows',
+    totp_code: '6-digit code', totp_need: 'Enter the 6-digit code from your authenticator app', totp_pw: 'Enter the admin password to turn it off', totp_confirm: 'Turn on',
+    logins: 'Recent sign-ins', login_ok: 'signed in', login_fail: 'wrong password', login_fail2fa: 'wrong code', sessions: 'Signed-in devices', logout_others: 'Sign out all other devices', no_logins: 'Nothing recorded yet.',
+    routing_custom: 'Custom routing', routing_tip: 'One domain per line; subdomains are included (example.com covers www.example.com). Block wins over direct, direct over proxy, and all of them come before the built-in rules. Apps pick changes up on their next subscription update.',
+    c_direct: 'Direct (no proxy)', c_proxy: 'Through the proxy', c_block: 'Block', ip_limit_pause: 'Pause for 10 minutes when over the device limit (off = warn only)',
+    tg_bot: 'Answer bot commands', tg_backup: 'Send the daily backup to Telegram', tg_cmds: 'Send your bot: /status server status · /users usage per person · /user NAME · /doctor health check · /ai AI availability · /backup a backup now. Only your own chat is answered.',
+    sys24: 'Server load', sys24_sub: 'CPU, memory · 24 hours', net24: 'Server network', net24_sub: '24 hours · one point a minute', cpu: 'CPU', no_hist: 'Recorded once a minute; check back soon.', dev_events: 'Device limit events'
+  }
+};
+let L = (navigator.language || '').startsWith('zh') ? 'zh' : 'en';
+const t = k => (T[L] && T[L][k]) || T.en[k] || k;
+const S = {view: 'home', data: null, days: [], timer: null, charts: {}, q: '', f: 'all', sort: 'id', sel: new Set(), sys: [], sysAt: 0};
+const GB = 1073741824;
+
+function setLang(l) {
+  L = l === 'en' ? 'en' : 'zh'; KT = L === 'en' ? KT_EN : KT_ZH;
+  document.documentElement.lang = L === 'zh' ? 'zh-CN' : 'en';
+}
+async function api(path, body, opts = {}) {
+  let r;
+  try {
+    r = await fetch('api/' + path, body === undefined ? {credentials: 'same-origin', cache: 'no-store'} : {
+      method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-V2V': '1'}, body: JSON.stringify(body)});
+  } catch (e) { throw Error(KT.net); }
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* empty */ }
+  if (r.status === 401 && !opts.quiet) { renderLogin(); throw Error('login'); }
+  if (!r.ok) throw Error(j.error || (KT.failed + ' (' + r.status + ')'));
+  return j;
+}
+const err = e => { if (e.message !== 'login') toast(e.message, 'err'); };
+function dur(s) {
+  if (s == null) return '—';
+  const d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d} ${t('days')} ${hh} ${t('hours')}` : hh ? `${hh} ${t('hours')} ${m} ${t('minutes')}` : `${m} ${t('minutes')}`;
+}
+const last30 = () => { const d = []; for (let i = 29; i >= 0; i--) d.push(new Date(Date.now() - i * 864e5).toISOString().slice(0, 10)); return d; };
+const dateStr = ts => ts ? new Date(ts * 1000).toISOString().slice(0, 10) : t('never');
+const field = (label, input, hint) => h('label', {class: 'field'}, h('span', null, label), input, hint ? h('em', null, hint) : null);
+const check = (label, input) => h('label', {class: 'check'}, input, h('span', null, label));
+const panel = (title, sub, right, ...body) => h('div', {class: 'panel'},
+  h('div', {class: 'panel-h'}, h('h3', null, title), sub ? h('span', {class: 'sub'}, sub) : null, right ? h('div', {class: 'right'}, right) : null),
+  h('div', {class: 'panel-b'}, ...body));
+const tip = text => h('p', {class: 'muted m-tip', style: 'margin:0 0 12px'}, text);
+const chip = (kind, text) => h('span', {class: 'chip ' + kind}, text);
+const legend = () => h('div', {class: 'legend'}, h('span', {style: '--c:var(--down)'}, t('down')), h('span', {style: '--c:var(--up)'}, t('up_')));
+const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, 'vps2vpn'), h('small', null, 'SELF-HOSTED VPN')));
+const AVA = ['#e5432a', '#3f5fe6', '#0b9e86', '#d4860f', '#8b5cf6', '#db2777', '#0891b2'];
+
+/* ---------------- start ---------------- */
+async function boot() {
+  let hello;
+  try { hello = await api('hello', undefined, {quiet: true}); } catch (e) { document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
+  setLang(hello.language);
+  Theme.apply(Theme.get());
+  if (!hello.setup_done) return renderSetup();
+  if (!hello.logged_in) return renderLogin();
+  renderShell();
+}
+
+/* the split sign-in layout of the original console, used for setup and login */
+function loginFrame(card) {
+  const cv = h('canvas', {id: 'lineArt', 'aria-hidden': 'true'});
+  const art = h('section', {class: 'login-art'}, brand(),
+    h('div', null, h('h2', {style: 'white-space:pre-line'}, t('art_h')), h('p', null, t('art_p')),
+      h('div', {class: 'points'}, h('span', null, icon('shield'), t('art_1')), h('span', null, icon('bolt'), t('art_2')), h('span', null, icon('check'), t('art_3')))), cv);
+  document.body.replaceChildren(h('div', {class: 'login'}, art, h('section', {class: 'login-form'}, h('div', {class: 'login-card'}, card))));
+  Ticker.add({el: cv, tick(tm) {
+    const {ctx, w, h: hh} = setupCanvas(cv); ctx.clearRect(0, 0, w, hh);
+    [['#ff6b4a', .62], ['#7b93ff', .74], ['#3fe0c5', .86]].forEach(([c, y0], k) => {
+      const pts = []; for (let i = 0; i <= 40; i++) pts.push([i / 40 * w, hh * y0 + Math.sin(i / 6 + k * 2) * hh * .05]);
+      ctx.strokeStyle = alpha(c, .35); ctx.lineWidth = 2; ctx.beginPath(); traceMonotone(ctx, pts, true); ctx.stroke();
+      for (let j = 0; j < 5; j++) {
+        const p = ((tm / 9000 + j / 5 + k * .13) % 1), i = Math.floor(p * 40), f = p * 40 - i, a = pts[i], b = pts[Math.min(40, i + 1)];
+        const x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f, g = ctx.createRadialGradient(x, y, 0, x, y, 14);
+        g.addColorStop(0, alpha(c, .9)); g.addColorStop(1, alpha(c, 0)); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 14, 0, 7); ctx.fill();
+      }
+    });
+    return !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }});
+}
+
+/* ---------------- setup wizard ---------------- */
+async function renderSetup() {
+  const token = new URLSearchParams(location.search).get('setup') || '';
+  let info;
+  try { info = await api('setup-info?token=' + encodeURIComponent(token), undefined, {quiet: true}); } catch (e) {
+    loginFrame(h('div', null, h('div', {class: 'kicker'}, 'SETUP'), h('h1', null, 'vps2vpn'), h('p', {class: 'intro'}, t('setup_bad')))); return;
+  }
+  const w = {step: 0, username: 'admin', password: '', password2: '', first_user: L === 'zh' ? '我' : 'me', host: info.host,
+    reality_target: info.target, hy2_enabled: true, tuic_enabled: true, block_ads: true};
+  const draw = () => {
+    const steps = h('div', {class: 'steps'}, [0, 1, 2].map(i => h('i', {class: i <= w.step ? 'on' : ''})));
+    const kids = [h('div', {class: 'kicker'}, 'SETUP · ' + (w.step + 1) + ' / 3'), steps];
+    const next = h('button', {class: 'btn primary', type: 'submit'}, t('next'));
+    const back = h('button', {class: 'btn', type: 'button', onclick: () => { keep(); w.step--; draw(); }}, t('back'));
+    const f = {};
+    if (w.step === 0) {
+      f.lang = h('select', null, h('option', {value: 'zh'}, '中文'), h('option', {value: 'en'}, 'English')); f.lang.value = L;
+      f.lang.onchange = () => { setLang(f.lang.value); w.first_user = L === 'zh' ? '我' : 'me'; renderSetupAgain(); };
+      kids.push(h('h1', null, t('welcome')), h('p', {class: 'intro'}, t('welcome_sub')), field(t('lang'), f.lang), next);
+    } else if (w.step === 1) {
+      f.user = h('input', {type: 'text', autocomplete: 'username', value: w.username});
+      f.pw = h('input', {type: 'password', autocomplete: 'new-password'}); f.pw.value = w.password;
+      f.pw2 = h('input', {type: 'password', autocomplete: 'new-password'}); f.pw2.value = w.password2;
+      kids.push(h('h1', null, t('admin')), field(t('username'), f.user), field(t('password'), f.pw), field(t('password2'), f.pw2), h('div', {class: 'row'}, back, next));
+    } else {
+      f.first = h('input', {type: 'text', value: w.first_user, maxlength: '32'});
+      f.host = h('input', {type: 'text', value: w.host}); f.target = h('input', {type: 'text', value: w.reality_target});
+      f.hy2 = h('input', {type: 'checkbox', checked: w.hy2_enabled}); f.tuic = h('input', {type: 'checkbox', checked: w.tuic_enabled});
+      f.ads = h('input', {type: 'checkbox', checked: w.block_ads});
+      next.textContent = t('build');
+      kids.push(h('h1', null, t('first_user')), field(t('name'), f.first),
+        h('details', {class: 'more'}, h('summary', null, t('advanced')), h('div', null, field(t('server_addr'), f.host), field(t('reality_target'), f.target),
+          check(t('hy2'), f.hy2), check(t('tuic'), f.tuic), check(t('block_ads'), f.ads))),
+        h('div', {class: 'row'}, back, next));
+    }
+    const keep = () => {
+      if (f.user) { w.username = f.user.value.trim(); w.password = f.pw.value; w.password2 = f.pw2.value; }
+      if (f.first) { w.first_user = f.first.value.trim(); w.host = f.host.value.trim(); w.reality_target = f.target.value.trim();
+        w.hy2_enabled = f.hy2.checked; w.tuic_enabled = f.tuic.checked; w.block_ads = f.ads.checked; }
+    };
+    const form = h('form', {class: 'stack'}, ...kids);
+    form.onsubmit = async e => {
+      e.preventDefault(); keep();
+      if (w.step === 1 && w.password.length < 8) return toast(t('pw_short'), 'err');
+      if (w.step === 1 && w.password !== w.password2) return toast(t('pw_mismatch'), 'err');
+      if (w.step < 2) { w.step++; return draw(); }
+      next.disabled = true; next.textContent = t('building');
+      try {
+        await api('setup', {token, username: w.username, password: w.password, first_user: w.first_user,
+          settings: {language: L, public_host: w.host, reality_target: w.reality_target, hy2_enabled: w.hy2_enabled,
+            tuic_enabled: w.tuic_enabled, block_ads: w.block_ads}});
+        history.replaceState(null, '', location.pathname);
+        await new Promise(r => setTimeout(r, 2500));
+        S.view = 'users';
+        await renderShell();
+        const u = S.data.users[0];
+        if (u) openUser(u.id, true);
+      } catch (er) { err(er); next.disabled = false; next.textContent = t('build'); }
+    };
+    loginFrame(form);
+    (form.querySelector('input,select') || next).focus();
+  };
+  const renderSetupAgain = draw;
+  draw();
+}
+
+/* ---------------- login ---------------- */
+function renderLogin() {
+  clearInterval(S.timer);
+  const u = h('input', {type: 'text', autocomplete: 'username', required: true});
+  const p = h('input', {type: 'password', autocomplete: 'current-password', required: true});
+  const b = h('button', {class: 'btn primary', type: 'submit'}, t('login'));
+  const msg = h('div', {class: 'err', role: 'status'});
+  const code = h('input', {type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', pattern: '[0-9]*', class: 'otp'});
+  const codeField = field(t('totp_code'), code); codeField.hidden = true;
+  const f = h('form', null, h('div', {class: 'kicker'}, 'ADMIN CONSOLE'), h('h1', null, t('login')), h('p', {class: 'intro'}, t('login_intro')),
+    field(t('username'), u), field(t('password').replace(/（.*|\(.*/, ''), p), codeField, b, msg);
+  f.onsubmit = async e => {
+    e.preventDefault(); b.disabled = true; msg.textContent = '';
+    try { await api('login', {username: u.value, password: p.value, code: code.value}, {quiet: true}); renderShell(); }
+    catch (er) {
+      b.disabled = false;
+      if (er.message === 'totp_required') { codeField.hidden = false; msg.textContent = t('totp_need'); code.focus(); return; }
+      if (er.message === 'wrong 2FA code') { code.value = ''; msg.textContent = t('login_fail2fa'); code.focus(); return; }
+      p.value = ''; code.value = ''; msg.textContent = er.message === 'wrong username or password' ? t('wrong') : errText(er.message); p.focus();
+    }
+  };
+  loginFrame(f); u.focus();
+}
+
+/* ---------------- shell: sidebar + pages, same layout as the original console ---------------- */
+const VIEWS = [['home', 'home', 'nav_home'], ['users', 'users', 'nav_users'], ['members', 'key', 'nav_members'],
+  ['servers', 'server', 'nav_servers'], ['monitor', 'globe', 'nav_monitor'], ['settings', 'sliders', 'nav_settings'], ['system', 'pulse', 'nav_system']];
+const badge = () => S.data && S.data.pending_requests ? h('span', {class: 'badge', id: 'reqBadge'}, S.data.pending_requests) : h('span', {id: 'reqBadge', hidden: true});
+async function saveSettings(body, redraw) { try { await api('settings', body); toast(t('saved')); await load(); if (redraw) redraw(); } catch (e) { err(e); } }
+async function load() {
+  S.data = await api('state'); setLang(S.data.settings.language);
+  Clock.seen(S.data.health.time || Date.now() / 1000);
+  return S.data;
+}
+async function loadDays() { try { S.days = (await api('traffic?days=30')).days || []; } catch (e) { S.days = []; } }
+
+async function renderShell() {
+  await Promise.all([load(), loadDays()]);
+  const nav = v => h('button', {class: 'nav-item', 'data-view': v[0], onclick: () => go(v[0])}, icon(v[1]), t(v[2]), v[0] === 'members' ? badge() : null);
+  const themeBtn = (v, ic, k) => h('button', {'data-theme-btn': v, title: t(k)}, icon(ic));
+  const side = h('aside', {class: 'side'}, brand(),
+    h('nav', {class: 'nav'}, h('div', {class: 'nav-label'}, t('nav_main')), nav(VIEWS[0]), nav(VIEWS[1]), nav(VIEWS[2]),
+      h('div', {class: 'nav-label'}, t('nav_infra')), nav(VIEWS[3]), nav(VIEWS[4]), nav(VIEWS[5]), nav(VIEWS[6])),
+    h('div', {class: 'side-foot'}, h('div', {class: 'seg', role: 'group'}, themeBtn('auto', 'auto', 'theme_auto'), themeBtn('light', 'sun', 'theme_light'), themeBtn('dark', 'moon', 'theme_dark')),
+      h('button', {class: 'btn ghost', onclick: async () => { await api('logout', {}); location.reload(); }}, icon('out'), t('logout')),
+      h('div', {class: 'ver'}, 'v' + S.data.version)));
+  const top = h('header', {class: 'top'}, h('div', null, h('div', {class: 'kicker', id: 'viewKicker'}), h('h1', {id: 'viewTitle'})),
+    h('div', {class: 'top-actions'}, h('span', {id: 'livePill', class: 'live-pill'}, 'LIVE'), h('span', {class: 'sync', id: 'syncInfo'}, t('synced')),
+      h('button', {class: 'btn', onclick: () => refresh(true)}, icon('refresh'), t('refresh')),
+      h('button', {class: 'btn primary', id: 'newBtn', onclick: () => editUser(null)}, icon('plus'), t('add_user'))));
+  const tabbar = h('nav', {class: 'tabbar'}, VIEWS.map(v => h('button', {'data-view': v[0], onclick: () => go(v[0])}, icon(v[1]), t('tab_' + v[0]))));
+  const drawer = h('aside', {class: 'drawer', id: 'drawer', 'aria-hidden': 'true'});
+  const scrim = h('div', {class: 'scrim', id: 'scrim', onclick: closeDrawer});
+  document.body.replaceChildren(h('div', {class: 'app'}, side, h('main', {class: 'main'}, top, h('div', {id: 'view'}))), tabbar, scrim, drawer);
+  Theme.mount();
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  go(S.view);
+  clearInterval(S.timer);
+  S.timer = setInterval(() => { if (!document.hidden) refresh(false); }, 5000);
+}
+
+function go(v) {
+  S.view = v;
+  for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-current', b.dataset.view === v ? 'page' : 'false');
+  const vv = VIEWS.find(x => x[0] === v);
+  $('viewTitle').textContent = t(vv[2]); $('viewKicker').textContent = t('k_' + v);
+  S.charts = {};
+  S.fresh = true; setTimeout(() => { S.fresh = false; }, 400);     // only a page change fades in, not a refresh
+  ({home: drawHome, users: drawUsers, members: drawMembers, servers: drawServers, monitor: drawMonitor, settings: drawSettings, system: drawSystem})[v]();
+}
+
+async function refresh(manual) {
+  if (!$('view')) return;
+  try {
+    $('syncInfo').textContent = t('syncing');
+    await load();
+    if (manual || S.view === 'home') await loadDays();
+    $('livePill').classList.remove('stale'); $('syncInfo').textContent = t('synced') + ' · ' + new Date().toLocaleTimeString(KT.locale, {hour12: false});
+  } catch (e) { $('livePill').classList.add('stale'); $('syncInfo').textContent = e.message; return; }
+  const rb = $('reqBadge'); if (rb) { rb.textContent = S.data.pending_requests || ''; rb.hidden = !S.data.pending_requests; rb.className = S.data.pending_requests ? 'badge' : ''; }
+  if (S.view === 'home') updateHome();
+  else if (S.view === 'users' && (manual || !document.querySelector('#view input:focus'))) drawUsers();
+  else if (manual) go(S.view);
+}
+
+/* ---------------- overview ---------------- */
+function drawHome() {
+  const kpi = (cls, ic, label, id, unit, sub) => h('div', {class: 'panel kpi ' + cls}, h('div', {class: 'kpi-l'}, icon(ic), label),
+    h('div', {class: 'kpi-v'}, h('span', {class: 'num', id}, '—'), h('small', {id: id + 'U'}, unit)), h('div', {class: 'kpi-s', id: id + 'S'}, sub || ''));
+  const live = h('div', {class: 'chart h200'}), days = h('div', {class: 'chart h160'}), sysBox = h('div', {class: 'chart h160'}), netBox = h('div', {class: 'chart h160'});
+  $('view').replaceChildren(h('section', {class: 'page'},
+    h('div', {class: 'alerts', id: 'alerts'}),
+    h('div', {class: 'kpis'},
+      kpi('hero', 'bolt', t('live'), 'kDown', 'Mbps ' + t('down')),
+      kpi('', 'users', t('online'), 'kOnline', ''),
+      kpi('', 'gauge', t('month'), 'kMonth', 'GB'),
+      kpi('', 'server', t('server'), 'kMem', '% ' + t('mem'))),
+    h('div', {class: 'grid g-2-1'},
+      panel(t('live_chart'), t('live_sub'), legend(), live),
+      panel(t('services'), null, null, h('div', {id: 'svcList'}))),
+    panel(t('days_chart'), t('days_sub'), legend(), days),
+    h('div', {class: 'grid g-2'},
+      panel(t('sys24'), t('sys24_sub'), h('div', {class: 'legend'}, h('span', {style: '--c:var(--accent)'}, t('cpu')), h('span', {style: '--c:var(--us)'}, t('mem'))), sysBox),
+      panel(t('net24'), t('net24_sub'), legend(), netBox))));
+  S.charts.live = new LiveChart(live, {span: 180, delay: 7.5});
+  S.charts.days = new DayBars(days);
+  S.charts.sys = new HistChart(sysBox, {max: 100, unit: v => Math.round(v) + '%',
+    series: [{key: 'cpu', color: 'accent', label: t('cpu'), fill: true}, {key: 'mem', color: 'us', label: t('mem')}]});
+  S.charts.net = new HistChart(netBox, {min: 1, unit: v => fmt.mbps(v) + ' Mbps',
+    series: [{key: 'down', color: 'down', label: '↓', fill: true}, {key: 'up', color: 'up', label: '↑'}]});
+  loadSys(true);
+  S.charts.tw = {down: new Tween($('kDown'), v => fmt.mbps(v)), online: new Tween($('kOnline'), v => v == null ? '—' : String(Math.round(v))),
+    month: new Tween($('kMonth'), v => v == null ? '—' : (v / GB).toFixed(v >= 100 * GB ? 0 : 1)), mem: new Tween($('kMem'), v => v == null ? '—' : String(Math.round(v)))};
+  updateHome();
+}
+/* 24-hour history: lines over a fixed time axis, gaps where the panel was not running */
+class HistChart {
+  constructor(el, o) {
+    this.el = el; this.o = Object.assign({pad: [12, 8, 20, 8]}, o); this.cv = h('canvas'); this.tip = h('div', {class: 'tip hide'}); el.append(this.cv, this.tip);
+    this.pts = []; this.hover = null; this.dirty = true;
+    el.addEventListener('pointermove', e => { this.hover = e.offsetX; this.dirty = true; Ticker.start(); });
+    el.addEventListener('pointerleave', () => { this.hover = null; this.tip.classList.add('hide'); this.dirty = true; Ticker.start(); });
+    new ResizeObserver(() => { this.dirty = true; Ticker.start(); }).observe(el); Ticker.add(this);
+  }
+  set(pts) { this.pts = pts; this.dirty = true; Ticker.start(); }
+  tick() { if (!this.dirty) return false; this.dirty = false; this.draw(); return false; }
+  draw() {
+    const P = Palette.v, {ctx, w, h: H} = setupCanvas(this.cv), [pt, pr, pb, pl] = this.o.pad, pts = this.pts;
+    ctx.clearRect(0, 0, w, H);
+    if (pts.length < 2) { ctx.fillStyle = P.muted; ctx.font = '12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(t('no_hist'), w / 2, H / 2); ctx.textAlign = 'left'; return; }
+    const t1 = pts[pts.length - 1].t, t0 = Math.max(pts[0].t, t1 - 86400);
+    let max = this.o.max;
+    if (!max) { max = this.o.min || 1; for (const p of pts) for (const s of this.o.series) max = Math.max(max, p[s.key] || 0); max *= 1.15; }
+    const X = tt => pl + (w - pl - pr) * (tt - t0) / Math.max(1, t1 - t0), Y = v => pt + (H - pt - pb) * (1 - Math.min(max, Math.max(0, v)) / max);
+    ctx.font = '10.5px ' + Palette.mono; ctx.textBaseline = 'bottom';
+    const step = niceStep(max, 3);
+    for (let v = step; v < max * .999; v += step) {
+      const y = Math.round(Y(v)) + .5; ctx.strokeStyle = alpha(P.line || '#888', .9); ctx.setLineDash([3, 5]); ctx.beginPath(); ctx.moveTo(pl, y); ctx.lineTo(w - pr, y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = P.muted; ctx.fillText(this.o.unit(v), pl + 2, y - 3);
+    }
+    ctx.strokeStyle = P.line; ctx.beginPath(); ctx.moveTo(pl, H - pb + .5); ctx.lineTo(w - pr, H - pb + .5); ctx.stroke();
+    ctx.fillStyle = P.muted; ctx.textBaseline = 'top'; ctx.textAlign = 'center';
+    const span = t1 - t0, every = span > 43200 ? 4 : span > 14400 ? 2 : span > 3600 ? 1 : 0;
+    if (every) for (let x = Math.ceil(t0 / 3600) * 3600; x <= t1; x += 3600) {
+      const d = new Date(x * 1000); if (d.getHours() % every) continue;
+      const px = X(x); if (px < pl + 16 || px > w - pr - 16) continue; ctx.fillText(String(d.getHours()).padStart(2, '0') + ':00', px, H - pb + 5);
+    } else { ctx.textAlign = 'right'; ctx.fillText(new Date(t1 * 1000).toLocaleTimeString(KT.locale, {hour12: false, hour: '2-digit', minute: '2-digit'}), w - pr, H - pb + 5); }
+    ctx.textAlign = 'left';
+    const vis = pts.filter(p => p.t >= t0);
+    for (const s of [...this.o.series].reverse()) {
+      const col = P[s.color] || s.color, segs = [[]];
+      vis.forEach((p, i) => { if (i && p.t - vis[i - 1].t > 900) segs.push([]); if (p[s.key] != null) segs[segs.length - 1].push([X(p.t), Y(p[s.key])]); });
+      for (const seg of segs) {
+        if (seg.length < 2) continue;
+        if (s.fill) { const g = ctx.createLinearGradient(0, pt, 0, H - pb); g.addColorStop(0, alpha(col, .28)); g.addColorStop(1, alpha(col, 0));
+          ctx.beginPath(); traceMonotone(ctx, seg, true); ctx.lineTo(seg[seg.length - 1][0], H - pb); ctx.lineTo(seg[0][0], H - pb); ctx.closePath(); ctx.fillStyle = g; ctx.fill(); }
+        ctx.beginPath(); traceMonotone(ctx, seg, true); ctx.strokeStyle = col; ctx.lineWidth = s.fill ? 1.8 : 1.5; ctx.lineJoin = 'round'; ctx.stroke();
+      }
+    }
+    if (this.hover != null) {
+      const tt = t0 + (this.hover - pl) / (w - pl - pr) * (t1 - t0); let best = null;
+      for (const p of vis) if (!best || Math.abs(p.t - tt) < Math.abs(best.t - tt)) best = p;
+      if (best) {
+        const x = X(best.t); ctx.strokeStyle = alpha(P.text, .35); ctx.beginPath(); ctx.moveTo(x + .5, pt); ctx.lineTo(x + .5, H - pb); ctx.stroke();
+        for (const s of this.o.series) if (best[s.key] != null) { ctx.fillStyle = P[s.color] || s.color; ctx.beginPath(); ctx.arc(x, Y(best[s.key]), 3.5, 0, 7); ctx.fill(); }
+        this.tip.classList.remove('hide'); this.tip.style.left = x + 'px'; this.tip.style.top = '44px';
+        this.tip.textContent = new Date(best.t * 1000).toLocaleTimeString(KT.locale, {hour12: false, hour: '2-digit', minute: '2-digit'}) + '　' +
+          this.o.series.map(s => s.label + ' ' + (best[s.key] == null ? '—' : this.o.unit(best[s.key]))).join('  ');
+      }
+    }
+  }
+}
+async function loadSys(force) {
+  if (!force && Date.now() - S.sysAt < 60000) return;
+  S.sysAt = Date.now();
+  try {
+    const r = await api('sys-history');
+    // 5-minute averages: one point a minute is too jagged to read at a glance
+    const B = new Map();
+    for (const [tt, cpu, mem, rx, tx] of r.points) {
+      const k = Math.floor(tt / 300) * 300, b = B.get(k) || {t: k + 150, n: {}, s: {}};
+      for (const [key, v] of [['cpu', cpu], ['mem', mem], ['down', tx == null ? null : tx * 8 / 1e6], ['up', rx == null ? null : rx * 8 / 1e6]])
+        if (v != null) { b.s[key] = (b.s[key] || 0) + v; b.n[key] = (b.n[key] || 0) + 1; }
+      B.set(k, b);
+    }
+    S.sys = [...B.values()].sort((a, b) => a.t - b.t).map(b => {
+      const p = {t: b.t}; for (const k of ['cpu', 'mem', 'down', 'up']) p[k] = b.n[k] ? b.s[k] / b.n[k] : null; return p;
+    });
+  } catch (e) { return; }
+  if (S.charts.sys) { S.charts.sys.set(S.sys); S.charts.net.set(S.sys); }
+}
+
+function updateHome() {
+  const d = S.data, hl = d.health || {}, s = d.settings, c = S.charts;
+  if (!c.live) return;
+  const now = hl.time || Clock.now();
+  if (hl.tx_rate != null) c.live.push([{t: now, down: hl.tx_rate * 8 / 1e6, up: hl.rx_rate * 8 / 1e6}]);
+  c.tw.down.set(hl.tx_rate != null ? hl.tx_rate * 8 / 1e6 : null);
+  $('kDownS').replaceChildren(h('span', null, t('up_') + ' ', h('b', {class: 'num'}, fmt.mbps(hl.rx_rate != null ? hl.rx_rate * 8 / 1e6 : null)), ' Mbps'));
+  const active = d.users.filter(u => u.enabled).length;
+  c.tw.online.set(d.online);
+  $('kOnlineU').textContent = '/ ' + d.users.length + ' ' + t('users_n');
+  $('kOnlineS').replaceChildren(h('span', null, t('active_n') + ' ', h('b', null, active)), h('span', null, t('paused_n') + ' ', h('b', null, d.users.length - active)));
+  const rows = S.days.map(x => ({day: x.day, upload: x.up, download: x.down}));
+  const total = rows.reduce((a, r) => a + r.upload + r.download, 0);
+  const today = new Date().toISOString().slice(0, 10), tr = rows.find(r => r.day === today);
+  const last7 = rows.slice(-7).reduce((a, r) => a + r.upload + r.download, 0) / 7;
+  c.tw.month.set(total); $('kMonthU').textContent = 'GB';
+  $('kMonthS').replaceChildren(h('span', null, t('today') + ' ', h('b', null, fmt.bytes(tr ? tr.upload + tr.download : 0))), h('span', null, t('avg7') + ' ', h('b', null, fmt.bytes(last7))));
+  c.tw.mem.set(hl.mem_total ? hl.mem_used * 100 / hl.mem_total : null);
+  $('kMemS').replaceChildren(h('span', null, t('load') + ' ', h('b', null, hl.load == null ? '—' : hl.load.toFixed(2))), h('span', null, (hl.cpus || '—') + ' CPU'), h('span', null, t('uptime') + ' ', h('b', null, dur(hl.uptime))));
+  if (JSON.stringify(rows) !== c.daysKey) { c.daysKey = JSON.stringify(rows); c.days.set(rows, last30()); }
+  // services
+  const svc = (name, on, active, detail) => h('div', {class: 'svc'}, h('b', null, name),
+    !on ? chip('off', t('off')) : active === true ? chip('ok', t('running')) : active === false ? chip('bad', t('stopped')) : chip('off', t('unknown')), h('small', null, detail));
+  $('svcList').replaceChildren(
+    svc('VLESS + REALITY', s.reality_enabled, d.services.xray, 'TCP ' + s.reality_port + ' · ' + s.reality_target),
+    svc('Hysteria 2', s.hy2_enabled, d.services.hysteria, 'UDP ' + s.hy2_port + (s.hy2_hop ? ' + ' + s.hy2_hop_range : '')),
+    svc('TUIC v5', s.tuic_enabled, d.services.tuic, 'UDP ' + s.tuic_port),
+    h('div', {class: 'svc'}, h('b', null, t('bbr')), hl.bbr ? chip('ok', t('yes')) : chip('warn', t('no')), h('small', null, hl.kernel || '')),
+    h('div', {class: 'svc'}, h('b', null, t('cert_mode')), d.cert.trusted ? chip('ok', t('cert_ok')) : chip('warn', t('cert_self_s')), h('small', null, d.cert.names.join(', ') || s.public_host)));
+  // alerts
+  const al = [];
+  for (const [k, on, a] of [['VLESS + REALITY', s.reality_enabled, d.services.xray], ['Hysteria 2', s.hy2_enabled, d.services.hysteria], ['TUIC v5', s.tuic_enabled, d.services.tuic]])
+    if (on && a === false) al.push(h('div', {class: 'alert bad'}, icon('pulse'), k + ' · ' + t('stopped'), h('button', {class: 'btn sm', onclick: () => go('system')}, t('doctor'))));
+  const quota = d.users.filter(u => !u.enabled && u.disabled_reason === 'quota').length;
+  if (quota) al.push(h('div', {class: 'alert'}, icon('gauge'), quota + ' · ' + t('r_quota'), h('button', {class: 'btn sm', onclick: () => go('users')}, t('users'))));
+  if (d.pending_requests) al.push(h('div', {class: 'alert'}, icon('inbox'), d.pending_requests + ' · ' + t('requests'), h('button', {class: 'btn sm', onclick: () => go('members')}, t('nav_members'))));
+  const sm = d.server_month || {}, cap = d.settings.server_cap_gb * GB, smu = (sm.rx || 0) + (sm.tx || 0);
+  if (cap && smu >= cap * .8) al.push(h('div', {class: 'alert' + (smu >= cap ? ' bad' : '')}, icon('gauge'), t('server_month') + ' ' + fmt.bytes(smu) + ' / ' + fmt.bytes(cap), h('button', {class: 'btn sm', onclick: () => go('servers')}, t('nav_servers'))));
+  for (const r of d.line_trouble || [])
+    al.push(h('div', {class: 'alert bad'}, icon('alert'), t('line_down')(r.users, r.name) + (r.here ? '' : t('line_far')),
+      r.here ? h('button', {class: 'btn sm', onclick: () => changePort(r.line, r.name, () => { if (S.view === 'home') updateHome(); })}, t('change_port')) : null));
+  if (d.renew_days != null && d.renew_days <= 7)
+    al.push(h('div', {class: 'alert' + (d.renew_days <= 1 ? ' bad' : '')}, icon('clock'), t('renew_left')(d.renew_days) + (s.vps_renew_note ? ' · ' + s.vps_renew_note : ''),
+      h('button', {class: 'btn sm', onclick: () => go('servers')}, t('nav_servers'))));
+  $('alerts').replaceChildren(...al);
+  loadSys(false);
+}
+
+async function changePort(line, name, redraw) {
+  if (!await confirmBox(t('change_port_q')(name), t('change_port_tip'))) return;
+  try { const r = await api('change-port', {line}); toast(t('port_changed')(r.port)); await load(); if (redraw) redraw(); } catch (e) { err(e); }
+}
+
+/* ---------------- users ---------------- */
+function userState(u) {
+  if (u.enabled) return chip('ok', t('enabled'));
+  if (u.disabled_reason === 'devices') return chip('warn', t('r_devices'));
+  return chip(u.disabled_reason === 'manual' || !u.disabled_reason ? 'off' : 'bad', t({quota: 'r_quota', expired: 'r_expired'}[u.disabled_reason] || 'r_manual'));
+}
+const expText = u => u.expire_at ? dateStr(u.expire_at) : u.expire_after_days ? u.expire_after_days + ' ' + t('days') + ' · ' + t('exp_waiting') : t('never');
+const FILTERS = {
+  all: () => true, online: u => !!u.online, active: u => !!u.enabled, paused: u => !u.enabled,
+  soon: u => u.enabled && u.expire_at && u.expire_at - Date.now() / 1000 < 7 * 86400,
+  low: u => { const q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB; return u.enabled && q && (u.used_up + u.used_down) / q >= .8; }
+};
+const SORTS = {
+  id: (a, b) => a.id - b.id, name: (a, b) => a.name.localeCompare(b.name, L === 'zh' ? 'zh-CN' : 'en'),
+  used: (a, b) => (b.used_up + b.used_down) - (a.used_up + a.used_down),
+  exp: (a, b) => (a.expire_at || 9e12) - (b.expire_at || 9e12) || a.id - b.id,
+  seen: (a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.last_seen - a.last_seen
+};
+async function bulk(action) {
+  const ids = [...S.sel]; if (!ids.length) return;
+  let value = 0;
+  if (action === 'extend' || action === 'add_gb') {
+    const v = await modal({title: t(action === 'extend' ? 'b_extend' : 'b_addgb') + ' · ' + ids.length, text: t(action === 'extend' ? 'extend_days' : 'add_gb_q'),
+      input: true, type: 'number', value: action === 'extend' ? '30' : '50', confirm: t(action === 'extend' ? 'b_extend' : 'b_addgb')});
+    if (v == null) return; value = Number(v);
+  }
+  if (action === 'delete' && !await confirmBox(t('del') + ' · ' + ids.length, t('confirm_bulk_del'), {danger: true, confirm: t('del')})) return;
+  if (action === 'rotate' && !await confirmBox(t('b_rotate') + ' · ' + ids.length, t('confirm_bulk_rotate'))) return;
+  try {
+    const r = await api('users-bulk', {ids, action, value});
+    toast(t('bulk_done') + ' ' + r.done);
+    if (action === 'delete') S.sel.clear();
+    await load(); drawUsers();
+  } catch (e) { err(e); }
+}
+function usageBar(u) {
+  const used = u.used_up + u.used_down, q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB, p = q ? used / q : 0;
+  return h('div', null, h('div', {class: 'use-top'}, h('b', null, fmt.bytes(used)), h('span', null, q ? fmt.bytes(q) : t('unlimited'))),
+    h('div', {class: 'bar' + (p > .95 ? ' bad' : p > .8 ? ' warn' : '')}, h('i', {style: 'width:' + Math.min(100, p * 100) + '%'})));
+}
+function drawUsers() {
+  const us = S.data.users, q = S.q.toLowerCase();
+  for (const id of [...S.sel]) if (!us.some(u => u.id === id)) S.sel.delete(id);
+  const found = us.filter(u => !q || u.name.toLowerCase().includes(q) || (u.note || '').toLowerCase().includes(q));
+  const list = found.filter(FILTERS[S.f] || FILTERS.all).sort(SORTS[S.sort] || SORTS.id);
+  const search = h('input', {type: 'search', placeholder: t('search'), value: S.q});
+  search.oninput = () => { S.q = search.value; const pos = search.selectionStart; drawUsers(); const s2 = document.querySelector('.search input'); s2.focus(); s2.setSelectionRange(pos, pos); };
+  const sort = h('select', {'aria-label': 'sort'}, Object.keys(SORTS).map(k => h('option', {value: k}, t('s_' + k)))); sort.value = S.sort;
+  sort.onchange = () => { S.sort = sort.value; drawUsers(); };
+  const chips = h('div', {class: 'chips'}, Object.keys(FILTERS).map(k => {
+    const n = found.filter(FILTERS[k]).length;
+    return k !== 'all' && !n && S.f !== k ? null : h('button', {class: 'filter-chip', 'aria-pressed': String(S.f === k), onclick: () => { S.f = k; drawUsers(); }}, t('f_' + k), h('span', {class: 'n'}, n));
+  }));
+  const allSel = list.length > 0 && list.every(u => S.sel.has(u.id));
+  const selAll = h('input', {type: 'checkbox', 'aria-label': t('sel_all'), checked: allSel});
+  selAll.onchange = () => { for (const u of list) selAll.checked ? S.sel.add(u.id) : S.sel.delete(u.id); drawUsers(); };
+  const head = h('div', {class: 'acct-grid u-grid acct-head'}, h('div', {class: 'c-sel'}, selAll), h('div', null, t('name')), h('div', {class: 'c-use'}, t('usage')), h('div', {class: 'c-exp'}, t('expires')), h('div', {class: 'c-state'}, t('status')), h('div', {class: 'c-acts'}));
+  const rows = list.map(u => {
+    const box = h('input', {type: 'checkbox', checked: S.sel.has(u.id), 'aria-label': u.name});
+    box.onchange = () => { box.checked ? S.sel.add(u.id) : S.sel.delete(u.id); drawUsers(); };
+    const dev = u.online ? (u.online.devices != null ? u.online.devices : u.online.ips.length) : 0;
+    return h('div', {class: 'acct-grid u-grid acct-row' + (S.sel.has(u.id) ? ' sel' : ''), tabindex: '0',
+        onclick: e => { if (!e.target.closest('button,input,label')) openUser(u.id); }, onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) openUser(u.id); }},
+      h('label', {class: 'c-sel'}, box),
+      h('div', {class: 'who'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
+        h('div', {style: 'min-width:0'}, h('b', null, u.online ? h('span', {class: 'on-dot', title: t('online_now')}) : null, u.name),
+          h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + t('devices') : '') + ' · ' + u.online.protocols.join('/')
+            : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
+      h('div', {class: 'c-use'}, usageBar(u)),
+      h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
+        [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null),
+      h('div', {class: 'c-state'}, userState(u)),
+      h('div', {class: 'row-acts c-acts'}, h('button', {class: 'btn sm primary', onclick: () => openUser(u.id)}, icon('link'), t('share')),
+        h('button', {class: 'btn sm icon', title: t('edit'), onclick: () => editUser(u)}, icon('edit'))));
+  });
+  const bb = (a, ic, k, cls) => h('button', {class: 'btn sm' + (cls ? ' ' + cls : ''), onclick: () => bulk(a)}, icon(ic), t(k));
+  const bulkBar = S.sel.size ? h('div', {class: 'bulk-bar'}, h('b', null, t('selected') + ' ' + S.sel.size),
+    h('div', {class: 'bulk-acts'}, bb('enable', 'play', 'enable'), bb('disable', 'pause', 'disable'), bb('extend', 'clock', 'b_extend'), bb('add_gb', 'plus', 'b_addgb'),
+      bb('reset', 'refresh', 'b_reset'), bb('rotate', 'key', 'b_rotate'), bb('delete', 'x', 'del', 'danger')),
+    h('button', {class: 'btn sm ghost', onclick: () => { S.sel.clear(); drawUsers(); }}, t('clear_sel'))) : null;
+  $('view').replaceChildren(h('section', {class: 'page' + (S.fresh ? '' : ' still')},
+    h('div', {class: 'toolbar'}, h('div', {class: 'search'}, icon('search'), search), sort,
+      h('div', {class: 'tool-r'}, h('button', {class: 'btn', onclick: batchAdd}, icon('users'), t('batch_add')),
+        h('a', {class: 'btn', href: 'api/users-export', download: ''}, icon('arrowDown'), t('export_csv')))),
+    chips, bulkBar,
+    h('div', {class: 'panel'}, head, ...(rows.length ? rows : [h('div', {class: 'empty'}, us.length ? t('no_match') : t('no_users'))]))));
+}
+
+function batchAdd() {
+  const f = {prefix: h('input', {type: 'text', maxlength: '24', value: L === 'zh' ? '用户' : 'user'}), count: h('input', {type: 'number', min: '1', max: '200', value: '10'}),
+    quota: h('input', {type: 'number', min: '0', value: '100'}), reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}),
+    mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'days'}, t('exp_days')), h('option', {value: 'first'}, t('exp_first'))),
+    days: h('input', {type: 'number', min: '1', max: '3650', value: '30'}), ips: h('input', {type: 'number', min: '0', max: '100', value: '0'}),
+    note: h('input', {type: 'text', maxlength: '200'})};
+  f.mode.value = 'first';
+  const daysF = field(t('exp_first_days'), f.days);
+  const sync = () => { daysF.hidden = f.mode.value === 'never'; daysF.firstChild.textContent = t(f.mode.value === 'first' ? 'exp_first_days' : 'exp_days'); };
+  f.mode.onchange = sync; sync();
+  const save = h('button', {class: 'btn primary', type: 'submit'}, icon('check'), t('batch_add'));
+  const form = h('form', {class: 'stack'}, h('div', {class: 'form-grid'}, field(t('batch_prefix'), f.prefix), field(t('batch_count'), f.count),
+      field(t('quota'), f.quota), field(t('reset_day'), f.reset), field(t('exp_mode'), f.mode), daysF, field(t('max_ips'), f.ips)), field(t('note'), f.note),
+    h('div', {style: 'display:flex;gap:8px;justify-content:flex-end'}, h('button', {class: 'btn ghost', type: 'button', onclick: closeDrawer}, t('cancel')), save));
+  form.onsubmit = async e => {
+    e.preventDefault(); save.disabled = true;
+    const days = Number(f.days.value || 0);
+    try {
+      const r = await api('users-batch', {prefix: f.prefix.value.trim(), count: Number(f.count.value), quota_gb: Number(f.quota.value || 0), reset_day: Number(f.reset.value || 0),
+        max_ips: Number(f.ips.value || 0), note: f.note.value, expire_days: f.mode.value === 'days' ? days : 0, expire_after_days: f.mode.value === 'first' ? days : 0});
+      toast(t('batch_made') + ' ' + r.ids.length); closeDrawer(); await load();
+      S.sel = new Set(r.ids); S.f = 'all'; if (S.view === 'users') drawUsers(); else go('users');
+    } catch (er) { err(er); save.disabled = false; }
+  };
+  $('drawer').replaceChildren(h('div', {class: 'dr-h'}, h('span', {class: 'ava', style: 'background:var(--accent)'}, icon('users')),
+      h('div', null, h('b', null, t('batch_add'))), h('button', {class: 'btn ghost icon', onclick: closeDrawer}, icon('x'))),
+    h('div', {class: 'dr-b'}, h('div', {class: 'dr-sec'}, form)));
+  openDrawer(); setTimeout(() => f.prefix.focus(), 250);
+}
+
+function openDrawer() { $('drawer').classList.add('on'); $('drawer').setAttribute('aria-hidden', 'false'); $('scrim').classList.add('on'); document.body.style.overflow = 'hidden'; }
+function closeDrawer() { const d = $('drawer'); if (!d) return; d.classList.remove('on'); d.setAttribute('aria-hidden', 'true'); $('scrim').classList.remove('on'); document.body.style.overflow = ''; }
+
+async function openUser(id, first) {
+  const u = S.data.users.find(x => x.id === id); if (!u) return;
+  let links;
+  try { links = await api('user-links?id=' + id); } catch (e) { return err(e); }
+  const used = u.used_up + u.used_down, q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB;
+  const histBox = h('div', {class: 'chart h160'});
+  const pwIn = h('input', {type: 'password', autocomplete: 'new-password', placeholder: '8+'});
+  const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
+  const act = async (fn, ok) => { try { await fn(); toast(ok || t('saved')); await load(); closeDrawer(); if (S.view === 'users') drawUsers(); } catch (e) { err(e); } };
+  const imp = links.import;
+  $('drawer').replaceChildren(
+    h('div', {class: 'dr-h'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
+      h('div', null, h('b', null, first ? t('done_title') : u.name), h('small', null, first ? t('done_sub') : (u.note || ('#' + u.id)))),
+      h('button', {class: 'btn ghost icon', onclick: closeDrawer, title: KT.cancel}, icon('x'))),
+    h('div', {class: 'dr-b'},
+      h('div', {class: 'dr-sec'}, h('h4', null, t('share')), h('img', {class: 'qr', alt: 'QR', src: 'api/qr?text=' + encodeURIComponent(links.sub)}),
+        h('p', {class: 'muted', style: 'font-size:12.5px;margin:0 0 10px'}, t('share_tip')),
+        h('div', {class: 'creds'}, links.sub),
+        h('div', {class: 'act-grid'}, h('button', {class: 'btn primary', onclick: () => copyText(links.sub, t('share'))}, icon('copy'), t('copy')),
+          h('a', {class: 'btn', href: links.sub, target: '_blank', rel: 'noopener'}, icon('globe'), t('open_page'))),
+        h('div', {class: 'import-grid', style: 'margin-top:8px'}, [['Clash', imp.clash], ['Shadowrocket', imp.shadowrocket], ['Hiddify', imp.hiddify], ['sing-box', imp.singbox]].map(([n, href]) =>
+          h('a', {class: 'btn', href}, t('import_to') + ' ' + n))),
+        h('p', {class: 'muted', style: 'font-size:12px;margin:10px 0 0'}, t('apps_hint'))),
+      h('div', {class: 'dr-sec'}, h('h4', null, t('usage'), h('span', {class: 'right'}, userState(u))),
+        h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats'},
+          h('div', null, h('small', null, t('used')), h('b', null, fmt.bytes(used))), h('div', null, h('small', null, t('quota').split(/[（(]/)[0]), h('b', null, q ? fmt.bytes(q) : t('unlimited'))),
+          h('div', null, h('small', null, '↓ ' + t('down')), h('b', null, fmt.bytes(u.used_down))), h('div', null, h('small', null, '↑ ' + t('up_')), h('b', null, fmt.bytes(u.used_up))),
+          h('div', null, h('small', null, t('expires')), h('b', null, expText(u))), h('div', null, h('small', null, t('last_seen')), h('b', null, u.online ? t('online_now') : fmt.ago(u.last_seen))),
+          u.max_ips ? h('div', null, h('small', null, t('dev_limit')), h('b', null, (u.online ? (u.online.devices ?? u.online.ips.length) + ' / ' : '') + u.max_ips)) : null,
+          u.shared_gb ? h('div', null, h('small', null, t('shared_out')), h('b', null, u.shared_gb + ' GB')) : null,
+          u.invited_by_name ? h('div', null, h('small', null, t('invited_by')), h('b', null, u.invited_by_name)) : null,
+          u.online && u.online.ips.length ? h('div', {style: 'grid-column:1/-1'}, h('small', null, t('online_now') + ' · ' + u.online.ips.length + ' ' + t('devices')), h('b', {style: 'font-size:12px'}, u.online.ips.join('  '))) : null))),
+      h('div', {class: 'dr-sec'}, h('h4', null, t('history'), h('span', {class: 'right muted', style: 'font-weight:500'}, t('history_sub'))), histBox),
+      u.remote_id ? null : h('div', {class: 'dr-sec'}, h('h4', null, t('member_login'), h('span', {class: 'right'}, u.has_login ? chip('ok', t('login_on')) : chip('off', t('login_off')))),
+        h('p', {class: 'muted', style: 'font-size:12.5px;margin:0 0 10px;line-height:1.7'}, t('member_login_tip')),
+        h('div', {style: 'display:flex;gap:8px;flex-wrap:wrap'}, pwIn,
+          h('button', {class: 'btn', onclick: () => act(() => api(`users/${u.id}/login`, {password: pwIn.value}))}, icon('lock'), t('set_pw')),
+          u.has_login ? h('button', {class: 'btn ghost', onclick: () => act(() => api(`users/${u.id}/login`, {password: ''}), t('pw_cleared'))}, t('clear_pw')) : null),
+        S.data.member_url ? h('div', {class: 'muted', style: 'font-size:12px;margin-top:8px;word-break:break-all'}, t('member_centre') + '：' + S.data.member_url) : null),
+      h('div', {class: 'dr-sec'}, h('h4', null, t('actions')), h('div', {class: 'act-grid'},
+        h('button', {class: 'btn', onclick: () => { closeDrawer(); editUser(u); }}, icon('edit'), t('edit')),
+        h('button', {class: 'btn', onclick: () => act(() => api(`users/${u.id}/save`, {enabled: !u.enabled}))}, icon(u.enabled ? 'pause' : 'play'), u.enabled ? t('disable') : t('enable')),
+        h('button', {class: 'btn', onclick: async () => { if (await confirmBox(t('reset'), t('confirm_reset'))) act(() => api(`users/${u.id}/reset`, {})); }}, icon('refresh'), t('reset')),
+        h('button', {class: 'btn', onclick: async () => { if (await confirmBox(t('rotate'), t('confirm_rotate'))) act(() => api(`users/${u.id}/rotate`, {})); }}, icon('key'), t('rotate')),
+        h('button', {class: 'btn danger', onclick: async () => { if (await confirmBox(t('del') + ' · ' + u.name, t('confirm_del'), {danger: true, confirm: t('del')})) act(() => api(`users/${u.id}/delete`, {})); }}, icon('x'), t('del'))))));
+  openDrawer();
+  new Ring(ringBox.firstChild).set(q ? used / q : 0, q && used / q > .9 ? 'danger' : 'down');
+  api('users/' + u.id + '/history?days=30').then(r => new DayBars(histBox).set(r.days.map(x => ({day: x.day, upload: x.up, download: x.down})), last30())).catch(() => {});
+}
+
+function editUser(u) {
+  const isNew = !u; u = u || {name: '', quota_gb: 0, expire_at: 0, reset_day: 0, note: '', max_ips: 0, expire_after_days: 0};
+  const f = {name: h('input', {type: 'text', value: u.name, maxlength: '32'}), quota: h('input', {type: 'number', min: '0', step: '1', value: u.quota_gb || 0}),
+    exp: h('input', {type: 'date', value: u.expire_at ? dateStr(u.expire_at) : ''}), reset: h('input', {type: 'number', min: '0', max: '28', value: u.reset_day || 0}),
+    note: h('input', {type: 'text', value: u.note || '', maxlength: '200'}), ips: h('input', {type: 'number', min: '0', max: '100', value: u.max_ips || 0}),
+    mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'date'}, t('exp_date')), h('option', {value: 'first'}, t('exp_first'))),
+    first: h('input', {type: 'number', min: '1', max: '3650', value: u.expire_after_days || 30})};
+  f.mode.value = u.expire_at ? 'date' : u.expire_after_days ? 'first' : 'never';
+  const expF = field(t('expire').split(/[（(]/)[0], f.exp), firstF = field(t('exp_first_days'), f.first);
+  const sync = () => { expF.hidden = f.mode.value !== 'date'; firstF.hidden = f.mode.value !== 'first'; };
+  f.mode.onchange = () => { sync(); if (f.mode.value === 'date' && !f.exp.value) f.exp.value = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10); };
+  sync();
+  const save = h('button', {class: 'btn primary', type: 'submit'}, icon('check'), t('save'));
+  const form = h('form', {class: 'stack'}, field(t('name'), f.name), h('div', {class: 'form-grid'}, field(t('quota'), f.quota), field(t('reset_day'), f.reset),
+      field(t('exp_mode'), f.mode), h('div', null, expF, firstF), h('div', {class: 'full'}, field(t('max_ips'), f.ips))),
+    field(t('note'), f.note), h('div', {class: 'acts', style: 'display:flex;gap:8px;justify-content:flex-end'},
+      h('button', {class: 'btn ghost', type: 'button', onclick: closeDrawer}, t('cancel')), save));
+  form.onsubmit = async e => {
+    e.preventDefault(); save.disabled = true;
+    const exp = f.mode.value === 'date' ? f.exp.value : '';
+    const body = {name: f.name.value.trim(), quota_gb: Number(f.quota.value || 0), reset_day: Number(f.reset.value || 0), note: f.note.value,
+      expire_at: exp ? Math.floor(new Date(exp + 'T23:59:59').getTime() / 1000) : 0, max_ips: Number(f.ips.value || 0),
+      expire_after_days: f.mode.value === 'first' ? Number(f.first.value || 0) : 0};
+    try {
+      const r = isNew ? await api('users', body) : await api(`users/${u.id}/save`, body);
+      await load(); toast(t('saved')); closeDrawer();
+      if (S.view === 'users') drawUsers();
+      if (isNew && r.id) openUser(r.id);
+    } catch (er) { err(er); save.disabled = false; }
+  };
+  $('drawer').replaceChildren(h('div', {class: 'dr-h'}, h('span', {class: 'ava', style: 'background:var(--accent)'}, icon(isNew ? 'plus' : 'edit')),
+      h('div', null, h('b', null, isNew ? t('add_user') : u.name), h('small', null, isNew ? '' : '#' + u.id)),
+      h('button', {class: 'btn ghost icon', onclick: closeDrawer}, icon('x'))),
+    h('div', {class: 'dr-b'}, h('div', {class: 'dr-sec'}, form)));
+  openDrawer(); setTimeout(() => f.name.focus(), 250);
+}
+
+
+/* ---------------- members: requests, invite codes, member centre ---------------- */
+async function drawMembers() {
+  const s = S.data.settings;
+  const view = $('view');
+  view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
+  let inv, req;
+  try { [inv, req] = await Promise.all([api('invites'), api('requests')]); } catch (e) { return err(e); }
+  if (S.view !== 'members') return;
+  const pend = req.requests.filter(r => r.status === 'pending'), done = req.requests.filter(r => r.status !== 'pending').slice(0, 10);
+  const decide = async (r, ok) => {
+    let body = {};
+    if (ok) {
+      const gb = await modal({title: t('approve') + ' · ' + r.name, text: r.reason || '', input: true, type: 'number', value: String(r.add_gb), confirm: t('approve')});
+      if (gb == null) return; body = {add_gb: Number(gb)};
+    } else {
+      const ans = await modal({title: t('reject') + ' · ' + r.name, input: true, placeholder: t('answer'), confirm: t('reject'), danger: true});
+      if (ans == null) return; body = {answer: ans};
+    }
+    try { await api(`requests/${r.id}/${ok ? 'approve' : 'reject'}`, body); toast(t('saved')); await load(); drawMembers(); } catch (e) { err(e); }
+  };
+  const reqRows = pend.map(r => h('div', {class: 'tl-row'}, h('b', null, r.name), h('b', {class: 'num'}, '+' + r.add_gb + ' GB'),
+    h('span', {class: 'muted'}, fmt.time(r.created_at) + (r.reason ? ' · ' + r.reason : '')),
+    h('span', {class: 'tl-acts'}, h('button', {class: 'btn sm primary', onclick: () => decide(r, true)}, icon('check'), t('approve')),
+      h('button', {class: 'btn sm', onclick: () => decide(r, false)}, t('reject')))));
+  const histRows = done.map(r => h('div', {class: 'tl-row'}, h('b', null, r.name), h('span', {class: 'num'}, '+' + r.add_gb + ' GB'),
+    h('span', {class: 'muted'}, fmt.time(r.decided_at) + (r.answer ? ' · ' + r.answer : '')), h('span', {class: 'tl-acts'}, chip(r.status === 'approved' ? 'ok' : 'off', t(r.status)))));
+  const f = {quota: h('input', {type: 'number', min: '0', step: '1', value: '100'}), life: h('input', {type: 'number', min: '0', value: '30'}),
+    uses: h('input', {type: 'number', min: '1', max: '1000', value: '1'}), valid: h('input', {type: 'number', min: '1', max: '90', value: '7'}),
+    reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}), note: h('input', {type: 'text', maxlength: '100'})};
+  const mk = h('button', {class: 'btn primary'}, icon('key'), t('inv_make'));
+  mk.onclick = async () => {
+    mk.disabled = true;
+    try {
+      const r = await api('invites', {kind: 'admin', quota_gb: Number(f.quota.value), expire_days: Number(f.life.value), max_uses: Number(f.uses.value),
+        valid_days: Number(f.valid.value), reset_day: Number(f.reset.value), note: f.note.value});
+      await copyText(r.invite.code + (r.invite.register_url ? '\n' + r.invite.register_url : ''), t('copy_code')); drawMembers();
+    } catch (e) { err(e); mk.disabled = false; }
+  };
+  const invRows = inv.invites.map(i => h('div', {class: 'tl-row'}, h('code', {class: 'code-chip'}, i.code),
+    h('span', {class: 'muted'}, (i.kind === 'admin' ? t('inv_admin') : i.inviter_name) + ' · ' + (i.quota_gb ? i.quota_gb + ' GB' : t('unlimited')) +
+      (i.kind === 'admin' && i.expire_days ? ' · ' + i.expire_days + t('days') : '') + ' · ' + i.uses + '/' + i.max_uses +
+      (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + (i.note ? ' · ' + i.note : '') + ' · ' + fmt.time(i.valid_until)),
+    h('span', {class: 'tl-acts'}, chip(i.status === 'unused' ? 'ok' : 'off', t('st_' + i.status)),
+      i.status === 'unused' ? h('button', {class: 'btn sm', title: t('copy_link'), onclick: () => copyText(i.register_url || i.code, t('copy_link'))}, icon('link')) : null,
+      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async () => { if (await confirmBox(t('revoke'), i.code)) { try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (e) { err(e); } } }}, t('revoke')) : null)));
+  const cb = k => { const e = h('input', {type: 'checkbox', checked: !!s[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
+  view.replaceChildren(h('section', {class: 'page'},
+    h('div', {class: 'grid g-2-1'},
+      panel(t('requests'), null, pend.length ? chip('warn', pend.length + ' ' + t('pending')) : null,
+        h('div', {class: 'tl'}, ...(reqRows.length ? reqRows : [h('div', {class: 'empty', style: 'padding:18px'}, t('req_none'))])),
+        histRows.length ? h('div', {class: 'tl', style: 'margin-top:14px;opacity:.8'}, ...histRows) : null),
+      panel(t('member_centre'), null, null, h('div', {class: 'stack'}, cb('member_enabled'), cb('member_invites'), cb('member_requests'),
+        (() => { const ta = h('textarea', {rows: '3', maxlength: '500', style: 'width:100%;resize:vertical'}, s.member_notice || '');
+          return h('div', null, field(t('member_notice'), ta), h('button', {class: 'btn sm', style: 'margin-top:8px', onclick: () => saveSettings({member_notice: ta.value})}, t('save_notice'))); })(),
+        S.data.member_url ? h('div', null, h('div', {class: 'muted', style: 'font-size:12px;margin-bottom:6px'}, t('member_url')), h('div', {class: 'creds'}, S.data.member_url),
+          h('button', {class: 'btn sm', style: 'margin-top:8px', onclick: () => copyText(S.data.member_url, t('member_centre'))}, icon('copy'), t('copy_btn'))) : null))),
+    panel(t('invites'), null, null, tip(t('inv_tip')), h('div', {class: 'stack'},
+      h('div', {class: 'form-grid g3'}, field(t('inv_quota'), f.quota), field(t('inv_life'), f.life), field(t('inv_uses'), f.uses), field(t('inv_valid'), f.valid),
+        field(t('inv_reset'), f.reset), field(t('note'), f.note)), h('div', null, mk),
+      h('div', {class: 'tl'}, ...(invRows.length ? invRows : [h('div', {class: 'empty', style: 'padding:18px'}, t('inv_none'))]))))));
+}
+
+/* ---------------- servers: join code, joined servers, monthly traffic ---------------- */
+async function drawServers() {
+  const s = S.data.settings, view = $('view');
+  let sv;
+  try { sv = await api('servers'); } catch (e) { return err(e); }
+  if (S.view !== 'servers') return;
+  const code = h('input', {type: 'text', placeholder: 'v2v1.…', autocomplete: 'off'}), name = h('input', {type: 'text', maxlength: '24'});
+  const add = h('button', {class: 'btn primary'}, icon('plus'), t('add_server'));
+  add.onclick = async () => { add.disabled = true; try { await api('servers', {code: code.value.trim(), name: name.value.trim()}); toast(t('saved')); await load(); drawServers(); } catch (e) { err(e); add.disabled = false; } };
+  const act = async (id, a, body) => { try { await api(`servers/${id}/${a}`, body || {}); await load(); drawServers(); } catch (e) { err(e); } };
+  const rows = sv.servers.map(x => h('div', {class: 'tl-row'},
+    h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + x.protocols.join(' / ') + ' · ' + x.users + ' ' + t('users_n') +
+      (x.health && x.health.mem_total ? ' · ' + t('mem') + ' ' + Math.round(x.health.mem_used * 100 / x.health.mem_total) + '%' : '') +
+      (x.last_ok ? ' · ' + t('last_sync') + ' ' + fmt.ago(x.last_ok) : '') + (x.version ? ' · v' + x.version : '')),
+    h('span', {class: 'tl-acts'}, x.error ? chip('bad', x.error.slice(0, 60)) : x.enabled ? chip('ok', t('running')) : chip('off', t('off')),
+      h('button', {class: 'btn sm', onclick: () => act(x.id, 'sync')}, icon('refresh')),
+      h('button', {class: 'btn sm', onclick: () => act(x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
+      h('button', {class: 'btn sm danger', onclick: async () => { if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(x.id, 'remove'); }}, icon('x')))));
+  const sm = S.data.server_month || {}, used = (sm.rx || 0) + (sm.tx || 0), cap = s.server_cap_gb * GB;
+  const capIn = h('input', {type: 'number', min: '0', value: s.server_cap_gb || 0}), dayIn = h('input', {type: 'number', min: '1', max: '28', value: s.server_reset_day || 1});
+  const ring = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, cap ? fmt.pct(used / cap) : '∞'), h('small', null, sm.period || '')));
+  view.replaceChildren(h('section', {class: 'page'},
+    sv.node_master ? h('div', {class: 'alert'}, icon('server'), t('managed_by') + sv.node_master) : null,
+    panel(t('servers'), null, null, tip(t('servers_tip')), h('div', {class: 'stack'},
+      h('div', {class: 'tl'}, ...(rows.length ? rows : [h('div', {class: 'empty', style: 'padding:18px'}, t('no_servers'))])),
+      h('div', {class: 'form-grid'}, field(t('paste_code'), code), field(t('server_name'), name)), h('div', null, add))),
+    h('div', {class: 'grid g-2'},
+      panel(t('server_month'), null, null, tip(t('cap_tip')), h('div', {class: 'usage-hero'}, ring, h('div', {class: 'stack'},
+        h('div', {class: 'mini-stats'}, h('div', null, h('small', null, '↓ ' + t('down')), h('b', null, fmt.bytes(sm.tx || 0))), h('div', null, h('small', null, '↑ ' + t('up_')), h('b', null, fmt.bytes(sm.rx || 0)))),
+        h('div', {class: 'form-grid'}, field(t('cap'), capIn), field(t('cap_day'), dayIn)),
+        h('div', null, h('button', {class: 'btn', onclick: () => saveSettings({server_cap_gb: Number(capIn.value), server_reset_day: Number(dayIn.value)}, drawServers)}, icon('check'), t('save')))))),
+      panel(t('join_code'), null, null, tip(t('join_tip')), h('div', {class: 'stack'}, h('div', {class: 'creds', style: 'max-height:90px;overflow:auto'}, sv.join_code),
+        h('div', {class: 'act-grid'}, h('button', {class: 'btn primary', onclick: () => copyText(sv.join_code, t('join_code'))}, icon('copy'), t('copy_btn')),
+          h('button', {class: 'btn', onclick: async () => { if (await confirmBox(t('reset_key'), t('reset_key_tip'))) { try { await api('node-key', {}); drawServers(); } catch (e) { err(e); } } }}, icon('key'), t('reset_key'))))))));
+  const renewIn = h('input', {type: 'date', value: s.vps_renew_at || ''}), noteIn = h('input', {type: 'text', maxlength: '40', value: s.vps_renew_note || ''});
+  const left = S.data.renew_days;
+  view.firstChild.append(panel(t('renew'), left != null ? t('renew_left')(left) : null, null, tip(t('renew_tip')), h('div', {class: 'stack'},
+    h('div', {class: 'form-grid'}, field(t('renew_at'), renewIn), field(t('renew_note'), noteIn)),
+    h('div', {style: 'display:flex;gap:8px;flex-wrap:wrap'},
+      h('button', {class: 'btn', onclick: () => saveSettings({vps_renew_at: renewIn.value, vps_renew_note: noteIn.value}, drawServers)}, icon('check'), t('save')),
+      s.vps_renew_at ? h('button', {class: 'btn', onclick: () => saveSettings({vps_renew_at: '', vps_renew_note: ''}, drawServers)}, t('renew_clear')) : null))));
+  new Ring(ring.firstChild).set(cap ? used / cap : 0, cap && used / cap > .9 ? 'danger' : 'down');
+}
+
+/* ---------------- monitor: site reachability + abuse watch ---------------- */
+function spark(cv, vals) {
+  Ticker.add({tick() {
+    const {ctx, w, h: hh} = setupCanvas(cv), P = Palette.v; ctx.clearRect(0, 0, w, hh);
+    const ok = vals.filter(v => v != null), max = Math.max(200, ...ok) * 1.15, n = Math.max(1, vals.length - 1);
+    vals.forEach((v, i) => { if (v == null) { ctx.fillStyle = alpha(P.danger || '#e5432a', .7); ctx.fillRect(i / n * w - 1, 0, 2, hh); } });
+    const pts = vals.map((v, i) => v == null ? null : [i / n * w, hh - 2 - v / max * (hh - 4)]).filter(Boolean);
+    if (pts.length > 1) { ctx.strokeStyle = P.down; ctx.lineWidth = 1.6; ctx.beginPath(); traceMonotone(ctx, pts, true); ctx.stroke(); }
+    return false;
+  }});
+  Ticker.start();
+}
+function probeErr(r) {
+  if (r.status) return 'HTTP ' + r.status;
+  const e = r.error || '';
+  return t(/Timeout|timed out/i.test(e) ? 'e_timeout' : /Refused|Reset|Aborted/i.test(e) ? 'e_reset' : /gaierror|getaddrinfo|Name or service/i.test(e) ? 'e_dns'
+    : /SSL|certificate/i.test(e) ? 'e_tls' : 'e_other');
+}
+async function drawMonitor() {
+  const s = S.data.settings, view = $('view');
+  let mo, ab;
+  try { [mo, ab] = await Promise.all([api('monitor'), api('abuse')]); } catch (e) { return err(e); }
+  if (S.view !== 'monitor') return;
+  const run = h('button', {class: 'btn primary'}, icon('refresh'), t('run_now'));
+  run.onclick = async () => { run.disabled = true; await api('monitor', {}); toast('…'); setTimeout(() => { if (S.view === 'monitor') drawMonitor(); }, 9000); };
+  const lt = mo.latest;
+  const sites = (mo.sites || []).map(x => {
+    const cvs = [], fam = ['v4', 'v6'].filter(k => x[k]);
+    const box = h('div', {class: 'site'}, h('div', {class: 'site-h'}, h('b', null, x.label),
+        x.v4 && x.v4.now ? (x.v4.now.ok ? chip('ok', Math.round(x.v4.now.total) + ' ms') : chip('bad', probeErr(x.v4.now))) : chip('off', '—')),
+      ...fam.map(k => { const cv = h('canvas', {class: 'spark'}); cvs.push([cv, x[k].spark]);
+        return h('div', null, h('small', null, (k === 'v4' ? 'IPv4' : 'IPv6') + ' · ' + t('uptime24') + ' ' + fmt.pct(x[k].uptime) + ' · ' + t('median') + ' ' + (x[k].median_ms == null ? '—' : Math.round(x[k].median_ms) + ' ms')), cv); }));
+    box._cvs = cvs; return box;
+  });
+  const flag = f => chip(f === 'shared' ? 'warn' : 'bad', t('f_' + f));
+  const accs = ab.accounts.filter(a => a.streams || a.ips || a.flags.length);
+  const acb = k => { const e = h('input', {type: 'checkbox', checked: !!s[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
+  const scan = h('button', {class: 'btn'}, icon('shield'), t('scan_now'));
+  scan.onclick = async () => { try { await api('abuse', {}); drawMonitor(); } catch (e) { err(e); } };
+  view.replaceChildren(h('section', {class: 'page'},
+    panel(t('monitor'), null, run, tip(t('monitor_tip')), !lt ? h('div', {class: 'empty'}, t('no_data')) : h('div', {class: 'stack'},
+      h('div', {class: 'port-list'}, chip('info plain', fmt.time(lt.at)), lt.region ? chip('info plain', t('region') + ' ' + lt.region) : null,
+        lt.chatgpt_region_ok === true ? chip('ok', t('chatgpt_ok')) : lt.chatgpt_region_ok === false ? chip('bad', t('chatgpt_bad')) : null,
+        lt.speed && lt.speed.ok ? chip('ok', t('speed') + ' ' + lt.speed.mbps + ' Mbps') : null, chip(lt.v6 ? 'ok' : 'off', 'IPv6 ' + (lt.v6 ? t('yes') : t('no')))),
+      h('div', {class: 'site-grid'}, ...sites), acb('monitor_enabled'))),
+    panel(t('abuse'), null, scan, tip(t('abuse_tip')), h('div', {class: 'stack'}, acb('abuse_guard'),
+      h('div', {class: 'muted', style: 'font-size:12px'}, t('coverage') + '：' + (ab.coverage.join(', ') || '—') + (ab.at ? ' · ' + fmt.time(ab.at) : '')),
+      accs.length ? h('div', {class: 'tl'}, accs.map(a => h('div', {class: 'tl-row'}, h('b', null, a.name),
+        h('span', {class: 'muted num'}, `${t('streams')} ${a.streams} · ${t('targets')} ${a.targets} · ${t('ports_n')} ${a.ports} · ${t('addrs')} ${a.ips}`),
+        h('span', {class: 'tl-acts'}, ...(a.flags.length ? a.flags.map(flag) : [chip('ok', t('ok_quiet'))]))))) : h('div', {class: 'muted', style: 'font-size:12.5px'}, t('abuse_none')),
+      h('h4', {style: 'margin:8px 0 0'}, t('events')),
+      ab.events.length ? h('div', {class: 'tl'}, ab.events.map(e => h('div', {class: 'tl-row'}, h('span', {class: 'num muted'}, fmt.time(e.at)), h('span', null, e.text)))) : h('div', {class: 'muted', style: 'font-size:12.5px'}, t('no_events'))))));
+  for (const b of sites) for (const [cv, vals] of b._cvs) spark(cv, vals);
+}
+
+/* ---------------- settings ---------------- */
+function drawSettings() {
+  const s = S.data.settings, inputs = [];
+  const bind = (k, el) => { el.dataset.k = k; inputs.push(el); return el; };
+  const cb = k => bind(k, h('input', {type: 'checkbox', checked: !!s[k]}));
+  const inp = (k, type) => bind(k, h('input', {type: type || 'text', value: s[k] == null ? '' : s[k]}));
+  const sel = (k, opts) => { const e = bind(k, h('select', null, opts.map(([v, n]) => h('option', {value: v}, n)))); e.value = s[k]; return e; };
+  const pickRes = h('div', {class: 'muted', style: 'font-size:12px'});
+  const target = inp('reality_target');
+  const pick = h('button', {class: 'btn sm', type: 'button'}, icon('bolt'), t('test_targets'));
+  pick.onclick = async () => {
+    pick.disabled = true; pickRes.textContent = '…';
+    try { const r = await api('check-targets'); target.value = r.best; pickRes.textContent = r.results.map(x => `${x.host}: ${x.ok ? x.ms + ' ms ✓' : '✗'}`).join(' · '); }
+    catch (e) { err(e); pickRes.textContent = ''; }
+    pick.disabled = false;
+  };
+  const proto = (k, title, desc, ...grid) => h('div', {class: 'proto'}, check(title, cb(k)), h('em', null, desc), h('div', {class: 'form-grid'}, ...grid));
+  const portBtn = (line, name) => s[line === 'reality' ? 'reality_enabled' : line + '_enabled'] ?
+    h('div', {class: 'full'}, h('button', {class: 'btn sm', type: 'button', title: t('change_port_tip'), onclick: () => changePort(line, name, drawSettings)}, icon('refresh'), t('change_port'))) : null;
+  const certBtn = h('button', {class: 'btn sm', type: 'button', onclick: async () => { try { await api('cert', {}); toast('…'); } catch (e) { err(e); } }}, icon('lock'), t('cert_now'));
+  const saveBtn = h('button', {class: 'btn primary'}, icon('check'), t('save'));
+  saveBtn.onclick = async () => {
+    const body = {};
+    for (const el of inputs) body[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value;
+    if (!body.reality_enabled && !body.hy2_enabled && !body.tuic_enabled) return toast(t('proto_one'), 'err');
+    saveBtn.disabled = true;
+    try { await api('settings', body); toast(t('saved')); await load(); drawSettings(); } catch (e) { err(e); saveBtn.disabled = false; }
+  };
+  $('view').replaceChildren(h('section', {class: 'page'},
+    panel(t('s_proto'), null, null, h('div', null,
+      proto('reality_enabled', t('reality'), t('reality_d'), field(t('reality_target'), target), field(t('reality_port'), inp('reality_port', 'number')),
+        h('div', {class: 'full'}, pick, pickRes), portBtn('reality', 'VLESS + REALITY')),
+      proto('hy2_enabled', t('hy2'), t('hy2_d'), field(t('hy2_port'), inp('hy2_port', 'number')), field(t('hy2_hop_range'), inp('hy2_hop_range')),
+        h('div', {class: 'full'}, check(t('hy2_hop'), cb('hy2_hop'))), h('div', {class: 'full'}, field(t('hy2_obfs'), inp('hy2_obfs'))), portBtn('hy2', 'Hysteria 2')),
+      proto('tuic_enabled', t('tuic'), t('tuic_d'), field(t('tuic_port'), inp('tuic_port', 'number')), portBtn('tuic', 'TUIC v5')))),
+    h('div', {class: 'grid g-2'},
+      panel(t('s_basic'), null, null, h('div', {class: 'stack'},
+        field(t('lang'), sel('language', [['zh', '中文'], ['en', 'English']])), field(t('node_name'), inp('node_name')), field(t('server_addr'), inp('public_host')),
+        check(t('tune'), cb('tune_network')), s.public_ipv6 ? check(t('ipv6_nodes') + ' · ' + s.public_ipv6, cb('ipv6_nodes')) : null,
+        check(t('ip_limit_pause'), cb('ip_limit_pause')))),
+      panel(t('s_route'), null, null, h('div', {class: 'stack'}, check(t('block_ads'), cb('block_ads')), check(t('ai_group'), cb('ai_group')), check(t('block_bt'), cb('block_bt'))))),
+    panel(t('routing_custom'), null, null, tip(t('routing_tip')), h('div', {class: 'grid g-3'},
+      ...[['custom_direct', 'c_direct', 'ok'], ['custom_proxy', 'c_proxy', 'info'], ['custom_block', 'c_block', 'bad']].map(([k, lk, c]) => {
+        const ta = bind(k, h('textarea', {rows: '6', spellcheck: 'false', class: 'mono', placeholder: k === 'custom_direct' ? 'example.cn\nmy-nas.com' : k === 'custom_proxy' ? 'example.com' : 'ads.example.com'}));
+        ta.value = (s[k] || []).join('\n');
+        return h('label', {class: 'field'}, h('span', null, chip(c, t(lk)), h('small', {class: 'muted', style: 'margin-left:6px'}, (s[k] || []).length || '')), ta);
+      }))),
+    panel(t('s_cert'), null, S.data.cert.trusted ? chip('ok', t('cert_ok')) : chip('warn', t('cert_self_s')), h('div', {class: 'stack'},
+      h('div', {class: 'form-grid'}, field(t('cert_mode'), sel('cert_mode', [['auto', t('cert_auto')], ['self', t('cert_self')]])), field(t('domain'), inp('domain')),
+        field(t('email'), inp('acme_email', 'email'))),
+      h('div', {class: 'muted', style: 'font-size:12.5px'}, (S.data.cert.trusted ? '' : t('cert_self_tip') + ' ') + (S.data.cert.status || '')), h('div', null, certBtn))),
+    clientPanel(s, inp),
+    h('div', {class: 'save-bar'}, saveBtn)));
+}
+function clientPanel(s, inp) {
+  const c = S.data.client || {}, f = c.found;
+  const found = f ? t('client_found')(f.version, Object.keys(f.files).join(' / ')) : t('client_none')(c.dir || '/var/lib/vps2vpn/client');
+  return panel(t('client_upd'), null, f || s.client_version ? chip('ok', 'v' + (s.client_version || f.version)) : chip('off', t('off')),
+    tip(t('client_tip')), h('div', {class: 'stack'},
+      h('div', {class: 'muted', style: 'font-size:12.5px'}, found),
+      h('div', {class: 'form-grid'}, field(t('client_ver'), inp('client_version')), field(t('client_url'), inp('client_url'))),
+      field(t('client_notes'), inp('client_notes'))));
+}
+
+/* ---------------- health check + maintenance ---------------- */
+const DOC = {   // id -> [zh name, zh fix]; English falls back to the server's own text
+  service_panel: ['面板服务', ''], service_xray: ['REALITY 服务（Xray）', '点下面「重启代理服务」；还不行就在服务器上运行 vps2vpn doctor 看详情'],
+  service_hysteria: ['Hysteria 2 服务', '点下面「重启代理服务」；还不行可能是 UDP 端口被占用，去设置里换个端口'],
+  service_tuic: ['TUIC 服务（sing-box）', '点下面「重启代理服务」；还不行可能是 UDP 端口被占用，去设置里换个端口'],
+  reality_camouflage: ['伪装网站可用', '去「协议与设置」点「自动挑最快的伪装网站」，然后保存'],
+  hysteria_api: ['Hysteria 2 响应', '点「重启代理服务」'], hysteria_port: ['UDP 端口归属', '有别的程序占了这个 UDP 端口，去设置里换一个端口'],
+  tuic_port: ['TUIC 端口归属', '有别的程序占了这个 UDP 端口，去设置里换一个 TUIC 端口'],
+  port_hopping: ['端口跳跃规则', '点「重启代理服务」重新写入规则'],
+  certificate: ['证书', '在云服务商防火墙放行 TCP 80，再去设置点「立即申请证书」；不放行也能用（自签名照样加密）'],
+  bbr: ['BBR 加速', '设置里打开「自动网络调优」；内核太老的话需要升级系统'], udp_buffers: ['UDP 缓冲区', '设置里打开「自动网络调优」'],
+  clock: ['系统时间同步', '时间不准会导致连不上；服务器上运行 timedatectl set-ntp true'],
+  internet: ['服务器能上外网', '服务器自己连不上外网，检查云服务商的网络/DNS 设置'],
+  disk: ['磁盘空间', '清理磁盘空间'], memory: ['内存', '关掉服务器上其它占内存的程序，或升级套餐'],
+  xray_version: ['内核版本', '在服务器上重新运行一次安装命令'], rules: ['分流规则', '点「立即更新分流规则」；服务器要能访问 github.com'],
+  address: ['服务器地址', 'IP 变了：vps2vpn 一天内会自动改好；着急的话去设置里把服务器地址改成新 IP']
+};
+async function runDoctor(btn, box) {
+  btn.disabled = true; box.replaceChildren(h('div', {class: 'skeleton', style: 'height:120px'}));
+  try {
+    const r = (await api('doctor', {})).results, bad = r.filter(x => x.ok === false).length;
+    box.replaceChildren(h('div', {style: 'margin-bottom:6px'}, bad ? chip('bad', bad + ' ' + t('doctor_bad')) : chip('ok', t('doctor_ok'))),
+      ...r.map(x => {
+        const zh = L === 'zh' && DOC[x.id], name = zh ? zh[0] : x.id.replace(/_/g, ' '), fix = x.ok === false ? ((zh && zh[1]) || x.fix) : '';
+        return h('div', {class: 'doc-row'}, h('span', {class: 'dot ' + (x.ok === true ? 'ok' : x.ok === false ? 'bad' : '')}),
+          h('div', null, h('b', null, name), h('small', null, x.detail), fix ? h('div', {class: 'fix'}, h('b', null, t('fix') + '：'), fix) : null));
+      }));
+  } catch (e) { box.replaceChildren(h('div', {class: 'empty'}, e.message)); }
+  btn.disabled = false;
+}
+const AI_KIND = {hosting: ['机房 IP（数据中心）', 'Data-centre IP'], residential: ['家庭宽带 IP', 'Home broadband IP'], mobile: ['手机网络 IP', 'Mobile IP']};
+const AI_SITES = [['claude', 'Claude'], ['claude_api', 'Claude API'], ['chatgpt', 'ChatGPT'], ['gemini', 'Gemini']];
+function aiPanel() {
+  const box = h('div', {class: 'skeleton', style: 'height:120px'}), btn = h('button', {class: 'btn sm'}, icon('pulse'), t('ai_run'));
+  const draw = r => {
+    box.className = ''; box.style.height = '';
+    const res = r.result;
+    if (!res) return box.replaceChildren(h('p', {class: 'muted', style: 'margin:0;font-size:12.5px'}, t('ai_never')));
+    const ip = res.ip || {}, kind = AI_KIND[ip.kind], zh = L === 'zh';
+    const tone = st => st === 'ok' ? 'ok' : st === 'blocked' ? 'bad' : st === 'unreachable' ? 'warn' : 'off';
+    const row = (k, v) => v ? h('div', {style: 'display:flex;gap:12px;font-size:13px;padding:3px 0'}, h('span', {class: 'muted', style: 'flex:none;width:64px'}, k), h('span', null, v)) : null;
+    box.replaceChildren(...[
+      h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px'},
+        AI_SITES.map(([k, n]) => { const x = res.sites[k] || {}; return h('span', {title: x.note || ''}, chip(tone(x.status), n + ' · ' + t('ai_' + (x.status || 'unknown')))); })),
+      row(t('ai_where'), [ip.city, ip.region, res.country].filter(Boolean).join(', ')),
+      row(t('ai_net'), ip.org || ip.isp),
+      row(t('ai_kind'), kind ? kind[zh ? 0 : 1] : ''),
+      ...AI_SITES.filter(([k]) => (res.sites[k] || {}).note && zh).map(([k, n]) => h('p', {class: 'muted', style: 'margin:4px 0 0;font-size:12px'}, n + '：' + res.sites[k].note)),
+      ...(zh ? res.advice || [] : []).map(a => h('div', {class: 'fix', style: 'margin-top:8px;font-size:12.5px'}, a)),
+      r.servers && r.servers.length ? h('div', {style: 'margin-top:12px'}, h('h4', {style: 'margin:0 0 6px'}, t('ai_others')),
+        r.servers.map(x => h('div', {class: 'muted', style: 'font-size:12.5px'}, h('b', null, x.name), '  ', x.summary || '—'))) : null,
+      h('p', {class: 'muted num', style: 'margin:10px 0 0;font-size:11.5px'}, t('ai_at') + ' ' + fmt.time(res.at))].filter(Boolean));
+  };
+  const get = async body => { try { draw(await api('aicheck', body)); } catch (e) { box.className = ''; box.style.height = ''; box.replaceChildren(h('div', {class: 'empty'}, e.message)); } };
+  btn.onclick = async () => { btn.disabled = true; box.className = 'skeleton'; box.style.height = '120px'; await get({}); btn.disabled = false; };
+  get();
+  return panel(t('ai'), t('ai_tip'), btn, box);
+}
+function securityPanel() {
+  const totpBox = h('div', {class: 'stack'}), histBox = h('div', {class: 'skeleton', style: 'height:120px'}), sessBox = h('div');
+  const fill = async () => {
+    let r;
+    try { r = await api('security'); } catch (e) { histBox.className = ''; histBox.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
+    // two-step verification
+    const on = r.totp;
+    const enable = async btn => {
+      btn.disabled = true;
+      let g; try { g = await api('totp'); } catch (e) { btn.disabled = false; return err(e); }
+      const code = h('input', {type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', class: 'otp', placeholder: '000000'});
+      const ok = h('button', {class: 'btn primary'}, icon('check'), t('totp_confirm'));
+      ok.onclick = async () => { ok.disabled = true; try { await api('totp', {secret: g.secret, code: code.value}); toast(t('totp_on')); await load(); fill(); } catch (e) { err(e); ok.disabled = false; code.select(); } };
+      code.onkeydown = e => { if (e.key === 'Enter') ok.click(); };
+      totpBox.replaceChildren(h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('totp_scan')),
+        h('div', {class: 'totp-setup'}, h('img', {class: 'qr', alt: 'QR', src: 'api/qr?text=' + encodeURIComponent(g.uri)}),
+          h('div', {class: 'stack'}, h('div', {class: 'creds', style: 'letter-spacing:.12em'}, g.secret.replace(/(.{4})/g, '$1 ').trim()),
+            field(t('totp_code'), code), h('div', {style: 'display:flex;gap:8px'}, ok, h('button', {class: 'btn ghost', onclick: fill}, t('cancel'))))));
+      code.focus();
+    };
+    const tb = h('button', {class: 'btn' + (on ? '' : ' primary')}, icon('shield'), t(on ? 'totp_disable' : 'totp_enable'));
+    tb.onclick = async () => {
+      if (!on) return enable(tb);
+      const pw = await modal({title: t('totp_disable'), text: t('totp_pw'), input: true, type: 'password', confirm: t('totp_disable'), danger: true});
+      if (pw == null) return;
+      try { await api('totp', {off: true, password: pw}); toast(t('saved')); await load(); fill(); } catch (e) { err(e); }
+    };
+    totpBox.replaceChildren(h('div', {class: 'sec-row'}, h('div', {class: 'sec-ic' + (on ? ' on' : '')}, icon('shield')),
+      h('div', {style: 'flex:1;min-width:0'}, h('b', null, t('totp'), ' ', chip(on ? 'ok' : 'off', t(on ? 'totp_on' : 'totp_off'))), h('p', {class: 'muted'}, t('totp_tip'))), tb));
+    // sessions
+    const lo = h('button', {class: 'btn sm', onclick: async () => { try { await api('security', {logout_others: true}); toast(t('saved')); fill(); } catch (e) { err(e); } }}, icon('out'), t('logout_others'));
+    sessBox.replaceChildren(h('div', {class: 'sec-row'}, h('div', {class: 'sec-ic'}, icon('users')),
+      h('div', {style: 'flex:1'}, h('b', null, t('sessions')), h('p', {class: 'muted'}, h('b', {class: 'num'}, r.sessions))), r.sessions > 1 ? lo : null));
+    // sign-in history
+    const ua = s => /iPhone|iPad/.test(s) ? 'iOS' : /Android/.test(s) ? 'Android' : /Mac OS/.test(s) ? 'macOS' : /Windows/.test(s) ? 'Windows' : /Linux/.test(s) ? 'Linux' : (s || '').slice(0, 24);
+    const br = s => /Edg\//.test(s) ? 'Edge' : /Chrome\//.test(s) ? 'Chrome' : /Firefox\//.test(s) ? 'Firefox' : /Safari\//.test(s) ? 'Safari' : '';
+    histBox.className = '';
+    histBox.replaceChildren(...[r.logins.length ? h('div', {class: 'tl'}, r.logins.slice(0, 12).map(x => h('div', {class: 'tl-row'},
+      h('span', {class: 'num muted', style: 'min-width:92px;flex:none'}, fmt.time(x.at)), h('code', {class: 'code-chip'}, x.ip || '—'),
+      h('span', {class: 'muted'}, [ua(x.ua), br(x.ua)].filter(Boolean).join(' · ')),
+      h('span', {class: 'tl-acts'}, chip(x.ok ? 'ok' : 'bad', t(x.ok ? 'login_ok' : x.kind === 'fail2fa' ? 'login_fail2fa' : 'login_fail')))))) :
+      h('div', {class: 'muted', style: 'font-size:12.5px'}, t('no_logins')),
+      r.devices.length ? h('h4', {style: 'margin:16px 0 6px'}, t('dev_events')) : null,
+      r.devices.length ? h('div', {class: 'tl'}, r.devices.slice(0, 8).map(e => h('div', {class: 'tl-row'}, h('span', {class: 'num muted', style: 'flex:none'}, fmt.time(e.at)), h('span', null, e.detail)))) : null].filter(Boolean));
+  };
+  fill();
+  return h('div', {class: 'grid g-2'}, panel(t('sec'), null, null, h('div', {class: 'stack'}, totpBox, sessBox)), panel(t('logins'), null, null, histBox));
+}
+
+function drawSystem() {
+  const d = S.data, tg = d.settings.tg_ready;
+  const docBox = h('div', null, h('div', {class: 'empty-state'}, h('span', {class: 'es-ic'}, icon('pulse')), h('p', null, t('doctor_tip')))),
+    docBtn = h('button', {class: 'btn primary'}, icon('pulse'), t('doctor_run'));
+  docBtn.onclick = () => runDoctor(docBtn, docBox);
+  const tgTok = h('input', {type: 'text', placeholder: '123456789:AA…', autocomplete: 'off'});
+  const tgCb = k => { const e = h('input', {type: 'checkbox', checked: !!d.settings[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
+  const tgBody = tg ? h('div', {class: 'stack'}, h('div', null, chip('ok', t('tg_on'))), h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_cmds')),
+      tgCb('tg_bot'), tgCb('tg_backup'),
+      h('div', null, h('button', {class: 'btn sm', onclick: async () => { await api('telegram', {off: true}); await load(); drawSystem(); }}, t('tg_off'))))
+    : h('div', {class: 'stack'}, h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_tip')), field(t('tg_token'), tgTok),
+      h('div', null, h('button', {class: 'btn', onclick: async () => {
+        try { await api('telegram', {token: tgTok.value.trim()}); toast(t('tg_on')); await load(); drawSystem(); }
+        catch (e) { toast(e.message === 'no_chat' ? t('tg_no_chat') : e.message === 'bad_token' ? t('tg_bad') : e.message, 'err'); }
+      }}, t('tg_connect'))));
+  const pw = {user: h('input', {type: 'text', value: d.settings.admin_user}), old: h('input', {type: 'password', autocomplete: 'current-password'}), nw: h('input', {type: 'password', autocomplete: 'new-password'})};
+  const restore = h('input', {type: 'file', accept: '.json', hidden: true});
+  restore.onchange = async () => {
+    const f = restore.files[0]; if (!f) return;
+    try { await api('restore', JSON.parse(await f.text())); toast(t('restore_ok')); await load(); } catch (er) { err(er); }
+  };
+  $('view').replaceChildren(h('section', {class: 'page'},
+    h('div', {class: 'grid g-2-1'},
+      panel(t('doctor'), null, docBtn, docBox),
+      h('div', {class: 'stack'},
+        panel(t('ports'), null, null, h('p', {class: 'muted', style: 'margin:0 0 10px;font-size:12.5px'}, t('ports_tip')),
+          h('div', {class: 'port-list'}, d.ports.map(([p, n]) => chip('info plain', p.toUpperCase() + ' ' + n)))),
+        panel(t('tg'), null, null, tgBody))),
+    aiPanel(),
+    securityPanel(),
+    h('div', {class: 'grid g-2'},
+      panel(t('change_pw'), null, null, h('div', {class: 'stack'}, field(t('username'), pw.user), field(t('old_pw'), pw.old), field(t('new_pw'), pw.nw),
+        h('div', null, h('button', {class: 'btn', onclick: async () => {
+          try { await api('password', {username: pw.user.value, old: pw.old.value, new: pw.nw.value}); toast(t('saved')); pw.old.value = pw.nw.value = ''; } catch (e) { err(e); }
+        }}, icon('lock'), t('save'))))),
+      panel(t('backup'), null, null, h('p', {class: 'muted', style: 'margin:0 0 12px;font-size:12.5px;line-height:1.8'}, t('backup_tip')),
+        h('div', {class: 'act-grid'}, h('a', {class: 'btn', href: 'api/backup'}, icon('arrowDown'), t('download_backup')),
+          h('label', {class: 'btn'}, icon('arrowUp'), t('restore'), restore)))),
+    panel(t('logs'), `${t('rules_age')} ${d.rules_age == null ? '—' : dur(d.rules_age) + ' ' + t('ago')} · ${t('version')} ${d.version} · ${d.os}`,
+      h('div', {style: 'display:flex;gap:8px'}, h('button', {class: 'btn sm', onclick: async () => { await api('rules-refresh', {}); toast('…'); }}, icon('refresh'), t('rules_refresh')),
+        h('button', {class: 'btn sm', onclick: async () => { if (await confirmBox(t('restart'), '')) { await api('restart', {}); toast(t('saved')); } }}, icon('bolt'), t('restart'))),
+      h('div', {class: 'log'}, d.log.join('\n') || '—'))));
+}
+
+boot();
