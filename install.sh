@@ -97,7 +97,12 @@ install_cores() {
     say "downloading sing-box $SINGBOX_VERSION (TUIC)"
     local v=${SINGBOX_VERSION#v} want got
     fetch "https://github.com/SagerNet/sing-box/releases/download/$SINGBOX_VERSION/sing-box-$v-linux-$SB_ARCH.tar.gz" "$tmp/sb.tgz"
-    want=$(eval echo "\$SINGBOX_SHA256_$SB_ARCH")
+    # Keep the architecture-to-checksum mapping explicit: no eval or dynamic shell variables.
+    case "$SB_ARCH" in
+      amd64) want=$SINGBOX_SHA256_amd64 ;;
+      arm64) want=$SINGBOX_SHA256_arm64 ;;
+      *) die "unsupported sing-box architecture: $SB_ARCH" ;;
+    esac
     got=$(sha256sum "$tmp/sb.tgz" | awk '{print $1}')
     [ "$want" = "$got" ] || die "sing-box checksum mismatch (expected $want, got $got)"
     mkdir -p "$tmp/sb" && tar -xzf "$tmp/sb.tgz" -C "$tmp/sb" --strip-components=1
