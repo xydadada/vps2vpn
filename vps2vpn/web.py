@@ -550,7 +550,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json(res, 409 if res.get('conflict') else 200)
         if not s['setup_done'] or not db.session_ok(self.cookie('v2v')):
             return self.json({'error': 'login required'}, 401)
-        fn = getattr(self, 'api_' + api.replace('-', '_').replace('/', '__'), None)
+        # Explicit API allowlist: routes cannot be inferred from arbitrary method names.
+        handlers = {
+            'security': self.api_security,
+            'totp': self.api_totp,
+            'sys-history': self.api_sys_history,
+            'aicheck': self.api_aicheck,
+            'logout': self.api_logout,
+            'state': self.api_state,
+            'change-port': self.api_change_port,
+            'traffic': self.api_traffic,
+            'settings': self.api_settings,
+            'users': self.api_users,
+            'users-batch': self.api_users_batch,
+            'users-bulk': self.api_users_bulk,
+            'users-export': self.api_users_export,
+            'invites': self.api_invites,
+            'requests': self.api_requests,
+            'monitor': self.api_monitor,
+            'abuse': self.api_abuse,
+            'servers': self.api_servers,
+            'node-key': self.api_node_key,
+            'password': self.api_password,
+            'check-targets': self.api_check_targets,
+            'cert': self.api_cert,
+            'qr': self.api_qr,
+            'user-links': self.api_user_links,
+            'restart': self.api_restart,
+            'rules-refresh': self.api_rules_refresh,
+            'doctor': self.api_doctor,
+            'telegram': self.api_telegram,
+            'backup': self.api_backup,
+            'restore': self.api_restore,
+        }
+        fn = handlers.get(api)
         m = re.fullmatch(r'users/(\d+)/(save|delete|rotate|reset|login)', api)
         if m and method == 'POST':
             return self.api_user_action(int(m.group(1)), m.group(2))
