@@ -239,6 +239,8 @@ class Abuse(tu.Base):
             None, {'metadata': {'destinationPort': '443'}, 'chains': [5]},
             {'metadata': {'destinationPort': '４４３'}, 'chains': ['u7']},
             {'metadata': {'destinationPort': '443'}, 'chains': ['u' + '9' * 5000]},
+            {'metadata': {'destinationPort': '443', 'host': ['bad.example']}, 'chains': ['u7']},
+            {'metadata': {'destinationPort': '443', 'destinationIP': {'bad': 'value'}}, 'chains': ['u7']},
             {'metadata': {'destinationPort': 443, 'host': 'valid.example'}, 'chains': ['u7']},
         ]
         with unittest.mock.patch.object(abuse.cores.TuicMeter, 'poll', return_value={'connections': records}), \
