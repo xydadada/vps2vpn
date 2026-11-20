@@ -214,10 +214,17 @@ def latest():
     except (OSError, ValueError):
         return None
     sites = res.get('sites') if isinstance(res, dict) else None
-    if not isinstance(sites, dict) or not isinstance(res.get('ip', {}), dict):
+    ip = res.get('ip', {}) if isinstance(res, dict) else {}
+    if not isinstance(sites, dict) or not isinstance(ip, dict):
         return None
     if not isinstance(res.get('country', ''), str):
         return None
+    # place_name() uses city as a dict key and calls .upper() on the IP
+    # country field. Syntactically valid JSON arrays/objects crash both.
+    # A provider may legitimately return null for an unavailable field.
+    for field in ('city', 'country'):
+        if ip.get(field) is not None and not isinstance(ip[field], str):
+            return None
     # Merely having a status key is insufficient: malformed JSON may contain
     # lists/dicts, which later crash summary() when used as dictionary keys.
     allowed = {'ok', 'blocked', 'unreachable', 'unknown'}
