@@ -1,4 +1,5 @@
 """SQLite storage: settings, users, sessions, daily traffic, invite codes, quota requests and events."""
+from contextlib import contextmanager
 import json
 import os
 import sqlite3
@@ -198,6 +199,25 @@ def x(sql, args=()):
         return cur.lastrowid
 
 
+@contextmanager
+def transaction():
+    """Serialize a unit of work and roll it back, including when nested."""
+    with _lock:
+        c = connect()
+        name = 'v2v_' + os.urandom(8).hex()
+        c.execute('SAVEPOINT ' + name)
+        try:
+            yield c
+            c.execute('RELEASE SAVEPOINT ' + name)
+        except BaseException:
+            # SQLITE_FULL / RAISE(ROLLBACK) can already have rolled back the
+            # whole transaction. Preserve that original exception.
+            if c.in_transaction:
+                c.execute('ROLLBACK TO SAVEPOINT ' + name)
+                c.execute('RELEASE SAVEPOINT ' + name)
+            raise
+
+
 # --- settings -----------------------------------------------------------------
 def settings():
     out = json.loads(_DEFAULT_SNAPSHOT)
@@ -207,19 +227,12 @@ def settings():
 
 
 def set_settings(**kv):
-    with _lock:
-        c = connect()
-        c.execute('BEGIN')
-        try:
-            for k, v in kv.items():
-                if k not in DEFAULTS:
-                    raise KeyError(k)
-                c.execute('INSERT INTO settings(key, value) VALUES(?, ?) '
-                          'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k, json.dumps(v)))
-            c.execute('COMMIT')
-        except BaseException:
-            c.execute('ROLLBACK')
-            raise
+    with transaction() as c:
+        for k, v in kv.items():
+            if k not in DEFAULTS:
+                raise KeyError(k)
+            c.execute('INSERT INTO settings(key, value) VALUES(?, ?) '
+                      'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k, json.dumps(v, allow_nan=False)))
 
 
 def ensure_secrets():
@@ -264,13 +277,16 @@ def user_by_token(token):
 
 
 def add_user(name, quota_gb=0, expire_at=0, reset_day=0, note='', **extra):
-    uid = x('INSERT INTO users(name, uuid, hy2_pass, sub_token, quota_gb, expire_at, reset_day, note, created_at) '
-            'VALUES(?,?,?,?,?,?,?,?,?)',
-            (name, secure.new_uuid(), secure.token(18), secure.token(18), float(quota_gb), int(expire_at),
-             int(reset_day), note, int(time.time())))
-    if extra:
-        update_user(uid, **extra)
-    return uid
+    with transaction():
+        if user_by_name(name):
+            raise ValueError('name already used')
+        uid = x('INSERT INTO users(name, uuid, hy2_pass, sub_token, quota_gb, expire_at, reset_day, note, created_at) '
+                'VALUES(?,?,?,?,?,?,?,?,?)',
+                (name, secure.new_uuid(), secure.token(18), secure.token(18), float(quota_gb), int(expire_at),
+                 int(reset_day), note, int(time.time())))
+        if extra:
+            update_user(uid, **extra)
+        return uid
 
 
 def user_by_name(name):
@@ -298,7 +314,12 @@ def update_user(uid, **kv):
         sets.append(k + '=?')
         args.append(v)
     if sets:
-        x('UPDATE users SET %s WHERE id=?' % ','.join(sets), args + [uid])
+        with transaction():
+            if 'name' in kv:
+                existing = user_by_name(kv['name'])
+                if existing and existing['id'] != uid:
+                    raise ValueError('name already used')
+            x('UPDATE users SET %s WHERE id=?' % ','.join(sets), args + [uid])
 
 
 def rotate_user(uid):
@@ -308,24 +329,34 @@ def rotate_user(uid):
 
 
 def delete_user(uid):
-    x('DELETE FROM users WHERE id=?', (uid,))
-    x('DELETE FROM traffic WHERE user_id=?', (uid,))
-    x('DELETE FROM member_sessions WHERE user_id=?', (uid,))
-    x('DELETE FROM requests WHERE user_id=?', (uid,))
-    x("UPDATE invites SET status='revoked' WHERE inviter=? AND status='unused'", (uid,))
-    x('UPDATE users SET invited_by=0, invite_deduct=0 WHERE invited_by=?', (uid,))
+    from . import members
+    with transaction():
+        u = user(uid)
+        if u and u.get('invited_by') and u.get('invite_deduct', 0) > 0:
+            # Keep consumed quota charged after the child account disappears. Do not
+            # duplicate it in daily traffic: those bytes have already been measured.
+            debt = min(int(u['invite_deduct'] * (1 << 30)), members.spent_bytes(u))
+            x('UPDATE users SET used_down=used_down+? WHERE id=?', (debt, u['invited_by']))
+        x('DELETE FROM users WHERE id=?', (uid,))
+        x('DELETE FROM traffic WHERE user_id=?', (uid,))
+        x('DELETE FROM member_sessions WHERE user_id=?', (uid,))
+        x('DELETE FROM requests WHERE user_id=?', (uid,))
+        x("UPDATE invites SET status='revoked' WHERE inviter=? AND status='unused'", (uid,))
+        x('UPDATE users SET invited_by=0, invite_deduct=0 WHERE invited_by=?', (uid,))
 
 
 def add_traffic(uid, up, down, now=None):
-    day = time.strftime('%Y-%m-%d', time.localtime(now or time.time()))
-    with _lock:
-        c = connect()
-        c.execute('BEGIN')
-        c.execute('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
-                  (up, down, int(now or time.time()), uid))
+    if any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in (up, down)):
+        raise ValueError('traffic counters must be nonnegative integers')
+    now = time.time() if now is None else now
+    day = time.strftime('%Y-%m-%d', time.localtime(now))
+    with transaction() as c:
+        changed = c.execute('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
+                            (up, down, int(now), uid))
+        if not changed.rowcount:
+            return
         c.execute('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
                   'DO UPDATE SET up=up+excluded.up, down=down+excluded.down', (day, uid, up, down))
-        c.execute('COMMIT')
 
 
 def traffic_days(days=30):
@@ -447,42 +478,49 @@ def events(kind=None, limit=100):
 
 # --- backup -------------------------------------------------------------------
 def export_all():
-    return {'format': 'vps2vpn-backup-1', 'settings': settings(), 'users': users(),
-            'invites': [dict(r) for r in q('SELECT * FROM invites')],
-            'requests': [dict(r) for r in q('SELECT * FROM requests')]}
+    with transaction():
+        return {'format': 'vps2vpn-backup-1', 'settings': settings(), 'users': users(),
+                'invites': [dict(r) for r in q('SELECT * FROM invites')],
+                'requests': [dict(r) for r in q('SELECT * FROM requests')]}
 
 
 IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': ''}
 
 
 def import_all(data):
-    if data.get('format') != 'vps2vpn-backup-1':
+    if not isinstance(data, dict) or data.get('format') != 'vps2vpn-backup-1':
         raise ValueError('not a vps2vpn backup file')
+    if not isinstance(data.get('settings'), dict) or not isinstance(data.get('users'), list):
+        raise ValueError('invalid backup data')
     keep = {k: v for k, v in data['settings'].items() if k in DEFAULTS}
     cols = ('id', 'name', 'uuid', 'hy2_pass', 'sub_token', 'quota_gb', 'expire_at', 'reset_day', 'used_up',
             'used_down', 'enabled', 'disabled_reason', 'note', 'last_seen', 'last_reset', 'created_at',
             'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days')
-    with _lock:
-        c = connect()
-        c.execute('BEGIN')
+    with transaction() as c:
         try:
-            c.execute('DELETE FROM users')
+            # Restored IDs may refer to different people. Old sessions and history
+            # must never attach to the replacement identities.
+            for table in ('users', 'traffic', 'sessions', 'member_sessions', 'invites', 'requests', 'settings'):
+                c.execute('DELETE FROM ' + table)
             for u in data['users']:
+                if not isinstance(u, dict) or not isinstance(u.get('name'), str) or user_by_name(u['name']):
+                    raise ValueError('invalid or duplicate account in backup')
                 vals = [u.get(k, IMPORT_DEFAULTS.get(k, 0)) for k in cols]
                 if 'id' not in u:
                     vals[0] = None                     # backups from before ids were kept
                 c.execute('INSERT INTO users(%s) VALUES(%s)' % (','.join(cols), ','.join('?' * len(cols))), vals)
             for table in ('invites', 'requests'):
-                if table in data:
-                    c.execute('DELETE FROM ' + table)
-                    for row in data[table]:
-                        ks = list(row)
-                        c.execute('INSERT INTO %s(%s) VALUES(%s)' % (table, ','.join(ks), ','.join('?' * len(ks))),
-                                  [row[k] for k in ks])
+                rows = data.get(table, [])
+                if not isinstance(rows, list):
+                    raise ValueError('invalid backup table: ' + table)
+                allowed = {r[1] for r in c.execute('PRAGMA table_info(%s)' % table)}
+                for row in rows:
+                    if not isinstance(row, dict) or not row or not set(row) <= allowed:
+                        raise ValueError('invalid backup columns: ' + table)
+                    ks = list(row)
+                    c.execute('INSERT INTO %s(%s) VALUES(%s)' % (table, ','.join(ks), ','.join('?' * len(ks))),
+                              [row[k] for k in ks])
             for k, v in keep.items():
-                c.execute('INSERT INTO settings(key, value) VALUES(?, ?) '
-                          'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k, json.dumps(v)))
-            c.execute('COMMIT')
-        except BaseException:
-            c.execute('ROLLBACK')
-            raise
+                c.execute('INSERT INTO settings(key, value) VALUES(?, ?)', (k, json.dumps(v, allow_nan=False)))
+        except sqlite3.Error as e:
+            raise ValueError('invalid backup data') from e

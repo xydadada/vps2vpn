@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m unittest -v tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops
+      - run: python -m unittest discover -s tests -t . -v
       - run: python -m compileall -q vps2vpn tools deploy
 
   lint:
@@ -23,6 +23,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: shellcheck -S warning install.sh deploy-mac.command tests/vps_acceptance.sh
       - run: node --check vps2vpn/static/app.js
+      - run: node --check vps2vpn/static/member.js
+      - run: node --check vps2vpn/static/kit.js
+      - run: node tests/test_ui.js
       - name: PowerShell deployer parses and builds its window
         shell: pwsh
         run: |

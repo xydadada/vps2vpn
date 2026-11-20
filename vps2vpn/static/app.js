@@ -26,16 +26,16 @@ const T = {
     confirm_reset: '把本月已用流量清零？', enable: '启用', disable: '停用', edit: '编辑', usage: '用量', actions: '操作',
     s_basic: '基本', s_proto: '协议（可同时开，App 里随时切换）', s_route: '分流', s_cert: '证书',
     node_name: '节点名字（显示在 App 里）', tune: '自动网络调优（BBR + 按内存调整缓冲区）',
-    reality: 'VLESS + REALITY', reality_d: 'TCP。最稳，伪装成访问大网站，几乎不会被识别。默认首选。',
+    reality: 'VLESS + REALITY', reality_d: 'TCP + REALITY。UDP 不通时可切换使用；实际稳定性取决于线路和客户端兼容性。',
     reality_target: '伪装网站', reality_port: 'TCP 端口', test_targets: '自动挑最快的伪装网站',
     hy2: 'Hysteria 2', hy2_d: 'UDP + QUIC。丢包严重、晚高峰拥堵的线路上最快。', hy2_port: 'UDP 端口', hy2_hop: 'UDP 端口跳跃（防运营商对单一端口限速）',
     hy2_hop_range: '跳跃端口范围', hy2_obfs: '混淆密码（留空 = 不混淆，最快；UDP 被封时再开）',
-    tuic: 'TUIC v5', tuic_d: 'UDP + QUIC。另一种 QUIC 协议，Hysteria 2 被限速时的备选，0-RTT 握手延迟低。', tuic_port: 'UDP 端口',
+    tuic: 'TUIC v5', tuic_d: 'UDP + QUIC。Hysteria 2 之外的备选协议；实际握手行为取决于所选客户端。', tuic_port: 'UDP 端口',
     block_ads: '屏蔽广告', block_bt: '禁止 BT 下载走服务器（防止机房投诉）', ai_group: '单独的「AI 服务」分组（ChatGPT、Claude、Gemini 等）',
     ipv6_nodes: '同时提供 IPv6 节点（IPv4 线路卡的时候可以换着用）',
     cert_mode: '证书方式', cert_auto: '自动申请免费证书（Let\'s Encrypt，支持纯 IP）', cert_self: '只用自签名证书',
     domain: '域名（可选，有就填）', email: '邮箱（可选，证书快过期时提醒）', cert_now: '立即申请证书',
-    cert_ok: '受信任证书', cert_self_s: '自签名证书', cert_self_tip: '仍然全程加密，只是浏览器会提示不安全。',
+    cert_ok: '受信任证书', cert_self_s: '自签名证书', cert_self_tip: 'HTTPS 连接仍加密，但需核验证书。兼容用 HTTP 订阅链接会明文传输密钥；建议申请受信任证书。',
     saved: '已保存，正在生效…', change_pw: '修改管理员密码', old_pw: '当前密码', new_pw: '新密码',
     backup: '备份与恢复', backup_tip: '每天自动备份一次（保留 14 天）。换服务器时下载备份，在新服务器上恢复即可。',
     download_backup: '下载备份', restore: '从备份恢复', restore_ok: '已恢复',
@@ -128,16 +128,16 @@ const T = {
     confirm_reset: 'Reset this month\'s usage to zero?', enable: 'Enable', disable: 'Pause', edit: 'Edit', usage: 'Usage', actions: 'Actions',
     s_basic: 'Basics', s_proto: 'Protocols (turn on several and switch in the app)', s_route: 'Routing', s_cert: 'Certificate',
     node_name: 'Node name (shown in apps)', tune: 'Automatic network tuning (BBR + buffers sized to RAM)',
-    reality: 'VLESS + REALITY', reality_d: 'TCP. The most robust: looks like a visit to a big website. Default choice.',
+    reality: 'VLESS + REALITY', reality_d: 'TCP + REALITY. An option when UDP is unavailable; reliability depends on the route and client compatibility.',
     reality_target: 'Camouflage site', reality_port: 'TCP port', test_targets: 'Pick the fastest camouflage site',
     hy2: 'Hysteria 2', hy2_d: 'UDP + QUIC. Fastest on lossy or congested routes.', hy2_port: 'UDP port', hy2_hop: 'UDP port hopping (beats per-port throttling)',
     hy2_hop_range: 'Hopping range', hy2_obfs: 'Obfuscation password (empty = off and fastest; turn on if UDP gets blocked)',
-    tuic: 'TUIC v5', tuic_d: 'UDP + QUIC. A second QUIC protocol to switch to if Hysteria 2 gets throttled; 0-RTT handshakes.', tuic_port: 'UDP port',
+    tuic: 'TUIC v5', tuic_d: 'UDP + QUIC. An alternative to Hysteria 2; handshake behavior depends on the selected client.', tuic_port: 'UDP port',
     block_ads: 'Block ads', block_bt: 'Block BitTorrent through the server (avoids abuse complaints)', ai_group: 'Separate "AI" group (ChatGPT, Claude, Gemini…)',
     ipv6_nodes: 'Also offer IPv6 entries (handy when the IPv4 route is slow)',
     cert_mode: 'Certificate', cert_auto: 'Free certificate from Let\'s Encrypt (works with a bare IP)', cert_self: 'Self-signed only',
     domain: 'Domain (optional)', email: 'E-mail (optional, expiry notices)', cert_now: 'Get certificate now',
-    cert_ok: 'Trusted certificate', cert_self_s: 'Self-signed', cert_self_tip: 'Still fully encrypted; browsers just show a warning.',
+    cert_ok: 'Trusted certificate', cert_self_s: 'Self-signed', cert_self_tip: 'HTTPS is encrypted but requires certificate verification. Compatibility HTTP subscription links expose credentials; a trusted certificate is recommended.',
     saved: 'Saved, applying…', change_pw: 'Change admin password', old_pw: 'Current password', new_pw: 'New password',
     backup: 'Backup & restore', backup_tip: 'A backup is made every day (14 kept). To move servers, download one here and restore it on the new server.',
     download_backup: 'Download backup', restore: 'Restore from backup', restore_ok: 'Restored',
@@ -400,7 +400,8 @@ async function renderShell() {
   const scrim = h('div', {class: 'scrim', id: 'scrim', onclick: closeDrawer});
   document.body.replaceChildren(h('div', {class: 'app'}, side, h('main', {class: 'main'}, top, h('div', {id: 'view'}))), tabbar, scrim, drawer);
   Theme.mount();
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  document.removeEventListener('keydown', drawerKey);
+  document.addEventListener('keydown', drawerKey);
   go(S.view);
   clearInterval(S.timer);
   S.timer = setInterval(() => { if (!document.hidden) refresh(false); }, 5000);
@@ -417,17 +418,27 @@ function go(v) {
 }
 
 async function refresh(manual) {
-  if (!$('view')) return;
+  if (!$('view') || S.refreshing) return;
+  S.refreshing = true;
   try {
-    $('syncInfo').textContent = t('syncing');
+    const sync = $('syncInfo');
+    if (sync) sync.textContent = t('syncing');
     await load();
     if (manual || S.view === 'home') await loadDays();
-    $('livePill').classList.remove('stale'); $('syncInfo').textContent = t('synced') + ' · ' + new Date().toLocaleTimeString(KT.locale, {hour12: false});
-  } catch (e) { $('livePill').classList.add('stale'); $('syncInfo').textContent = e.message; return; }
-  const rb = $('reqBadge'); if (rb) { rb.textContent = S.data.pending_requests || ''; rb.hidden = !S.data.pending_requests; rb.className = S.data.pending_requests ? 'badge' : ''; }
-  if (S.view === 'home') updateHome();
-  else if (S.view === 'users' && (manual || !document.querySelector('#view input:focus'))) drawUsers();
-  else if (manual) go(S.view);
+    const pill = $('livePill'), info = $('syncInfo');
+    if (!pill || !info || !$('view')) return; // authentication may have replaced the whole page
+    pill.classList.remove('stale'); info.textContent = t('synced') + ' · ' + new Date().toLocaleTimeString(KT.locale, {hour12: false});
+    const rb = $('reqBadge'); if (rb) { rb.textContent = S.data.pending_requests || ''; rb.hidden = !S.data.pending_requests; rb.className = S.data.pending_requests ? 'badge' : ''; }
+    if (S.view === 'home') updateHome();
+    else if (S.view === 'users' && (manual || !document.querySelector('#view input:focus'))) drawUsers();
+    else if (manual) go(S.view);
+  } catch (e) {
+    const pill = $('livePill'), info = $('syncInfo');
+    if (pill) pill.classList.add('stale');
+    if (info) info.textContent = e.message;
+  } finally {
+    S.refreshing = false;
+  }
 }
 
 /* ---------------- overview ---------------- */
@@ -467,7 +478,7 @@ class HistChart {
     this.pts = []; this.hover = null; this.dirty = true;
     el.addEventListener('pointermove', e => { this.hover = e.offsetX; this.dirty = true; Ticker.start(); });
     el.addEventListener('pointerleave', () => { this.hover = null; this.tip.classList.add('hide'); this.dirty = true; Ticker.start(); });
-    new ResizeObserver(() => { this.dirty = true; Ticker.start(); }).observe(el); Ticker.add(this);
+    this.resize = new ResizeObserver(() => { this.dirty = true; Ticker.start(); }); this.resize.observe(el); Ticker.add(this);
   }
   set(pts) { this.pts = pts; this.dirty = true; Ticker.start(); }
   tick() { if (!this.dirty) return false; this.dirty = false; this.draw(); return false; }
@@ -600,7 +611,7 @@ const expText = u => u.expire_at ? dateStr(u.expire_at) : u.expire_after_days ? 
 const FILTERS = {
   all: () => true, online: u => !!u.online, active: u => !!u.enabled, paused: u => !u.enabled,
   soon: u => u.enabled && u.expire_at && u.expire_at - Date.now() / 1000 < 7 * 86400,
-  low: u => { const q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB; return u.enabled && q && (u.used_up + u.used_down) / q >= .8; }
+  low: u => { const usage = quotaUsage(u); return u.enabled && usage.limited && usage.ratio >= .8; }
 };
 const SORTS = {
   id: (a, b) => a.id - b.id, name: (a, b) => a.name.localeCompare(b.name, L === 'zh' ? 'zh-CN' : 'en'),
@@ -626,8 +637,8 @@ async function bulk(action) {
   } catch (e) { err(e); }
 }
 function usageBar(u) {
-  const used = u.used_up + u.used_down, q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB, p = q ? used / q : 0;
-  return h('div', null, h('div', {class: 'use-top'}, h('b', null, fmt.bytes(used)), h('span', null, q ? fmt.bytes(q) : t('unlimited'))),
+  const {used, limit: q, limited, ratio: p} = quotaUsage(u);
+  return h('div', null, h('div', {class: 'use-top'}, h('b', null, fmt.bytes(used)), h('span', null, limited ? fmt.bytes(q) : t('unlimited'))),
     h('div', {class: 'bar' + (p > .95 ? ' bad' : p > .8 ? ' warn' : '')}, h('i', {style: 'width:' + Math.min(100, p * 100) + '%'})));
 }
 function drawUsers() {
@@ -708,6 +719,7 @@ function batchAdd() {
   openDrawer(); setTimeout(() => f.prefix.focus(), 250);
 }
 
+function drawerKey(e) { if (e.key === 'Escape') closeDrawer(); }
 function openDrawer() { $('drawer').classList.add('on'); $('drawer').setAttribute('aria-hidden', 'false'); $('scrim').classList.add('on'); document.body.style.overflow = 'hidden'; }
 function closeDrawer() { const d = $('drawer'); if (!d) return; d.classList.remove('on'); d.setAttribute('aria-hidden', 'true'); $('scrim').classList.remove('on'); document.body.style.overflow = ''; }
 
@@ -715,10 +727,10 @@ async function openUser(id, first) {
   const u = S.data.users.find(x => x.id === id); if (!u) return;
   let links;
   try { links = await api('user-links?id=' + id); } catch (e) { return err(e); }
-  const used = u.used_up + u.used_down, q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB;
+  const {used, limit: q, limited, ratio} = quotaUsage(u);
   const histBox = h('div', {class: 'chart h160'});
   const pwIn = h('input', {type: 'password', autocomplete: 'new-password', placeholder: '8+'});
-  const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
+  const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, limited ? fmt.pct(ratio) : '∞'), h('small', null, t('used'))));
   const act = async (fn, ok) => { try { await fn(); toast(ok || t('saved')); await load(); closeDrawer(); if (S.view === 'users') drawUsers(); } catch (e) { err(e); } };
   const imp = links.import;
   $('drawer').replaceChildren(
@@ -736,7 +748,7 @@ async function openUser(id, first) {
         h('p', {class: 'muted', style: 'font-size:12px;margin:10px 0 0'}, t('apps_hint'))),
       h('div', {class: 'dr-sec'}, h('h4', null, t('usage'), h('span', {class: 'right'}, userState(u))),
         h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats'},
-          h('div', null, h('small', null, t('used')), h('b', null, fmt.bytes(used))), h('div', null, h('small', null, t('quota').split(/[（(]/)[0]), h('b', null, q ? fmt.bytes(q) : t('unlimited'))),
+          h('div', null, h('small', null, t('used')), h('b', null, fmt.bytes(used))), h('div', null, h('small', null, t('quota').split(/[（(]/)[0]), h('b', null, limited ? fmt.bytes(q) : t('unlimited'))),
           h('div', null, h('small', null, '↓ ' + t('down')), h('b', null, fmt.bytes(u.used_down))), h('div', null, h('small', null, '↑ ' + t('up_')), h('b', null, fmt.bytes(u.used_up))),
           h('div', null, h('small', null, t('expires')), h('b', null, expText(u))), h('div', null, h('small', null, t('last_seen')), h('b', null, u.online ? t('online_now') : fmt.ago(u.last_seen))),
           u.max_ips ? h('div', null, h('small', null, t('dev_limit')), h('b', null, (u.online ? (u.online.devices ?? u.online.ips.length) + ' / ' : '') + u.max_ips)) : null,
@@ -757,7 +769,7 @@ async function openUser(id, first) {
         h('button', {class: 'btn', onclick: async () => { if (await confirmBox(t('rotate'), t('confirm_rotate'))) act(() => api(`users/${u.id}/rotate`, {})); }}, icon('key'), t('rotate')),
         h('button', {class: 'btn danger', onclick: async () => { if (await confirmBox(t('del') + ' · ' + u.name, t('confirm_del'), {danger: true, confirm: t('del')})) act(() => api(`users/${u.id}/delete`, {})); }}, icon('x'), t('del'))))));
   openDrawer();
-  new Ring(ringBox.firstChild).set(q ? used / q : 0, q && used / q > .9 ? 'danger' : 'down');
+  new Ring(ringBox.firstChild).set(ratio, ratio > .9 ? 'danger' : 'down');
   api('users/' + u.id + '/history?days=30').then(r => new DayBars(histBox).set(r.days.map(x => ({day: x.day, upload: x.up, download: x.down})), last30())).catch(() => {});
 }
 
@@ -907,7 +919,7 @@ async function drawServers() {
 
 /* ---------------- monitor: site reachability + abuse watch ---------------- */
 function spark(cv, vals) {
-  Ticker.add({tick() {
+  Ticker.add({el: cv, tick() {
     const {ctx, w, h: hh} = setupCanvas(cv), P = Palette.v; ctx.clearRect(0, 0, w, hh);
     const ok = vals.filter(v => v != null), max = Math.max(200, ...ok) * 1.15, n = Math.max(1, vals.length - 1);
     vals.forEach((v, i) => { if (v == null) { ctx.fillStyle = alpha(P.danger || '#e5432a', .7); ctx.fillRect(i / n * w - 1, 0, 2, hh); } });

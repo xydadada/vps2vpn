@@ -47,11 +47,18 @@ const fmt={
  daysUntil(iso){if(!iso)return null;const d=new Date(iso+'T23:59:59+08:00');return Math.ceil((d-Date.now())/864e5);},
 };
 
+/* Zero effective quota on a finite account is exhausted, not unlimited. */
+function quotaUsage(u){
+ const used=Number(u.used_up||0)+Number(u.used_down||0),limited=Number(u.quota_gb)>0;
+ const limit=Math.max(0,Number(u.quota_eff??u.quota_gb)||0)*1073741824;
+ return {used,limit,limited,ratio:limited?(limit>0?used/limit:1):0};
+}
+
 /* ---------- theme ---------- */
 const Theme={key:'v2v-theme',get(){try{return localStorage.getItem(this.key)||'auto'}catch{return 'auto'}},
  set(v){try{localStorage.setItem(this.key,v)}catch{}this.apply(v);},
  apply(v){if(v==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',v);Palette.refresh();for(const b of document.querySelectorAll('[data-theme-btn]'))b.setAttribute('aria-pressed',String(b.dataset.themeBtn===v));},
- mount(){for(const b of document.querySelectorAll('[data-theme-btn]'))b.addEventListener('click',()=>this.set(b.dataset.themeBtn));this.apply(this.get());matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>Palette.refresh());}};
+ mount(){for(const b of document.querySelectorAll('[data-theme-btn]'))b.onclick=()=>this.set(b.dataset.themeBtn);this.apply(this.get());if(!this.media){this.media=matchMedia('(prefers-color-scheme: dark)');this.media.addEventListener('change',()=>Palette.refresh());}}};
 const Palette={v:{},mono:'monospace',refresh(){const cs=getComputedStyle(document.documentElement);this.mono=cs.getPropertyValue('--mono').trim()||'monospace';for(const k of ['text','text-2','muted','line','line-2','panel','panel-2','panel-3','down','up','sg','us','accent','ok','warn','danger'])this.v[k]=cs.getPropertyValue('--'+k).trim();Ticker.dirtyAll();}};
 function alpha(color,a){const c=color.trim();if(c.startsWith('#')){let x=c.slice(1);if(x.length===3)x=[...x].map(ch=>ch+ch).join('');const n=parseInt(x,16);return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;}return c;}
 
@@ -68,7 +75,7 @@ const ERR_ZH=[
  [/^at most (\d+) unused codes/,(m,a)=>'最多同时有 '+a+' 个没用完的邀请码，先用掉或撤销一个'],
  [/^no such invite code/,'没有这个邀请码'],[/^this code is already used up or revoked/,'这个邀请码已经用完或撤销了'],
  [/^name: 2-32/,'用户名 2–32 位，只能用字母、数字、汉字和 . _ -'],[/^that name is taken/,'这个名字已经有人用了，换一个吧'],[/^name already used/,'这个名字已经有人用了'],
- [/^name required/,'请填写名字'],[/^password: (\d+) to 128/,(m,a)=>'密码 '+a+'–128 位'],[/^password must be at least 8/,'密码至少 8 位'],
+ [/^name required/,'请填写名字'],[/^password: (\d+) to 128/,(m,a)=>'密码 '+a+'–128 位'],[/^password must be at least 8/,'密码至少 8 位'],[/^password must be 8 to 128/,'密码 8–128 位'],
  [/^invite code is wrong, used up or expired/,'邀请码不对、已用完或已过期'],[/^the person who invited you can no longer invite/,'邀请你的人现在不能再邀请了，这个邀请码作废'],
  [/^the inviter's quota has run short/,'邀请人的额度不够了，这个邀请码作废'],[/^no such account/,'账号不存在'],[/^no such user/,'没有这个使用者'],
  [/^you already have a request waiting/,'你已经有一个申请在等批准了，请等管理员处理'],[/^no pending request/,'这条申请已经处理过了'],
@@ -99,10 +106,10 @@ async function copyText(text,label){try{await navigator.clipboard.writeText(text
 
 /* ---------- animation loop ---------- */
 const Ticker={items:new Set(),running:false,
- add(o){this.items.add(o);this.start();return o;},remove(o){this.items.delete(o);},
+ add(o){this.items.add(o);this.start();return o;},remove(o){this.items.delete(o);if(o.resize)o.resize.disconnect();},
  dirtyAll(){for(const o of this.items)o.dirty=true;this.start();},
  start(){if(this.running)return;this.running=true;requestAnimationFrame(t=>this.frame(t));},
- frame(t){if(document.hidden){this.running=false;return;}let again=false;for(const o of this.items){if(o.el&&!o.el.isConnected){this.items.delete(o);continue;}if(o.el&&o.el.offsetParent===null&&o.el.getClientRects().length===0)continue;if(o.tick(t))again=true;}
+ frame(t){if(document.hidden){this.running=false;return;}let again=false;for(const o of this.items){if(o.el&&!o.el.isConnected){this.remove(o);continue;}if(o.el&&o.el.offsetParent===null&&o.el.getClientRects().length===0)continue;if(o.tick(t))again=true;}
   if(again)requestAnimationFrame(x=>this.frame(x));else this.running=false;}};
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)Ticker.dirtyAll();});
 
@@ -128,7 +135,7 @@ class LiveChart{
  constructor(el,o){this.el=el;this.o=Object.assign({span:180,delay:7.5,axis:true,series:[{key:'down',color:'down',fill:true},{key:'up',color:'up',fill:false}],min:0.2,pad:[10,8,18,8],head:true},o||{});
   this.cv=h('canvas');el.append(this.cv);this.pts=[];this.ymax=null;this.last=0;this.dirty=true;
   if(this.o.tooltip!==false&&this.o.axis){this.tip=h('div',{class:'tip hide'});el.append(this.tip);el.addEventListener('pointermove',e=>{this.hover=e.offsetX;this.dirty=true;Ticker.start();});el.addEventListener('pointerleave',()=>{this.hover=null;this.tip.classList.add('hide');});}
-  new ResizeObserver(()=>{this.dirty=true;Ticker.start();}).observe(el);Ticker.add(this);}
+  this.resize=new ResizeObserver(()=>{this.dirty=true;Ticker.start();});this.resize.observe(el);Ticker.add(this);}
  push(points){let changed=false;for(const p of points){const t=+p.t;if(!isFinite(t))continue;const i=this.pts.findIndex(q=>Math.abs(q.t-t)<1);if(i>=0){this.pts[i]=p;}else{this.pts.push(p);changed=true;}}if(changed)this.pts.sort((a,b)=>a.t-b.t);const cut=Clock.now()-this.o.span-this.o.delay-30;while(this.pts.length>2&&this.pts[1].t<cut)this.pts.shift();this.dirty=true;Ticker.start();}
  reset(){this.pts=[];this.ymax=null;this.dirty=true;}
  tick(t){const live=this.pts.length>1;if(!live&&!this.dirty)return false;this.dirty=false;this.draw(t);return live;}
@@ -155,7 +162,7 @@ const toPoints=hist=>(hist||[]).map(x=>({t:x.at,down:x.download_bps*8/1e6,up:x.u
 class DayBars{
  constructor(el,o){this.el=el;this.o=Object.assign({pad:[12,6,22,6],days:null},o||{});this.cv=h('canvas');this.tip=h('div',{class:'tip hide'});el.append(this.cv,this.tip);this.data=[];this.hover=null;this.grow=0;this.dirty=true;
   el.addEventListener('pointermove',e=>{this.hover=e.offsetX;this.dirty=true;Ticker.start();});el.addEventListener('pointerleave',()=>{this.hover=null;this.tip.classList.add('hide');this.dirty=true;Ticker.start();});
-  new ResizeObserver(()=>{this.dirty=true;Ticker.start();}).observe(el);Ticker.add(this);}
+  this.resize=new ResizeObserver(()=>{this.dirty=true;Ticker.start();});this.resize.observe(el);Ticker.add(this);}
  set(rows,days){this.data=rows||[];this.days=days||null;this.t0=performance.now();this.dirty=true;Ticker.start();}
  tick(t){const k=this.t0?Math.min(1,(t-this.t0)/700):1;if(!this.dirty&&k>=1)return false;this.dirty=false;this.draw(1-Math.pow(1-k,3));return k<1;}
  draw(k){const P=Palette.v,{ctx,w,h}=setupCanvas(this.cv),[pt,pr,pb,pl]=this.o.pad;ctx.clearRect(0,0,w,h);const rows=this.days?this.days.map(d=>this.data.find(r=>r.day===d)||{day:d,upload:0,download:0}):this.data;
@@ -170,7 +177,7 @@ class DayBars{
 function rr(ctx,x,y,w,h,r){if(h<=0)return;r=Math.min(r,h,w/2);ctx.beginPath();ctx.moveTo(x,y+h);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h);ctx.closePath();ctx.fill();}
 
 /* Progress ring (canvas), animates between values. */
-class Ring{constructor(el,o){this.el=el;this.o=Object.assign({width:12},o||{});this.cv=h('canvas');el.append(this.cv);this.v=0;this.to=0;this.from=0;this.t0=0;this.color='down';this.dirty=true;new ResizeObserver(()=>{this.dirty=true;Ticker.start();}).observe(el);Ticker.add(this);}
+class Ring{constructor(el,o){this.el=el;this.o=Object.assign({width:12},o||{});this.cv=h('canvas');el.append(this.cv);this.v=0;this.to=0;this.from=0;this.t0=0;this.color='down';this.dirty=true;this.resize=new ResizeObserver(()=>{this.dirty=true;Ticker.start();});this.resize.observe(el);Ticker.add(this);}
  set(v,color){this.from=this.v;this.to=Math.max(0,Math.min(1,v));this.color=color||'down';this.t0=performance.now();this.dirty=true;Ticker.start();}
  tick(t){const k=Math.min(1,(t-this.t0)/900);if(!this.dirty&&k>=1)return false;this.dirty=false;this.v=this.from+(this.to-this.from)*(1-Math.pow(1-k,3));const P=Palette.v,{ctx,w,h}=setupCanvas(this.cv),r=Math.min(w,h)/2-this.o.width/2-2,cx=w/2,cy=h/2;ctx.clearRect(0,0,w,h);ctx.lineCap='round';ctx.lineWidth=this.o.width;ctx.strokeStyle=P['panel-3'];ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.stroke();
   if(this.v>0.001){const col=P[this.color]||this.color;const g=ctx.createConicGradient?ctx.createConicGradient(-Math.PI/2,cx,cy):null;if(g){g.addColorStop(0,alpha(col,.55));g.addColorStop(Math.max(.01,this.v),col);g.addColorStop(Math.min(1,this.v+.001),col);ctx.strokeStyle=g;}else ctx.strokeStyle=col;ctx.beginPath();ctx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+Math.PI*2*this.v);ctx.stroke();}return k<1;}}

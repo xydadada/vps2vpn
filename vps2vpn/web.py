@@ -30,7 +30,9 @@ from . import (VERSION, abuse, aicheck, certs, cluster, cores, db, doctor, jobs,
                secure, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
-_fails = {}                    # ip -> [timestamps] of failed logins
+_fails = {}                    # ip -> admitted authentication attempts in the last ten minutes
+_fails_lock = threading.Lock()
+_setup_lock = threading.Lock()
 _apply_lock = threading.Lock()
 
 
@@ -99,6 +101,10 @@ def apply_async(force=False):
     cluster.sync_soon()          # joined servers learn about user changes within seconds
 
 
+class BadRequest(ValueError):
+    """Malformed or oversized HTTP request input."""
+
+
 class TLSContext:
     """Reloads the certificate when the files change (Let's Encrypt IP certs renew every few days)."""
 
@@ -130,12 +136,30 @@ class TLSContext:
 class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
+    max_connections = 64
 
     def __init__(self, addr, handler, tls):
         self.tls = tls
+        self._slots = threading.BoundedSemaphore(self.max_connections)
         if ':' in addr[0]:
             self.address_family = socket.AF_INET6
         super().__init__(addr, handler)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
     def server_bind(self):
         if self.address_family == socket.AF_INET6:
@@ -208,6 +232,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
+        if self.close_connection:
+            self.send_header('Connection', 'close')
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -224,39 +250,71 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _read_body(self, limit):
         if getattr(self, '_raw', b'') is not None:
-            return                       # already read (or nothing to read)
-        if 'chunked' in (self.headers.get('Transfer-Encoding') or '').lower():
-            self._raw = self._read_chunked(limit)    # some HTTP libraries (Dart, Go) send bodies this way
+            if len(self._raw) > limit:
+                raise BadRequest('request too large')
             return
-        n = int(self.headers.get('Content-Length') or 0)
-        if n > limit:
+        try:
+            lengths = self.headers.get_all('Content-Length', [])
+            encodings = self.headers.get_all('Transfer-Encoding', [])
+            if len(lengths) > 1 or len(encodings) > 1 or (lengths and encodings):
+                raise BadRequest('ambiguous request framing')
+            if encodings:
+                if encodings[0].strip().lower() != 'chunked':
+                    raise BadRequest('unsupported transfer encoding')
+                self._raw = self._read_chunked(limit)
+                return
+            value = lengths[0].strip() if lengths else '0'
+            if not re.fullmatch(r'[0-9]{1,20}', value):
+                raise BadRequest('bad content length')
+            n = int(value)
+            if n > limit:
+                raise BadRequest('request too large')
+            self._raw = self.rfile.read(n)
+            if len(self._raw) != n:
+                raise BadRequest('truncated request body')
+        except ValueError as e:
             self._raw = b''
             self.close_connection = True
-            raise ValueError('request too large')
-        self._raw = self.rfile.read(n) if n > 0 else b''
+            raise BadRequest(str(e)) from e
 
     def _read_chunked(self, limit):
         out = bytearray()
         while True:
-            line = self.rfile.readline(64)
-            try:
-                size = int(line.split(b';')[0].strip() or b'0', 16)
-            except ValueError:
-                self.close_connection = True
-                raise ValueError('bad chunked body')
+            line = self.rfile.readline(8193)
+            if len(line) > 8192 or not re.fullmatch(rb'[0-9a-fA-F]+(?:;[^\r\n]*)?\r\n', line):
+                raise BadRequest('bad chunked body')
+            size = int(line.split(b';', 1)[0].strip(), 16)
             if size == 0:
-                while self.rfile.readline(1024) not in (b'\r\n', b'\n', b''):
-                    pass                 # optional trailer lines
-                return bytes(out)
+                trailer_bytes = 0
+                for _ in range(100):
+                    trailer = self.rfile.readline(8193)
+                    trailer_bytes += len(trailer)
+                    if trailer == b'\r\n':
+                        return bytes(out)
+                    if (len(trailer) > 8192 or trailer_bytes > 65536 or
+                            not trailer.endswith(b'\r\n') or b':' not in trailer[:-2]):
+                        raise BadRequest('bad chunked trailer')
+                raise BadRequest('too many chunked trailers')
             if len(out) + size > limit:
-                self.close_connection = True
-                raise ValueError('request too large')
-            out += self.rfile.read(size)
-            self.rfile.readline(4)       # CRLF after each chunk
+                raise BadRequest('request too large')
+            chunk = self.rfile.read(size)
+            if len(chunk) != size or self.rfile.read(2) != b'\r\n':
+                raise BadRequest('truncated or malformed chunk')
+            out.extend(chunk)
 
     def body_json(self, limit=4 << 20):
         self._read_body(limit)
-        return json.loads(self._raw or b'{}')
+
+        def invalid_constant(value):
+            raise ValueError('non-finite JSON number')
+
+        try:
+            value = json.loads(self._raw or b'{}', parse_constant=invalid_constant)
+        except (ValueError, UnicodeError, RecursionError) as e:
+            raise BadRequest('invalid JSON') from e
+        if not isinstance(value, dict):
+            raise BadRequest('JSON body must be an object')
+        return value
 
     def client_ip(self):
         return self.client_address[0]
@@ -292,6 +350,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             path = url.path
             self.query = dict(urllib.parse.parse_qsl(url.query))
             s = db.settings()
+            limit = 4 << 20
+            # Larger authenticated endpoints retain their existing limits. Do not
+            # let unauthenticated clients reserve 32 MiB on every worker.
+            if (path == '/' + s['panel_path'] + '/api/restore' and self.secure_ok() and
+                    s['setup_done'] and db.session_ok(self.cookie('v2v'))):
+                limit = 32 << 20
+            elif (path == '/' + s['panel_path'] + '/api/node/sync' and self.secure_ok() and
+                  s['setup_done'] and self.headers.get('Authorization', '').startswith('Bearer ') and
+                  secure.hmac_eq(self.headers['Authorization'][7:], s['node_key'])):
+                limit = 8 << 20
+            self._read_body(limit)
             m = re.fullmatch(r'/s/([A-Za-z0-9_-]{16,64})(?:/(qr\.svg))?', path)
             if m and method == 'GET':
                 return self.subscription(s, m.group(1), m.group(2))
@@ -318,13 +387,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not self.secure_ok():
                     host = self.headers.get('Host', '')
                     return self.send(301, '', headers={'Location': 'https://%s%s' % (host, self.path)})
+                if path == pp:
+                    return self.send(301, '', headers={'Location': pp + '/'})
                 return self.panel(method, path[len(pp):] or '/', s)
             return self.not_found()
+        except BadRequest as e:
+            self.close_connection = True
+            try:
+                self.json({'error': str(e)}, 400)
+            except OSError:
+                pass
+            return
         except (ConnectionError, socket.timeout, ssl.SSLError):
+            self.close_connection = True
             return
         except Exception as e:   # never leak a traceback to the network
             import traceback
-            jobs.log('http error %s %s: %r %s' % (method, self.path.split('?')[0][-40:], e,
+            safe_path = re.sub(r'/s/[^/]+', '/s/<redacted>', self.path.split('?')[0])
+            jobs.log('http error %s %s: %r %s' % (method, safe_path[-40:], e,
                                                  traceback.format_exc(limit=-2).replace(chr(10), ' | ')[-300:]))
             try:
                 self.json({'error': 'internal error'}, 500)
@@ -456,9 +536,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def rate_limited(self):
         now = time.time()
-        hits = [t for t in _fails.get(self.client_ip(), []) if now - t < 600]
-        _fails[self.client_ip()] = hits
-        return len(hits) >= 8
+        ip = self.client_ip()
+        with _fails_lock:
+            for key, hits in list(_fails.items()):
+                if not hits or now - hits[-1] >= 600:
+                    del _fails[key]
+            if ip not in _fails and len(_fails) >= 4096:
+                return True
+            hits = [t for t in _fails.get(ip, []) if now - t < 600]
+            _fails[ip] = hits
+            if len(hits) >= 8:
+                return True
+            # Reserve before the expensive password hash so parallel requests
+            # cannot all pass a check against an empty failure list.
+            hits.append(now)
+            return False
+
+    def auth_succeeded(self):
+        with _fails_lock:
+            _fails.pop(self.client_ip(), None)
 
     # --- setup wizard ----------------------------------------------------------------
     def api_setup_info(self, s):
@@ -471,17 +567,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                           'target': s['reality_target'], 'language': s['language']})
 
     def api_setup(self, s):
+        with _setup_lock:
+            return self._setup(db.settings())
+
+    def _setup(self, s):
         if s['setup_done']:
             return self.json({'error': 'already set up'}, 409)
         if self.rate_limited():
             return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
         d = self.body_json()
         if not secure.hmac_eq(str(d.get('token', '')), setup_token()):
-            _fails.setdefault(self.client_ip(), []).append(time.time())
             return self.json({'error': 'bad setup link'}, 403)
         pw = str(d.get('password', ''))
-        if len(pw) < 8:
-            return self.json({'error': 'password must be at least 8 characters'}, 400)
+        if not 8 <= len(pw) <= 128:
+            return self.json({'error': 'password must be 8 to 128 characters'}, 400)
         changes = validate_settings(d.get('settings', {}), s)
         if isinstance(changes, str):
             return self.json({'error': changes}, 400)
@@ -502,6 +601,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         apply_async(force=True)
         rules.refresh_in_background(jobs.log)
         tok = db.new_session()
+        self.auth_succeeded()
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(tok)})
 
     def api_login(self, s):
@@ -512,7 +612,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ok = secure.hmac_eq(str(d.get('username', '')), s['admin_user']) & \
             secure.check_password(str(d.get('password', '')), s['admin_hash'])
         if not ok:
-            _fails.setdefault(self.client_ip(), []).append(time.time())
             db.add_event('login', 0, 'fail|%s|%s' % (self.client_ip(), ua))
             time.sleep(0.5)
             return self.json({'error': 'wrong username or password'}, 403)
@@ -521,10 +620,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not code:
                 return self.json({'error': 'totp_required'}, 403)
             if not secure.totp_check(s['admin_totp'], code):
-                _fails.setdefault(self.client_ip(), []).append(time.time())
                 db.add_event('login', 0, 'fail2fa|%s|%s' % (self.client_ip(), ua))
                 time.sleep(0.5)
                 return self.json({'error': 'wrong 2FA code'}, 403)
+        self.auth_succeeded()
         db.add_event('login', 0, 'ok|%s|%s' % (self.client_ip(), ua))
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
 
@@ -581,6 +680,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # --- logged-in API ----------------------------------------------------------------
     def api_logout(self, method, s):
+        if method != 'POST':
+            return self.json({'error': 'POST only'}, 405)
         db.end_session(self.cookie('v2v'))
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie('', 0)})
 
@@ -677,9 +778,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         fields = user_fields(d)
         if isinstance(fields, str):
             return self.json({'error': fields}, 400)
-        uid = db.add_user(name, fields.get('quota_gb', 0), fields.get('expire_at', 0), fields.get('reset_day', 0),
-                          fields.get('note', ''), max_ips=fields.get('max_ips', 0),
-                          expire_after_days=fields.get('expire_after_days', 0))
+        try:
+            uid = db.add_user(name, fields.get('quota_gb', 0), fields.get('expire_at', 0), fields.get('reset_day', 0),
+                              fields.get('note', ''), max_ips=fields.get('max_ips', 0),
+                              expire_after_days=fields.get('expire_after_days', 0))
+        except ValueError as error:
+            return self.json({'error': str(error)}, 400)
         apply_async()
         return self.json({'ok': True, 'id': uid})
 
@@ -691,7 +795,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         prefix = re.sub(r'\s+', '', str(d.get('prefix', '')))[:24]
         try:
             count = int(d.get('count', 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return self.json({'error': 'invalid number'}, 400)
         if not prefix or not 1 <= count <= 200:
             return self.json({'error': 'prefix and a count of 1-200 required'}, 400)
@@ -719,9 +823,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         d = self.body_json()
         action = d.get('action')
         try:
-            ids = [int(i) for i in d.get('ids') or []][:2000]
+            ids = list(dict.fromkeys(int(i) for i in d.get('ids') or []))[:2000]
             value = float(d.get('value') or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return self.json({'error': 'invalid number'}, 400)
         if not math.isfinite(value) or abs(value) > 1e6:
             return self.json({'error': 'invalid number'}, 400)
@@ -730,32 +834,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if action in ('extend', 'add_gb') and value <= 0:
             return self.json({'error': 'invalid number'}, 400)
         now = int(time.time())
-        done = 0
-        for uid in ids:
-            u = db.user(uid)
-            if not u:
-                continue
-            done += 1
-            if action == 'enable':
-                db.update_user(uid, enabled=1, disabled_reason='', paused_until=0)
-            elif action == 'disable':
-                db.update_user(uid, enabled=0, disabled_reason='manual')
-            elif action == 'reset':
-                db.update_user(uid, used_up=0, used_down=0)
-                if u['disabled_reason'] == 'quota':
-                    db.update_user(uid, enabled=1, disabled_reason='')
-            elif action == 'rotate':
-                db.rotate_user(uid)
-            elif action == 'delete':
-                db.delete_user(uid)
-            elif action == 'extend':
-                if u['expire_at']:     # from the old date, or from today if it already passed
-                    db.update_user(uid, expire_at=int(max(u['expire_at'], now) + value * 86400))
-            elif action == 'add_gb':
-                if u['quota_gb']:      # unlimited stays unlimited
-                    db.update_user(uid, quota_gb=u['quota_gb'] + value)
-            elif action == 'set_quota':
-                db.update_user(uid, quota_gb=max(0.0, value))
+        with db.transaction():
+            done = 0
+            for uid in ids:
+                u = db.user(uid)
+                if not u:
+                    continue
+                done += 1
+                if action == 'enable':
+                    db.update_user(uid, enabled=1, disabled_reason='', paused_until=0)
+                elif action == 'disable':
+                    db.update_user(uid, enabled=0, disabled_reason='manual')
+                elif action == 'reset':
+                    db.update_user(uid, used_up=0, used_down=0)
+                    if u['disabled_reason'] == 'quota':
+                        db.update_user(uid, enabled=1, disabled_reason='')
+                elif action == 'rotate':
+                    db.rotate_user(uid)
+                elif action == 'delete':
+                    db.delete_user(uid)
+                elif action == 'extend':
+                    if u['expire_at']:     # from the old date, or from today if it already passed
+                        db.update_user(uid, expire_at=int(max(u['expire_at'], now) + value * 86400))
+                elif action == 'add_gb':
+                    if u['quota_gb']:      # unlimited stays unlimited
+                        db.update_user(uid, quota_gb=u['quota_gb'] + value)
+                elif action == 'set_quota':
+                    db.update_user(uid, quota_gb=max(0.0, value))
         jobs.enforce()
         apply_async()
         return self.json({'ok': True, 'done': done})
@@ -770,12 +875,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         w.writerow(['id', 'name', 'status', 'used_gb', 'quota_gb', 'expires', 'reset_day', 'device_limit',
                     'last_seen', 'created', 'note', 'subscription'])
         day = lambda t: time.strftime('%Y-%m-%d', time.localtime(t)) if t else ''
+
+        def cell(value):
+            # A CSV quote only escapes the delimiter; spreadsheets still execute
+            # formulas in a quoted cell unless its content is explicitly text.
+            text = str(value)
+            return "'" + text if text.lstrip().startswith(('=', '+', '-', '@')) or text.startswith(('\t', '\r', '\n')) else text
         for u in db.users():
-            w.writerow([u['id'], u['name'], 'active' if u['enabled'] else (u['disabled_reason'] or 'paused'),
+            w.writerow([u['id'], cell(u['name']), 'active' if u['enabled'] else (u['disabled_reason'] or 'paused'),
                         round((u['used_up'] + u['used_down']) / (1 << 30), 3), u['quota_gb'] or '',
                         day(u['expire_at']) or ('%d days from first use' % u['expire_after_days']
                                                 if u['expire_after_days'] else ''),
-                        u['reset_day'] or '', u['max_ips'] or '', day(u['last_seen']), day(u['created_at']), u['note'],
+                        u['reset_day'] or '', u['max_ips'] or '', day(u['last_seen']), day(u['created_at']), cell(u['note']),
                         '%s/s/%s' % (base, u['sub_token'])])
         name = 'vps2vpn-users-%s.csv' % time.strftime('%Y%m%d')
         # BOM so Excel reads the UTF-8 names correctly
@@ -935,7 +1046,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 good = secure.check_password(str(d.get('password', '')),
                                              cand['login_hash'] if cand and cand['login_hash'] else _dummy_hash())
                 if not cand or not cand['login_hash'] or not good:
-                    _fails.setdefault(self.client_ip(), []).append(time.time())
                     time.sleep(0.5)
                     return self.json({'error': 'wrong name or password'}, 403)
                 uid = cand['id']
@@ -943,16 +1053,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 try:
                     uid = members.register(d.get('code', ''), d.get('name', ''), d.get('password', ''))
                 except members.Refused as e:
-                    _fails.setdefault(self.client_ip(), []).append(time.time())
                     return self.json({'error': str(e)}, 400)
                 jobs.log('new account from an invite code: %s' % db.user(uid)['name'])
                 notify.send('new account %s (invite code) / 新用户 %s 通过邀请码注册' % (db.user(uid)['name'], db.user(uid)['name']),
                             key='reg-%d' % uid)
                 apply_async()
+            self.auth_succeeded()
             return self.json({'ok': True}, headers={'Set-Cookie': self.member_cookie(db.new_member_session(uid))})
         if u is None:
             return self.json({'error': 'login required'}, 401)
         if api == 'logout' and not by_link:
+            if method != 'POST':
+                return self.json({'error': 'POST only'}, 405)
             db.end_member_session(self.cookie('v2vm'))
             return self.json({'ok': True}, headers={'Set-Cookie': self.member_cookie('', 0)})
         if api == 'me':
@@ -966,8 +1078,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if api == 'password':
             if u['login_hash'] and not secure.check_password(str(d.get('old', '')), u['login_hash']):
                 return self.json({'error': 'current password is wrong'}, 403)
-            return self.refused(lambda: db.update_user(u['id'], login_hash=secure.hash_password(
-                members.check_password(d.get('new')))))
+            try:
+                password_hash = secure.hash_password(members.check_password(d.get('new')))
+            except members.Refused as e:
+                return self.json({'error': str(e)}, 400)
+            with db.transaction():
+                db.update_user(u['id'], login_hash=password_hash)
+                db.end_member_session(None, u['id'])
+                token = db.new_member_session(u['id']) if not by_link else None
+            return self.json({'ok': True}, headers={'Set-Cookie': self.member_cookie(token)} if token else None)
         if api == 'request' and s['member_requests']:
             def ask():
                 members.request_more(u['id'], d.get('add_gb'), d.get('reason', ''))
@@ -1047,12 +1166,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
 
     def api_password(self, method, s):
+        if method != 'POST':
+            return self.json({'error': 'POST only'}, 405)
         d = self.body_json()
         if not secure.check_password(str(d.get('old', '')), s['admin_hash']):
             return self.json({'error': 'current password is wrong'}, 403)
         new = str(d.get('new', ''))
-        if len(new) < 8:
-            return self.json({'error': 'password must be at least 8 characters'}, 400)
+        if not 8 <= len(new) <= 128:
+            return self.json({'error': 'password must be 8 to 128 characters'}, 400)
         db.set_settings(admin_hash=secure.hash_password(new), admin_user=str(d.get('username') or s['admin_user'])[:32])
         db.end_all_sessions()
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
@@ -1070,7 +1191,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 certs.issue(host, s['acme_email'], log=jobs.log)
                 db.set_settings(cert_status='ok')
-                apply_async()
+                apply_async(force=True)
             except Exception as e:
                 db.set_settings(cert_status='failed: %s' % str(e)[:200])
                 jobs.log('certificate failed: %s' % e)
@@ -1092,10 +1213,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                           'nodes': [subscription.share_link(n) for n in subscription.nodes(s, u)]})
 
     def api_restart(self, method, s):
+        if method != 'POST':
+            return self.json({'error': 'POST only'}, 405)
         apply_async(force=True)
         return self.json({'ok': True})
 
     def api_rules_refresh(self, method, s):
+        if method != 'POST':
+            return self.json({'error': 'POST only'}, 405)
         rules.refresh_in_background(jobs.log)
         return self.json({'ok': True})
 
@@ -1121,7 +1246,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'bad_token' if e.code in (401, 404) else 'telegram %d' % e.code}, 400)
         except OSError as e:
             return self.json({'error': 'cannot reach api.telegram.org: %s' % e}, 502)
-        if not chat:
+        if not chat or not str(chat).isdigit() or int(chat) <= 0:
             return self.json({'error': 'no_chat'}, 400)
         db.set_settings(tg_token=token, tg_chat=chat)
         ok = notify.send('alerts are on / 告警已开启', s=db.settings())
@@ -1156,6 +1281,8 @@ def _dummy_hash():
 
 
 def user_fields(d):
+    if not isinstance(d, dict):
+        return 'fields must be an object'
     out = {}
     try:
         if 'quota_gb' in d:
@@ -1188,7 +1315,7 @@ def user_fields(d):
             out['note'] = str(d['note'])[:200]
         if 'name' in d and str(d['name']).strip():
             out['name'] = str(d['name']).strip()[:32]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 'invalid number'
     return out
 
@@ -1198,6 +1325,8 @@ HOST_RE = re.compile(r'^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])
 
 def validate_settings(d, s):
     """Check and normalise settings from the panel. Returns a dict of changes or an error string."""
+    if not isinstance(d, dict):
+        return 'settings must be an object'
     out = {}
     bools = ('reality_enabled', 'hy2_enabled', 'tuic_enabled', 'hy2_hop', 'block_ads', 'block_bt', 'ai_group',
              'tune_network', 'ipv6_nodes', 'member_enabled', 'member_invites', 'member_requests', 'monitor_enabled',
@@ -1255,7 +1384,7 @@ def validate_settings(d, s):
         if k in d:
             try:
                 p = int(d[k])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return 'invalid port'
             if not 1 <= p <= 65535:
                 return 'port must be 1-65535'
@@ -1263,7 +1392,7 @@ def validate_settings(d, s):
     if 'server_cap_gb' in d:
         try:
             cap = float(d['server_cap_gb'] or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 'invalid number'
         if not math.isfinite(cap) or cap > 1e7:
             return 'invalid number'
@@ -1271,7 +1400,7 @@ def validate_settings(d, s):
     if 'server_reset_day' in d:
         try:
             out['server_reset_day'] = int(d['server_reset_day'] or 1)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 'invalid number'
         if not 1 <= out['server_reset_day'] <= 28:
             return 'reset day must be 1-28'

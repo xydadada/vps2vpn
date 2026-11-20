@@ -84,11 +84,11 @@ sudo bash install.sh
 - 一键安装脚本：Debian / Ubuntu / RHEL 系 / Fedora / openSUSE / Arch，x86_64 和 arm64。重复运行就是升级，用户和设置都保留。
 - 核心程序从官方 GitHub Release 下载，并**逐个校验 SHA-256**。
 - 自动挑选伪装网站：从服务器实测一批大网站，选支持 TLS 1.3 + HTTP/2 且最快的那个。
-- **免费受信任证书**：自动向 Let's Encrypt 申请——**没有域名也行**（Let's Encrypt 从 2026 年 1 月起正式支持纯 IP 证书，有效期约 6 天，面板自动续期）。申请失败自动退回自签名证书，照样加密能用。
+- **免费受信任证书**：自动向 Let's Encrypt 申请——**没有域名也行**（Let's Encrypt 从 2026 年 1 月起正式支持纯 IP 证书，有效期约 6 天，面板自动续期）。申请失败自动退回自签名证书；HTTPS 仍加密但必须核验证书。**为兼容客户端生成的 HTTP 订阅链接会明文传输 token 和协议密码**，建议优先使用受信任证书，不能把 HTTP 兼容通道视为安全传输。
 - 只有系统已开着 ufw / firewalld 时才去放行端口；不会擅自打开防火墙把你锁在外面。
 - **端口被占用自动避让**：443 已经被 nginx / 其它面板占着，就自动换到 8443 / 2053 等空闲端口，并告诉你是谁占的。
 - 小内存机器（< 1 GB）自动加 1 GB swap，自动开启时间同步（时间不准会导致连不上）。
-- 升级失败自动回滚到上一个版本。
+- init、面板重启或 core 应用失败时，尝试恢复上一份面板代码并重新加载；这不是数据库、core 二进制或系统配置的全量事务回滚。
 
 **网络调优（自动，不用填带宽）**
 - 开启 BBR + fq；TCP/UDP 缓冲区按内存大小自动设定（512 MB 小鸡到 4 GB+ 分四档，防止内存被撑爆）。
@@ -146,15 +146,17 @@ sudo bash install.sh
 
 ---
 
-## 实测（本项目的测试都是真程序真流量）
+## 测试与审计
 
-`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops` —— 92 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 命令只认主人、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
+[2026-11-20 联合审计报告](docs/AUDIT_2026-11-20.md) 记录了修复、覆盖范围和实际运行结果。以下是原有测试覆盖说明及历史记录；不能替代当前 PR head 的验证，真实 core 测试需按报告中的 Actions 结果核对。
+
+`python -m unittest discover -s tests -t . -v` —— 发现全部离线测试（审计前基线为 92 项，另有新增专项回归）：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 命令只认主人、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
 
 `python tests/e2e_local.py <放官方程序的目录>` —— 在一台电脑上启动**真的** Xray 和 Hysteria 服务端，再用**真的** mihomo（Clash 内核）和 sing-box 客户端发流量，共 28 项检查：
 
 - 服务端配置被 Xray 自己的校验通过；REALITY 公钥与 `xray x25519` 结果一致
 - 完整订阅被 `mihomo -t` 和 `sing-box check` 校验通过（含端口跳跃、混淆）
-- mihomo、sing-box 两个客户端 × Hysteria 2、REALITY、TUIC 三种协议，六条路全部真实上网成功；TUIC 流量能准确记到对应使用者头上
+- mihomo、sing-box 两个客户端 × Hysteria 2、REALITY、TUIC 三种协议，六条路全部真实上网成功；TUIC 对当前可采样连接归属用量；采样间结束的短连接使用权重估算，不能作为精确计费保证
 - 每个用户的流量被两个核心正确计数；错误密码被拒绝
 - 测速工具 `tools/bench.py` 能通过两个协议分别跑完
 - 连接保持期间，三种协议都能正确识别在线用户和设备；防滥用扫描能读到流向；小火箭规则转换和配置生成；网站监控探测
@@ -192,7 +194,8 @@ bash install.sh uninstall # 卸载（保留数据）；加 --purge 连数据一�
 ## 开发
 
 ```bash
-python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops -v   # 离线测试
+python -m unittest discover -s tests -t . -v  # 离线测试（包括新增回归）
+node tests/test_ui.js                       # 前端状态/资源回归
 python tests/dev_server.py 8443           # 本机跑面板（开发模式，不动系统）
 python tests/e2e_local.py ./bins          # 真程序端到端测试
 sudo bash tests/vps_acceptance.sh --full  # 在一台可以随便折腾的真 VPS 上做验收（含重装、卸载再装）
@@ -237,7 +240,7 @@ Then open the link it prints, set an admin password, click **Build my VPN**, and
 - Online users and devices for all protocols, site monitor (GitHub, YouTube, ChatGPT region, Google, X, Telegram; IPv4/IPv6; speed test), abuse guard that alerts but never bans, server monthly traffic cap.
 - Several servers in one subscription: paste another server's join code; users sync over certificate-pinned HTTPS and traffic flows back into the same quota.
 - Users with quotas, expiry dates and monthly resets, enforced automatically.
-- Free trusted TLS certificates from Let's Encrypt, even without a domain (IP certificates, renewed automatically), with a self-signed fallback.
+- Free trusted TLS certificates from Let's Encrypt, even without a domain (IP certificates, renewed automatically), with a self-signed fallback. HTTPS still requires certificate authentication; compatibility HTTP subscription URLs expose tokens and protocol credentials.
 - Automatic tuning: BBR + fq, socket buffers sized to RAM, larger QUIC windows for long routes, UDP port hopping, no fixed bandwidth.
 - Routing rule sets mirrored on your server; DNS for foreign sites goes through the proxy.
 - AI zone: checks from the server whether claude.ai, the Claude API, ChatGPT and Gemini work (shown when a deploy finishes, in the panel, daily, and via Telegram `/ai`); subscriptions keep AI sites on one fixed server (the one with the best result) instead of following "Auto".
@@ -246,7 +249,7 @@ Then open the link it prints, set an admin password, click **Build my VPN**, and
 - Benchmarks you can run yourself: `vps2vpn bench` on the server, `tools/bench.py <subscription>` on your computer (latency median/p90 with fresh handshakes, 1- and 4-connection download, upload, next to a direct baseline).
 - Standard-library Python panel: no Docker, no database server, no third-party scripts in the browser. PBKDF2, login rate limiting, strict cookies and CSP, panel behind a random path.
 
-**Tested** with real Xray/Hysteria servers and real mihomo/sing-box clients (`tests/e2e_local.py`, 28 checks) plus 92 offline tests, and `tests/vps_acceptance.sh` for a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
+**Audit and test evidence:** see [the 2026-11-20 report](docs/AUDIT_2026-11-20.md) for current results and limitations. The repository's historical test record used real Xray/Hysteria servers and real mihomo/sing-box clients (`tests/e2e_local.py`, 28 checks) plus 92 offline tests, and `tests/vps_acceptance.sh` for a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
 
 **Ports to open** in your provider's firewall: the panel's TCP port (shown at install), TCP 80 (certificates), TCP 443 (REALITY), UDP 443 and UDP 20000-40000 (Hysteria 2), UDP 8443 (TUIC).
 

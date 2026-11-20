@@ -33,7 +33,7 @@ def _serial(fn):
     """Check-then-write steps (quota room, uses left) must not interleave between web threads."""
     @functools.wraps(fn)
     def run(*a, **kw):
-        with _lock:
+        with _lock, db.transaction():
             return fn(*a, **kw)
     return run
 
@@ -64,14 +64,46 @@ def deducting(u, now=None):
 
 
 def given_away(uid, users=None, now=None):
-    """GB this user currently shares with accounts they invited."""
-    now = now or time.time()
-    return sum(u['invite_deduct'] for u in (users if users is not None else db.users())
-               if u.get('invited_by') == uid and deducting(u, now))
+    """Allocated or already consumed GB; disabling an invitee never refunds traffic."""
+    now = time.time() if now is None else now
+    rows = users if users is not None else db.users()
+    children = {}
+    for u in rows:
+        if u.get('invited_by') and u.get('invite_deduct', 0) > 0:
+            children.setdefault(u['invited_by'], []).append(u)
+
+    def charged(u, seen):
+        grant = u['invite_deduct']
+        if _active(u, now) or u['id'] in seen:
+            return grant
+        used = (u['used_up'] + u['used_down']) / (1 << 30)
+        used += sum(charged(child, seen | {u['id']}) for child in children.get(u['id'], []))
+        return min(grant, used)
+
+    return sum(charged(u, {uid}) for u in children.get(uid, []))
+
+
+def spent_bytes(u, users=None):
+    """Actual consumed bytes in an invite subtree, capped by each child's grant."""
+    rows = users if users is not None else db.users()
+    children = {}
+    for child in rows:
+        if child.get('invited_by') and child.get('invite_deduct', 0) > 0:
+            children.setdefault(child['invited_by'], []).append(child)
+
+    def spent(account, seen):
+        if account['id'] in seen:
+            return int(account.get('invite_deduct', 0) * (1 << 30))
+        used = account['used_up'] + account['used_down']
+        return used + sum(min(int(child['invite_deduct'] * (1 << 30)),
+                              spent(child, seen | {account['id']}))
+                          for child in children.get(account['id'], []))
+
+    return spent(u, set())
 
 
 def effective_quota(u, users=None, now=None):
-    """Quota in GB after what the user shares with invitees (0 = unlimited)."""
+    """GB left for this account; zero means unlimited only when quota_gb is zero."""
     if not u['quota_gb']:
         return 0
     return max(0.0, u['quota_gb'] - given_away(u['id'], users, now))
@@ -90,7 +122,8 @@ def reserved(uid, now=None):
 def _room(u, now):
     if not u['quota_gb']:
         return None
-    return u['quota_gb'] - given_away(u['id'], None, now) - reserved(u['id'], now) - MIN_KEEP_GB
+    used = (u['used_up'] + u['used_down']) / (1 << 30)
+    return u['quota_gb'] - used - given_away(u['id'], None, now) - reserved(u['id'], now) - MIN_KEEP_GB
 
 
 def capacity(u, now=None):
@@ -102,7 +135,7 @@ def capacity(u, now=None):
 def _num(v, low, high, label, integer=False):
     try:
         n = int(v) if integer else float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise Refused('%s must be a number' % label)
     if integer and isinstance(v, float) and v != int(v):
         raise Refused('%s must be a whole number' % label)

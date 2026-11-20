@@ -1,6 +1,7 @@
 """Where everything lives. Set VPS2VPN_ROOT to run the panel somewhere else (tests, development)."""
 import os
 import sys
+import tempfile
 
 _root = os.environ.get('VPS2VPN_ROOT', '')
 
@@ -53,18 +54,22 @@ def write_atomic(path, data, mode=0o600, group=None):
     """Write a file so readers never see a half-written version."""
     if isinstance(data, str):
         data = data.encode()
-    tmp = path + '.tmp'
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(path) + '.', dir=os.path.dirname(path) or '.')
     try:
-        os.write(fd, data)
-        os.fsync(fd)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        if group and LIVE:
+            import grp
+            try:
+                os.chown(tmp, 0, grp.getgrnam(group).gr_gid)
+            except KeyError:
+                pass
+        os.replace(tmp, path)
     finally:
-        os.close(fd)
-    os.chmod(tmp, mode)
-    if group and LIVE:
-        import grp
         try:
-            os.chown(tmp, 0, grp.getgrnam(group).gr_gid)
-        except KeyError:
+            os.unlink(tmp)
+        except FileNotFoundError:
             pass
-    os.replace(tmp, path)
