@@ -312,10 +312,10 @@ class CoreOnlineTelemetry(tu.Base):
             ],
         }
         with mock.patch.object(cores.urllib.request, 'urlopen',
-                               return_value=io.BytesIO(json.dumps(hy2).encode())), \\
+                               return_value=io.BytesIO(json.dumps(hy2).encode())), \
              mock.patch.object(cores.TuicMeter, 'poll', return_value=tuic):
             report = cores._online_detail(settings)
-        self.assertEqual(report[7]['hy2'] if 'hy2' in report[7] else report[7]['devices'], 2)
+        self.assertEqual(report[7]['devices'], 2)
         self.assertEqual(report[7]['conns'], 3)
         self.assertEqual(report[8]['ips'], ['1.2.3.4'])
         self.assertEqual(report[8]['devices'], 2)
@@ -326,7 +326,7 @@ class CoreOnlineTelemetry(tu.Base):
         settings = dict(db.settings(), reality_enabled=False, hy2_enabled=True, tuic_enabled=True)
         valid_tuic = {'connections': [None, {'chains': ['u7'], 'metadata': {'sourceIP': '1.1.1.1'}}]}
         with mock.patch.object(cores.urllib.request, 'urlopen',
-                               return_value=io.BytesIO(b'["invalid hy2 format"]')), \\
+                               return_value=io.BytesIO(b'["invalid hy2 format"]')), \
              mock.patch.object(cores.TuicMeter, 'poll', return_value=valid_tuic):
             report = cores._online_detail(settings)
         self.assertEqual(report[7]['protocols'], ['tuic'])
