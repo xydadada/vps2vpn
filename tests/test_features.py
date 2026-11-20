@@ -13,7 +13,7 @@ import time
 import unittest
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from vps2vpn import abuse, certs, cluster, db, jobs, members, monitor, paths, rules, secure, subscription, web
+from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, web
 
 GIB = 1 << 30
 
@@ -209,6 +209,30 @@ class Shadowrocket(tu.Base):
         self.assertEqual(out, ['DOMAIN-SUFFIX,google.com', 'DOMAIN,example.org'])
         out = rules.to_shadowrocket(b'1.0.1.0/24\n2001:db8::/32\nbad\n', 'geoip').decode().splitlines()
         self.assertEqual(out, ['IP-CIDR,1.0.1.0/24', 'IP-CIDR6,2001:db8::/32'])
+
+
+class ProtocolSecurity(tu.Base):
+    def test_empty_hysteria_credentials_do_not_reuse_account_secrets(self):
+        settings = db.settings()
+        conf = cores.hysteria_config(settings, [])
+        credentials = conf['auth']['userpass']
+        self.assertEqual(list(credentials), ['_v2v_no_active_users'])
+        self.assertEqual(len(credentials['_v2v_no_active_users']), 64)
+        self.assertNotEqual(credentials['_v2v_no_active_users'], settings['stats_secret'])
+        account = mk('alice')
+        active = cores.hysteria_config(settings, [account])['auth']['userpass']
+        self.assertEqual(active, {'u%d' % account['id']: account['hy2_pass']})
+        self.assertNotIn('_v2v_no_active_users', active)
+
+    def test_tuic_resolves_hostnames_before_rejecting_private_answers(self):
+        conf = cores.tuic_config(db.settings(), [])
+        actions = conf['route']['rules']
+        resolve = next(i for i, rule in enumerate(actions) if rule.get('action') == 'resolve')
+        private = next(i for i, rule in enumerate(actions) if rule.get('ip_is_private'))
+        self.assertLess(resolve, private)
+        self.assertEqual(actions[private]['action'], 'reject')
+        self.assertIn('default_domain_resolver', conf['route'])
+        self.assertTrue(conf['dns']['servers'])
 
 
 class Servers(tu.Base):

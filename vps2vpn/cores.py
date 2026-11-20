@@ -1,5 +1,7 @@
 """Server-side configs for Xray (VLESS+REALITY), Hysteria 2 and sing-box (TUIC), applying them, and reading
 traffic and who is online."""
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -74,10 +76,19 @@ def _quic_windows(mem_mb=None):
 def hysteria_config(s, users):
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
     stream_win, conn_win = _quic_windows()
+    credentials = {email(u): u['hy2_pass'] for u in users}
+    if not credentials:
+        # Hysteria rejects an empty userpass map. Keep the service healthy but
+        # never admit former members after the last account is disabled.
+        secret = s['stats_secret']
+        if not secret:
+            raise ValueError('statistics secret required for empty Hysteria authentication')
+        credentials = {'_v2v_no_active_users': hmac.new(
+            secret.encode(), b'vps2vpn/empty-userpass/v1', hashlib.sha256).hexdigest()}
     conf = {
         'listen': ':%d' % s['hy2_port'],
         'tls': {'cert': cert, 'key': key},
-        'auth': {'type': 'userpass', 'userpass': {email(u): u['hy2_pass'] for u in users}},
+        'auth': {'type': 'userpass', 'userpass': credentials},
         'trafficStats': {'listen': '127.0.0.1:%d' % s['hy2_stats_port'], 'secret': s['stats_secret']},
         # Bigger receive windows than the defaults help on long, fast routes (e.g. China <-> US, ~200-300 ms).
         'quic': {'initStreamReceiveWindow': stream_win, 'maxStreamReceiveWindow': stream_win,
@@ -114,14 +125,19 @@ def tuic_config(s, users):
             'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': cert, 'key_path': key}}],
         'outbounds': [{'type': 'direct', 'tag': 'direct'}] + [{'type': 'direct', 'tag': email(u)} for u in users],
         'route': {'rules': ([{'action': 'sniff'}, {'protocol': 'bittorrent', 'action': 'reject'}] if s['block_bt'] else [])
-                  + [{'ip_is_private': True, 'action': 'reject'}]
+                  + [{'action': 'resolve'}, {'ip_is_private': True, 'action': 'reject'}]
                   + [{'auth_user': [email(u)], 'outbound': email(u)} for u in users],
                   'final': 'direct'},
     }
+    # Resolving a hostname must be possible even without a DoH upstream;
+    # otherwise ip_is_private cannot reject localhost or private DNS answers.
+    conf['dns'] = {'servers': [{'type': 'local', 'tag': 'local'}], 'final': 'local'}
+    conf['route']['default_domain_resolver'] = 'local'
     doh = system.doh_servers()
-    if doh:                      # encrypted DNS when reachable from this server, the system resolver otherwise
-        conf['dns'] = {'servers': [{'type': 'https', 'tag': 'doh', 'server': doh[0][0], 'tls': {'server_name': doh[0][1]}},
-                                   {'type': 'local', 'tag': 'local'}], 'final': 'doh'}
+    if doh:
+        conf['dns']['servers'].insert(0, {'type': 'https', 'tag': 'doh', 'server': doh[0][0],
+                                        'tls': {'server_name': doh[0][1]}})
+        conf['dns']['final'] = 'doh'
         conf['route']['default_domain_resolver'] = 'doh'
     return conf
 
