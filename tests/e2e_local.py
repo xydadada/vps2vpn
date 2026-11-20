@@ -485,7 +485,7 @@ def main():
     diff = cores.xray_user_diff(xc, xc2)
     added = diff is not None and not diff[1] and cores._xray_hot_add(s, xc2, diff[0])
     check('new user added to the running Xray (xray api adu)', added and xray_server.poll() is None,
-          'diff %s' % (None if diff is None else ([c['email'] for c in diff[0]], diff[1])))
+          'diff %r' % ((None if diff is None else ([c['email'] for c in diff[0]], diff[1])),))
     o2 = next(x for x in subscription.singbox(s, u2, base)['outbounds'] if x['type'] == 'vless')
     sport = free_port()
     f = os.path.join(ROOT, 'sb-vless-new-user.json')
