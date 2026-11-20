@@ -80,8 +80,84 @@ class LineReports(tu.Base):
             self.assertFalse(lo <= new <= hi)
         self.assertNotIn('tuic', jobs.line_trouble(s))
 
+    def test_hosts_recover_independently_and_count_distinct_accounts(self):
+        a, b = mk('multi-a'), mk('multi-b')
+        now = time.time()
+        jobs.report_line(a['id'], 'tuic', False, 'a.invalid', now)
+        jobs.report_line(a['id'], 'tuic', False, 'b.invalid', now + 1)
+        self.assertEqual(self.sent, [])
+        jobs.report_line(b['id'], 'tuic', False, 'b.invalid', now + 2)
+        self.assertEqual(self.sent, ['line-tuic'])
+        jobs.report_line(a['id'], 'tuic', True, 'b.invalid', now + 3)
+        trouble = jobs.line_trouble(db.settings(), now + 3)['tuic']
+        self.assertEqual(trouble['users'], [a['id'], b['id']])
+        self.assertEqual(trouble['hosts'], ['a.invalid', 'b.invalid'])
+        jobs.report_line(b['id'], 'tuic', True, 'b.invalid', now + 4)
+        self.assertEqual(jobs.line_trouble(db.settings(), now + 4)['tuic']['hosts'], ['a.invalid'])
+        jobs.report_line(a['id'], 'tuic', True, 'a.invalid', now + 5)
+        self.assertEqual(jobs.line_trouble(db.settings(), now + 5), {})
+
+    def test_legacy_entry_is_preserved_when_another_host_recovers(self):
+        u = mk('legacy')
+        now = time.time()
+        db.set_settings(line_reports={'hy2': {str(u['id']): [now, 'a.invalid']}})
+        jobs.report_line(u['id'], 'hy2', False, 'b.invalid', now + 1)
+        jobs.report_line(u['id'], 'hy2', True, 'b.invalid', now + 2)
+        self.assertEqual(jobs.line_trouble(db.settings(), now + 2)['hy2']['hosts'], ['a.invalid'])
+
+    def test_hostless_recovery_cannot_clear_multiple_hosts(self):
+        u = mk('no-host')
+        now = time.time()
+        for host in ('a.invalid', 'b.invalid'):
+            jobs.report_line(u['id'], 'hy2', False, host, now)
+        with self.assertRaisesRegex(ValueError, 'host required'):
+            jobs.report_line(u['id'], 'hy2', True, '', now + 1)
+        self.assertEqual(len(jobs.line_trouble(db.settings(), now + 1)['hy2']['hosts']), 2)
+
+    def test_new_host_limit_does_not_block_recovery_or_expiry(self):
+        u = mk('bounded')
+        now = time.time()
+        for i in range(jobs.MAX_REPORTED_HOSTS):
+            jobs.report_line(u['id'], 'tuic', False, '%d.invalid' % i, now)
+        with self.assertRaisesRegex(ValueError, 'too many'):
+            jobs.report_line(u['id'], 'tuic', False, 'extra.invalid', now + 1)
+        jobs.report_line(u['id'], 'tuic', True, '0.invalid', now + 2)
+        jobs.report_line(u['id'], 'tuic', False, 'extra.invalid', now + 3)
+        self.assertEqual(jobs.line_trouble(db.settings(), now + jobs.REPORT_TTL + 4), {})
+
 
 class OpsWeb(MemberWeb):
+    def test_member_api_failure_contract(self):
+        import http.client
+        import ssl
+        from unittest.mock import patch
+        from vps2vpn import cores
+        u = mk('contract')
+        context = ssl.create_default_context(cafile=paths.SELF_CRT)
+
+        def request(path, tls=True):
+            c = http.client.HTTPSConnection('127.0.0.1', self.port, context=context, timeout=4) if tls else \
+                http.client.HTTPConnection('127.0.0.1', self.port, timeout=4)
+            try:
+                c.request('GET', path, headers={'User-Agent': 'clash'})
+                r = c.getresponse()
+                return r.status, r.read()
+            finally:
+                c.close()
+
+        with patch.object(paths, 'DEV', False), patch.object(cores, 'online_detail', return_value={}):
+            path = '/s/%s' % u['sub_token']
+            self.assertEqual(request(path, tls=False)[0], 200)
+            status, body = request(path + '/api/me', tls=False)
+            self.assertEqual(status, 426)
+            self.assertEqual(json.loads(body), {'service': 'vps2vpn', 'error': 'https_required'})
+            self.assertEqual(request(path + '/api/me')[0], 200)
+            status, body = request('/s/' + 'x' * 24 + '/api/me')
+            self.assertEqual(status, 404)                       # a wrong token looks like any nginx 404
+            self.assertNotIn(b'vps2vpn', body)
+            self.assertEqual(request('/s/' + 'x' * 24 + '/api/me', tls=False)[0], 404)
+            self.assertEqual(request('/s/' + 'x' * 24)[0], 404)
+
     def test_report_state_and_change_port(self):
         u = mk('dan', 10)
         base = '/s/%s/' % u['sub_token']

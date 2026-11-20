@@ -163,22 +163,38 @@ LINES = {'reality': ('reality_port', 'tcp', 'VLESS + REALITY'),
          'hy2': ('hy2_port', 'udp', 'Hysteria 2'),
          'tuic': ('tuic_port', 'udp', 'TUIC v5')}
 REPORT_TTL = 24 * 3600
+MAX_REPORTED_HOSTS = 64
 
 
 def report_line(uid, line, ok, host='', now=None):
-    """An app says it could (not) connect over one line. One entry per account and line, so one person cannot
-    make it look like many; a later success from the same account clears it."""
+    """Keep endpoint state separate; alert counts still count each account once."""
     if line not in LINES:
         raise ValueError('unknown line')
     now = int(now or time.time())
+    host = str(host).strip().lower().rstrip('.')
+    if len(host) > 253:
+        raise ValueError('host too long')
+    owner = str(uid)
     with _report_lock:
-        reps = {k: dict(v) for k, v in (db.settings()['line_reports'] or {}).items()}
+        reps = _prune(db.settings()['line_reports'] or {}, now)
         mine = reps.setdefault(line, {})
+        mine = {('%s@%s' % (k, str(v[1]).strip().lower().rstrip('.')) if '@' not in k else k): v
+                for k, v in mine.items()}
+        reps[line] = mine
+        key = '%s@%s' % (owner, host)
+        owned = [k for k in mine if k.split('@', 1)[0] == owner]
         if ok:
-            mine.pop(str(uid), None)
+            if not host and key not in mine:
+                if len(owned) > 1:
+                    raise ValueError('host required for multiple reported servers')
+                if owned:
+                    key = owned[0]
+            mine.pop(key, None)
         else:
-            first = str(uid) not in mine
-            mine[str(uid)] = [now, str(host)[:64]]
+            first = not owned
+            if key not in mine and len(owned) >= MAX_REPORTED_HOSTS:
+                raise ValueError('too many reported hosts')
+            mine[key] = [now, host]
         db.set_settings(line_reports=_prune(reps, now))
     if not ok and first:
         n = len(line_trouble(db.settings(), now).get(line, {}).get('users', []))
@@ -197,7 +213,8 @@ def line_trouble(s, now=None):
     now = now or time.time()
     out = {}
     for line, m in _prune(s['line_reports'] or {}, now).items():
-        out[line] = {'users': sorted(int(u) for u in m), 'hosts': sorted({v[1] for v in m.values() if v[1]}),
+        out[line] = {'users': sorted({int(u.split('@', 1)[0]) for u in m}),
+                     'hosts': sorted({v[1] for v in m.values() if v[1]}),
                      'last': max(v[0] for v in m.values())}
     return out
 

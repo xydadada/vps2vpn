@@ -298,6 +298,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.fullmatch(r'/s/([A-Za-z0-9_-]{16,64})(/.*)', path)
             if m:
                 u = db.user_by_token(m.group(1))
+                # The app may hold a plain-http subscription link; tell it to use https instead of a bare 404
+                # (which it would read as "link changed"). Only for a valid token: probes keep seeing nginx's 404.
+                if u and s['setup_done'] and m.group(2) in ('/api/me', '/api/report') and not self.secure_ok():
+                    return self.json({'service': 'vps2vpn', 'error': 'https_required'}, 426)
                 if not u or not s['setup_done'] or not self.secure_ok():
                     return self.not_found()
                 return self.member_area(method, m.group(2), s, u, '/s/%s/' % m.group(1))

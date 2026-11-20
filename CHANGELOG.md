@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.1
+
+- Fixed: with the same line failing on several servers, one server recovering cleared the others' reports; reports are now kept per account and server (alerts still count each account once). At most 64 servers per account and line.
+- The member API (`/s/<token>/api/me`, `/api/report`) answers a plain-http request carrying a valid token with 426 "https_required", so the app no longer mistakes an http subscription link for a changed link. Wrong tokens still get the ordinary 404.
+
+## 0.2.0
 
 **AI zone (for Claude / ChatGPT / Gemini users)**
 - AI availability check, run from the server: claude.ai, the Claude API, ChatGPT and Gemini, each reported as works / region blocked / unreachable, plus the address's city, network owner and type (data centre, home broadband, mobile). Implemented in Python (`vps2vpn/aicheck.py`); no third-party scripts are run.
