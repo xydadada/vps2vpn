@@ -29,7 +29,15 @@ def _hy2_streams(s):
     req = urllib.request.Request('http://127.0.0.1:%d/dump/streams' % s['hy2_stats_port'],
                                  headers={'Authorization': s['stats_secret']})
     with urllib.request.urlopen(req, timeout=4) as r:
-        return json.loads(r.read()).get('streams') or []
+        payload = json.loads(r.read())
+    if not isinstance(payload, dict):
+        raise ValueError('invalid Hysteria stream response')
+    streams = payload.get('streams')
+    if streams is None:
+        return []
+    if not isinstance(streams, list):
+        raise ValueError('invalid Hysteria streams list')
+    return streams
 
 
 def aggregate(flows, online=None):
@@ -84,7 +92,10 @@ def scan(s=None):
     flows, coverage = [], []
     if s['hy2_enabled']:
         try:
-            for st in _hy2_streams(s):
+            streams = _hy2_streams(s)
+            if not isinstance(streams, list):
+                raise ValueError('invalid Hysteria streams')
+            for st in streams:
                 if not isinstance(st, dict):
                     continue
                 auth = st.get('auth')
@@ -102,7 +113,15 @@ def scan(s=None):
             pass
     if s['tuic_enabled']:
         try:
-            for c in cores.TuicMeter.poll(s, 3).get('connections') or []:
+            snapshot = cores.TuicMeter.poll(s, 3)
+            if not isinstance(snapshot, dict):
+                raise ValueError('invalid TUIC connections snapshot')
+            connections = snapshot.get('connections')
+            if connections is None:
+                connections = []
+            if not isinstance(connections, list):
+                raise ValueError('invalid TUIC connections list')
+            for c in connections:
                 if not isinstance(c, dict):
                     continue
                 m = c.get('metadata')

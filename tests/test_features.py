@@ -233,6 +233,31 @@ class Abuse(tu.Base):
         self.assertEqual(report[7]['targets'], 1)
         self.assertEqual(abuse.latest()['coverage'], ['hy2'])
 
+    def test_invalid_tuic_envelope_keeps_valid_hysteria_telemetry(self):
+        s = dict(db.settings(), hy2_enabled=True, tuic_enabled=True, reality_enabled=False)
+        streams = [{'auth': 'u7', 'req_addr': 'valid.example:443'}]
+        for malformed in (None, [], {'connections': 'not-a-list'}, {'connections': 42}):
+            with self.subTest(malformed=malformed):
+                with mock.patch.object(abuse, '_hy2_streams', return_value=streams):
+                    with mock.patch.object(abuse.cores.TuicMeter, 'poll', return_value=malformed):
+                        with mock.patch.object(abuse.cores, 'online_detail', return_value={}):
+                            report = abuse.scan(s)
+                self.assertEqual(report[7]['streams'], 1)
+                self.assertEqual(abuse.latest()['coverage'], ['hy2'])
+
+    def test_invalid_hysteria_envelope_keeps_valid_tuic_telemetry(self):
+        s = dict(db.settings(), hy2_enabled=True, tuic_enabled=True, reality_enabled=False)
+        conn = {'metadata': {'destinationPort': 443, 'host': 'valid.example'}, 'chains': ['u7']}
+        for malformed in (None, {}, {'not': 'a list'}, 'bad'):
+            with self.subTest(malformed=malformed):
+                with mock.patch.object(abuse, '_hy2_streams', return_value=malformed):
+                    with mock.patch.object(abuse.cores.TuicMeter, 'poll', return_value={'connections': [conn]}):
+                        with mock.patch.object(abuse.cores, 'online_detail', return_value={}):
+                            report = abuse.scan(s)
+                self.assertEqual(report[7]['streams'], 1)
+                self.assertEqual(abuse.latest()['coverage'], ['tuic'])
+
+
     def test_malformed_tuic_connection_does_not_discard_valid_records(self):
         s = dict(db.settings(), hy2_enabled=False, tuic_enabled=True, reality_enabled=False)
         records = [
