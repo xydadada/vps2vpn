@@ -162,7 +162,8 @@ def nft_unit_text(nft_bin):
 def _persist_hopping(rules_text):
     """Best effort: keep the rules across reboots (kernel nft state is lost on reboot)."""
     try:
-        paths.write_atomic(paths.NFT_FILE, rules_text, 0o644)
+        # nft rules are read by root/systemd; avoid world-readable files in /etc/vps2vpn.
+        paths.write_atomic(paths.NFT_FILE, rules_text, 0o600)
         unit = nft_unit_text(shutil.which('nft') or '/usr/sbin/nft')
         try:
             with open(paths.NFT_UNIT, encoding='utf-8') as f:
