@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.6 (unreleased)
+## 0.2.6
 
 **Fewer disconnects**
 - Adding a user (or switching one back on) no longer restarts Xray: the new users are handed to the running core through its API, so nobody else is disconnected. Any other change, a failed call, or removing/disabling a user still restarts it — Xray has no way to close a removed user's open connections, and a cut-off must really cut off.
