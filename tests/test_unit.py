@@ -79,6 +79,38 @@ class BenchSources(unittest.TestCase):
         r = b.run(quick=True, log=lambda m: None)
         self.assertEqual((r['down_1'], r['down_4']), (30.0, 30.0))
 
+    def test_one_refused_request_does_not_end_a_stream(self):
+        import http.server
+        served = [0]
+
+        class Flaky(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                served[0] += 1
+                if served[0] == 1:                      # a proxy's momentary 502
+                    self.send_error(502)
+                    return
+                self.send_response(200)
+                self.send_header('Content-Length', str(1 << 20))
+                self.end_headers()
+                try:
+                    self.wfile.write(b'x' * (1 << 20))
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Flaky)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            diag, errors = {}, []
+            mbps = self.saved[1](None, 1, 1, size=1 << 20, diagnostics=diag, errors=errors,
+                                 url='http://127.0.0.1:%d/__down?bytes=%%d' % srv.server_address[1])
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertGreater(mbps, 0)
+        self.assertEqual((errors, diag['retries']), ([], 1))
+
     def test_explicit_origin_is_never_replaced(self):
         b = self.bench
         b.working_download_url = lambda *a, **k: self.fail('public sources probed for a fixture origin')
@@ -612,12 +644,10 @@ class Web(Base):
             self.assertFalse(db.settings()['tg_chat'])
         finally:
             notify.find_chat = orig
-        # An existing positive chat ID from before pairing is still untrusted.
         db.set_settings(tg_token='123456:' + 'A' * 35, tg_chat='999', tg_verified=False)
         st, body, _ = self.req('GET', self.pp + '/api/state')
-        state = json.loads(body)['settings']
-        self.assertFalse(state['tg_ready'])
-        self.assertTrue(state['tg_repair_needed'])
+        self.assertFalse(json.loads(body)['settings']['tg_ready'])
+        self.assertTrue(json.loads(body)['settings']['tg_repair_needed'])
         orig_send = notify.send
         notify.find_chat = lambda tok, challenge: ('42', 'Owner') if challenge == 'a' * 32 else (None, None)
         notify.send = lambda *args, **kwargs: True

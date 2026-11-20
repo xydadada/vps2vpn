@@ -685,7 +685,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 with rules._refresh_lock:
                     if not os.path.exists(f):
                         try:
-                            paths.write_atomic(f, rules.fetch_converted(name, fmt), 0o644)
+                            converted = rules.fetch_converted(name, fmt)
+                            # A successful HTTP response can still contain no
+                            # convertible rules (e.g. a CDN's HTML error page).
+                            # Do not make this empty result a persistent 200
+                            # cache entry on the first anonymous request.
+                            rows = converted.splitlines()
+                            prefixes = (b'DOMAIN,', b'DOMAIN-SUFFIX,', b'IP-CIDR,', b'IP-CIDR6,')
+                            if not rows or any(not row.startswith(prefixes) or row.endswith(b',') for row in rows):
+                                return self.send(503, 'rule set not available yet')
+                            paths.write_atomic(f, converted, 0o644)
                         except OSError:
                             return self.send(503, 'rule set not available yet')
             else:
@@ -1599,8 +1608,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'cannot reach api.telegram.org: %s' % e}, 502)
         if not chat:
             return self.json({'error': 'no_chat'}, 400)
-        # Only this authenticated panel flow can trust a Telegram recipient.
-        # Old/restored chat IDs deliberately remain unverified until /bind.
+        # Only this authenticated panel flow confirms ownership of a chat.
         db.set_settings(tg_token=token, tg_chat=chat, tg_verified=True)
         ok = notify.send('alerts are on / 告警已开启', s=db.settings())
         return self.json({'ok': ok, 'who': who})

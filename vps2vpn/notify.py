@@ -130,16 +130,22 @@ def send_file(name, data, caption='', s=None):
         return False
 
 
+def _bot_binding_active(s):
+    """A long-poll result or command response is valid only for the current owner binding."""
+    cur = db.settings()
+    return bool(cur.get('setup_done') and cur.get('tg_bot') and
+                cur.get('tg_verified') is True and s.get('tg_verified') is True and
+                cur.get('tg_token') and cur.get('tg_chat') and
+                cur['tg_token'] == s.get('tg_token') and
+                str(cur['tg_chat']) == str(s.get('tg_chat')))
+
+
 def reply(s, chat, text):
     text = str(text or '')
     for i in range(0, len(text), MAX_TEXT):
-        # Restoring a backup, disabling alerts or rebinding the bot must
-        # revoke a stale recipient before the next secret-bearing chunk.
-        current = db.settings()
-        if (current.get('tg_verified') is not True or
-                current.get('tg_token') != s.get('tg_token') or
-                str(current.get('tg_chat')) != str(chat) or
-                str(s.get('tg_chat')) != str(chat)):
+        # A large response spans multiple Telegram messages: revalidate for
+        # each chunk so disabling the bot also cancels the remaining text.
+        if str(chat) != str(s.get('tg_chat')) or not _bot_binding_active(s):
             return
         try:
             _call(s['tg_token'], 'sendMessage', {'chat_id': chat, 'text': text[i:i + MAX_TEXT],
@@ -172,20 +178,25 @@ def bot_loop(stop, handle, log):
         if not isinstance(res, dict) or not res.get('ok', True):
             stop.wait(30)              # e.g. 401 revoked token / 409 another poller: back off, do not spin
             continue
+        # The admin might have disabled the bot or switched owner chats during
+        # the 25-second poll. Never process the response under stale settings.
+        if not _bot_binding_active(s):
+            offset, primed = None, False
+            continue
         batch = res.get('result') or []
         first = not primed
         # drain the backlog completely (getUpdates returns at most 100 per call) before acting on anything
         primed = primed or len(batch) < 100
         for upd in batch:
+            # A change mid-batch must also cancel every remaining command.
+            if not _bot_binding_active(s):
+                offset, primed = None, False
+                break
             offset = upd['update_id'] + 1
             if first:
                 continue              # old messages from before the panel started: do not act on them
             msg = upd.get('message') or {}
             text = (msg.get('text') or '').strip()
-            # An admin can import a backup and revoke this binding while the
-            # long-poll call is still in flight. Fail closed on legacy state.
-            if db.settings().get('tg_verified') is not True:
-                break
             if not text.startswith('/') or not _owner_private_message(msg, s['tg_chat']):
                 continue
             try:
@@ -194,6 +205,11 @@ def bot_loop(stop, handle, log):
                 safe_err = str(e).replace(token, '***')
                 out = 'error: %s' % safe_err
                 log('telegram command failed: %s' % safe_err)
+            # Handlers (notably /doctor and /backup) may run long enough for
+            # an administrator to revoke access before the response is sent.
+            if not _bot_binding_active(s):
+                offset, primed = None, False
+                break
             if isinstance(out, tuple):
                 send_file(out[1], out[2], out[3], s=s)
             elif out:
