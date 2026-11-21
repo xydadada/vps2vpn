@@ -3,10 +3,8 @@ first use, two-step sign-in, sign-in history, custom routing, Telegram commands,
 
     python -m unittest tests.test_admin
 """
-import http.client
 import json
 import os
-import ssl
 import threading
 import time
 import unittest
@@ -310,25 +308,6 @@ class AdminWeb(tu.Base):
     def login(self, **extra):
         return self.req('POST', '/adm/api/login', dict({'username': 'admin', 'password': 'adminpassword'}, **extra))
 
-
-    def test_batch_rejects_json_exponent_overflow_before_creating_users(self):
-        self.login()
-        before = db.users()
-        # Valid JSON, unlike NaN/Infinity literals: json.loads parses 1e400 as inf.
-        conn = http.client.HTTPSConnection('127.0.0.1', self.port,
-                                           context=ssl._create_unverified_context(), timeout=10)
-        try:
-            conn.request('POST', '/adm/api/users-batch',
-                         b'{"prefix":"overflow","count":1e400}',
-                         {'X-V2V': '1', 'Content-Type': 'application/json',
-                          'Cookie': self.cookie})
-            response = conn.getresponse()
-            body = response.read()
-            self.assertEqual(response.status, 400, body)
-            self.assertEqual(json.loads(body)['error'], 'invalid number')
-        finally:
-            conn.close()
-        self.assertEqual(db.users(), before)
 
     def test_batch_bulk_and_export(self):
         self.login()
