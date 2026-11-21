@@ -626,7 +626,12 @@ class Scheduler:
             abuse.check(s, log)
         if s['monitor_enabled'] and paths.LIVE and self.due('monitor', 300):
             with_speed = self.due('monitor_speed', 3600)
-            monitor.run_in_background(log, with_speed=with_speed)
+            if not monitor.run_in_background(log, with_speed=with_speed):
+                # A previous round still owns the monitor worker. Retry at
+                # the next scheduler tick, including any hourly speed refresh.
+                self.last.pop('monitor', None)
+                if with_speed:
+                    self.last.pop('monitor_speed', None)
         if paths.LIVE and self.due('cert', 3600) and time.monotonic() >= self.cert_backoff_until:
             self.renew_cert(s)
         if self.due('rules', 86400) or (rules.mirror_age() is None and self.due('rules-missing', 600)):
