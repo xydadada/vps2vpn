@@ -58,10 +58,16 @@ def send(text, key=None, every=6 * 3600, s=None):
             # Reserve before making the network call: two concurrent workers
             # must not both deliver the same alert. Failed sends free the key.
             _pending.add(recent_key)
-    msg = ('[%s] %s' % (s['node_name'], text))[:MAX_TEXT]
     try:
-        _call(s['tg_token'], 'sendMessage', {'chat_id': s['tg_chat'], 'text': msg,
-                                             'disable_web_page_preview': 'true'})
+        # Message construction belongs inside the reservation's cleanup
+        # boundary. An incomplete settings snapshot must not pin _pending.
+        msg = ('[%s] %s' % (s.get('node_name') or 'vps2vpn', text))[:MAX_TEXT]
+        result = _call(s['tg_token'], 'sendMessage', {'chat_id': s['tg_chat'], 'text': msg,
+                                                     'disable_web_page_preview': 'true'})
+        if not isinstance(result, dict) or result.get('ok') is not True:
+            # HTTP success alone is not proof the Telegram Bot API accepted
+            # the message; unsuccessful responses must remain retryable.
+            return False
         if recent_key is not None:
             with _recent_lock:
                 _recent[recent_key] = (now, every)
