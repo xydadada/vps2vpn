@@ -3,6 +3,7 @@ service watchdog, IP-change follow-up, daily backups, server monthly traffic, si
 multi-server sync and alerts."""
 import ipaddress
 import json
+import math
 import os
 import random
 import shutil
@@ -398,6 +399,30 @@ class History:
 
     KEEP = 1440
 
+    @staticmethod
+    def _valid_point(point):
+        # Length alone is not a schema: malformed values in history.json can
+        # otherwise reach the browser's CPU/memory/network plots.
+        if not isinstance(point, list) or len(point) != 5 or type(point[0]) is not int:
+            return False
+        if not 0 <= point[0] <= 253402300799:  # JavaScript Date/SQLite-safe epoch
+            return False
+        for index in range(1, 5):
+            value = point[index]
+            if value is None:
+                continue
+            if type(value) not in (int, float):
+                return False
+            # math.isfinite() converts ints to float; a huge JSON integer
+            # would itself raise OverflowError and re-break cache startup.
+            if type(value) is float and not math.isfinite(value):
+                return False
+            if value is not None and index in (1, 2) and not 0 <= value <= 100:
+                return False
+            if index in (3, 4) and not 0 <= value < (1 << 63):
+                return False
+        return True
+
     def __init__(self, path=None, load=True):
         self.path = path or os.path.join(paths.VAR, 'history.json')
         self._lock = threading.Lock()
@@ -405,7 +430,10 @@ class History:
         if load:
             try:
                 with open(self.path) as f:
-                    self.points = [p for p in json.load(f) if isinstance(p, list) and len(p) == 5][-self.KEEP:]
+                    saved = json.load(f)
+                if not isinstance(saved, list):
+                    raise ValueError('history cache must be a list')
+                self.points = [p for p in saved if self._valid_point(p)][-self.KEEP:]
             except (OSError, ValueError):
                 pass
 
