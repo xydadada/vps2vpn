@@ -33,7 +33,6 @@ UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 PASS_RE = re.compile(r'^[!-~]{6,128}$')   # printable ASCII, no spaces
 PIN_RE = re.compile(r'^[0-9a-fA-F]{64}$')
 ROLLBACK_CAP = 64 << 20                   # cap counter-drop recovery when idmap didn't change (prevents backup rollback spikes)
-MAX_SQLITE_INT = (1 << 63) - 1           # traffic is persisted in signed SQLite INTEGER columns
 _wake = threading.Event()
 _lock = threading.Lock()
 _node_lock = threading.Lock()
@@ -270,12 +269,15 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid %s' % key)
     if 'health' in ans and not isinstance(ans['health'], dict):
         raise SyncError('node sync response has invalid health')
-    for pair in ans['traffic'].values():
-        # Historically malformed individual rows were skipped. Preserve that
-        # behavior, but never admit an integer SQLite cannot store.
-        if isinstance(pair, (list, tuple)) and len(pair) == 2:
-            if any(type(v) is int and v > MAX_SQLITE_INT for v in pair):
-                raise SyncError('node sync response has oversized traffic counters')
+    for rid, pair in ans['traffic'].items():
+        # Reject aliases ("01", "+1") before they can bill the same user twice.
+        if (not isinstance(rid, str) or not 1 <= len(rid) <= 19 or
+                not rid.isascii() or not rid.isdecimal() or rid[0] == '0' or
+                int(rid) > db.MAX_SQLITE_INT):
+            raise SyncError('node sync response has invalid traffic user ID')
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2 or
+                any(type(v) is not int or not 0 <= v <= db.MAX_SQLITE_INT for v in pair)):
+            raise SyncError('node sync response has invalid traffic counters')
     return ans
 
 
@@ -350,17 +352,14 @@ def push_users():
 def _apply_sync_answer(server, ans, got_pin, log=print):
     """Apply a node's sync response to `server` and record traffic deltas in DB."""
     _validate_sync_answer(ans)
-    # Both totals are read in the caller's transaction. Otherwise a node
-    # whose counters approach SQLite's limit could turn INTEGER into REAL.
-    account_totals = {r['id']: (r['used_up'], r['used_down'])
-                      for r in db.q('SELECT id, used_up, used_down FROM users')}
-    known = set(account_totals)
+    known = db.user_ids()
     old_seen = server.get('seen') or {}
     seen = {}
     for k, v in old_seen.items():
         try:
-            if int(k) in known and isinstance(v, (list, tuple)) and len(v) == 2:
-                seen[str(k)] = (int(v[0]), int(v[1]))
+            uid = int(k)
+            if str(uid) == k and uid in known and isinstance(v, (list, tuple)) and len(v) == 2:
+                seen[k] = (int(v[0]), int(v[1]))
         except (TypeError, ValueError, OverflowError):
             continue
     old_idmap = server.get('idmap') or {}
@@ -403,30 +402,8 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
         if uid in known:
             seen[rid_key] = (up, down)
     if deltas:
-        # SQLite silently promotes integer arithmetic to REAL on overflow,
-        # losing exact quota accounting. Check both the account totals and
-        # today's history totals before any row is changed.
-        today = time.strftime('%Y-%m-%d', time.localtime())
-        daily = {r['user_id']: (r['up'], r['down']) for r in
-                 db.q('SELECT user_id, up, down FROM traffic WHERE day=?', (today,))}
-        # JSON keys such as "1" and "01" both parse to the same user ID.
-        # Combine their deltas before checking the final persisted totals.
-        # Checking each raw row independently can overlook a collective
-        # overflow when multiple entries refer to the same account.
-        by_user = {}
-        for uid, dup, ddown in deltas:
-            up0, down0 = by_user.get(uid, (0, 0))
-            by_user[uid] = (up0 + dup, down0 + ddown)
-        for uid, (dup, ddown) in by_user.items():
-            current = account_totals[uid]
-            historical = daily.get(uid, (0, 0))
-            if any(type(v) is not int or v < 0 or v > MAX_SQLITE_INT
-                   for v in current + historical):
-                raise SyncError('stored traffic counters are not valid integers')
-            if (dup > MAX_SQLITE_INT - current[0] or ddown > MAX_SQLITE_INT - current[1]
-                    or dup > MAX_SQLITE_INT - historical[0] or ddown > MAX_SQLITE_INT - historical[1]):
-                raise SyncError('node traffic would overflow SQLite counters')
-        db.add_traffic_many([(uid, dup, ddown) for uid, (dup, ddown) in by_user.items()])
+        # The shared DB writer also guards local core traffic and duplicates.
+        db.add_traffic_many(deltas)
     server.update(info=ans.get('info') or {}, idmap=new_idmap, seen=seen, health=ans.get('health') or {},
                   version=ans.get('version', ''), last_ok=int(time.time()), error='', fail_count=0, pin=got_pin)
 

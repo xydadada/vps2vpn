@@ -19,11 +19,28 @@ class NodeTrafficBoundaries(tu.Base):
                 'pin': '', 'enabled': True, 'seen': {str(uid): [0, 0]}}
 
     def test_oversized_counter_rejected_before_db_write(self):
-        for pair in ([MAX + 1, 0], [0, MAX + 1]):
+        invalid = ([MAX + 1, 0], [0, MAX + 1], [-1, 0], [True, 0],
+                   [0, 1.5], [0], 'bad')
+        for pair in invalid:
             with self.subTest(pair=pair), self.assertRaisesRegex(
-                    cluster.SyncError, 'oversized traffic counters'):
+                    cluster.SyncError, 'invalid traffic counters'):
                 cluster._validate_sync_answer(self._answer({'1': pair}))
         cluster._validate_sync_answer(self._answer({'1': [MAX, MAX]}))
+
+    def test_noncanonical_traffic_ids_cannot_double_bill_or_poison_baselines(self):
+        uid = db.add_user('canonical')
+        server = self._server(uid)
+        valid = str(uid)
+        for bad in ('0' + valid, '+' + valid, ' ' + valid, '0', 'not-a-user'):
+            with self.subTest(key=bad), self.assertRaisesRegex(
+                    cluster.SyncError, 'invalid traffic user ID'):
+                cluster._validate_sync_answer(self._answer({bad: [100, 0]}))
+        server['seen']['0' + valid] = [50, 0]
+        answer = self._answer({valid: [100, 0]})
+        with mock.patch.object(cluster, '_request', return_value=(answer, 'dd' * 32)):
+            self.assertTrue(cluster.sync_one(server))
+        self.assertEqual(db.user(uid)['used_up'], 100)
+        self.assertNotIn('0' + valid, server['seen'])
 
     def test_account_total_never_silently_becomes_sqlite_real(self):
         user = db.add_user('boundary')
@@ -66,6 +83,30 @@ class NodeTrafficBoundaries(tu.Base):
         self.assertEqual((counter['used_up'], counter['kind']), (0, 'integer'))
         self.assertEqual(server['fail_count'], 1)
         self.assertEqual(server['seen'][first], [0, 0])
+
+    def test_shared_db_writer_rolls_back_local_core_overflow(self):
+        a, b = db.add_user('local-a'), db.add_user('local-b')
+        db.update_user(b, used_up=MAX - 1)
+        # This same DB path is used by cores.save_traffic(), not just nodes.
+        with self.assertRaises(OverflowError):
+            db.add_traffic_many([(a, 8, 0), (b, 2, 0)])
+        self.assertEqual(db.user(a)['used_up'], 0)
+        self.assertEqual(db.user(b)['used_up'], MAX - 1)
+        self.assertEqual(db.q('SELECT * FROM traffic'), [])
+
+    def test_shared_db_writer_rejects_collective_overflow(self):
+        uid = db.add_user('local-alias')
+        half = MAX // 2 + 10
+        with self.assertRaises(OverflowError):
+            db.add_traffic_many([(uid, half, 0), (uid, half, 0)])
+        self.assertEqual(db.user(uid)['used_up'], 0)
+
+    def test_deleted_account_delta_does_not_discard_a_live_account(self):
+        a, gone = db.add_user('live'), db.add_user('deleted')
+        db.delete_user(gone)
+        db.add_traffic_many([(a, 8, 9), (gone, 10, 11)])
+        self.assertEqual((db.user(a)['used_up'], db.user(a)['used_down']), (8, 9))
+        self.assertEqual(db.q('SELECT * FROM traffic WHERE user_id=?', (gone,)), [])
 
     def test_bad_node_counters_do_not_starve_the_next_healthy_node(self):
         user = db.add_user('shared')

@@ -488,23 +488,50 @@ def delete_user(uid):
                               "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(new_reps),))
 
 
+MAX_SQLITE_INT = (1 << 63) - 1
+
+
 def add_traffic(uid, up, down, now=None):
     add_traffic_many([(uid, up, down)], now)
 
 
 def add_traffic_many(deltas, now=None):
-    """Add [(user id, up, down), ...] to the users' usage and today's traffic rows in one transaction."""
+    """Bill non-negative byte deltas atomically without overflowing SQLite INTEGER."""
     ts = now or time.time()
     day = time.strftime('%Y-%m-%d', time.localtime(ts))
     deltas = list(deltas)
     if not deltas:
         return
+    if any(type(up) is not int or type(down) is not int or
+           not (0 <= up <= MAX_SQLITE_INT and 0 <= down <= MAX_SQLITE_INT)
+           for _, up, down in deltas):
+        raise ValueError('invalid traffic delta')
     with transaction() as c:
-        c.executemany('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
-                      [(up, down, int(ts), uid) for uid, up, down in deltas])
-        c.executemany('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
-                      'DO UPDATE SET up=up+excluded.up, down=down+excluded.down',
-                      [(day, uid, up, down) for uid, up, down in deltas])
+        # A user may have been deleted while core counters were being read.
+        # Ignore their stale deltas rather than losing other users' usage.
+        deltas = [(uid, up, down) for uid, up, down in deltas
+                  if c.execute('SELECT 1 FROM users WHERE id=?', (uid,)).fetchone()]
+        if not deltas:
+            return
+        # SQLite promotes overflowing INTEGER addition to REAL. The bounded
+        # UPDATE/UPSERT and row counts keep every batch exact and atomic.
+        updated = c.executemany(
+            'UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? '
+            "WHERE id=? AND typeof(used_up)='integer' AND used_up BETWEEN 0 AND ? "
+            "AND typeof(used_down)='integer' AND used_down BETWEEN 0 AND ?",
+            [(up, down, int(ts), uid, MAX_SQLITE_INT - up, MAX_SQLITE_INT - down)
+             for uid, up, down in deltas])
+        if updated.rowcount != len(deltas):
+            raise OverflowError('account traffic exceeds SQLite INTEGER range')
+        history = c.executemany(
+            'INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) '
+            'ON CONFLICT(day, user_id) DO UPDATE SET up=up+excluded.up, down=down+excluded.down '
+            "WHERE typeof(traffic.up)='integer' AND traffic.up BETWEEN 0 AND ? "
+            "AND typeof(traffic.down)='integer' AND traffic.down BETWEEN 0 AND ?",
+            [(day, uid, up, down, MAX_SQLITE_INT - up, MAX_SQLITE_INT - down)
+             for uid, up, down in deltas])
+        if history.rowcount != len(deltas):
+            raise OverflowError('daily traffic exceeds SQLite INTEGER range')
 
 
 def traffic_days(days=30):
