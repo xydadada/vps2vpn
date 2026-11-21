@@ -1127,7 +1127,7 @@ class Shadowrocket(tu.Base):
         for field in ('hy2_pass', 'uuid'):
             with self.subTest(field=field):
                 backup = json.loads(json.dumps(original))
-                backup['users'][0][field] = 'injected\\n[Proxy]\\nBad = direct'
+                backup['users'][0][field] = 'injected\n[Proxy]\nBad = direct'
                 db.import_all(backup)
                 conf = subscription.shadowrocket(db.settings(), db.user(user['id']), 'https://example.org')
                 self.assertEqual(conf.splitlines().count('[Proxy]'), 1)
