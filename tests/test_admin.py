@@ -498,7 +498,7 @@ class AdminWeb(tu.Base):
 
         # Starting with no factor is intentional: the off endpoint currently
         # permits a password-confirmed no-op; it must still be serializable.
-        with mock.patch.object(db, 'set_settings', side_effect=slow_disable), \\
+        with mock.patch.object(db, 'set_settings', side_effect=slow_disable), \
              mock.patch.object(secure, 'totp_check', side_effect=signal_verify):
             off_thread = threading.Thread(target=disable)
             enroll_thread = threading.Thread(target=enroll)
