@@ -461,8 +461,9 @@ class Ops(Base):
 
         def blocking_call(bot, method, params):
             sent.append(params['chat_id'])
-            entered.set()
-            release.wait(timeout=3)
+            if params['chat_id'] == '321':
+                entered.set()
+                release.wait(timeout=3)
             return {'ok': True}
 
         with mock.patch.object(notify, '_call', side_effect=blocking_call):
