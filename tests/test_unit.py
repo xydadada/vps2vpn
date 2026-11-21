@@ -443,6 +443,101 @@ class Ops(Base):
         finally:
             notify._call = orig
 
+    def test_notify_dedup_is_scoped_to_the_current_verified_chat(self):
+        sent = []
+        token = '1234567:' + 'a' * 35
+        with mock.patch.object(notify, '_call', side_effect=lambda bot, method, params:
+                               sent.append((bot, params['chat_id'])) or {'ok': True}):
+            db.set_settings(tg_token=token, tg_chat='111', tg_verified=True)
+            self.assertTrue(notify.send('service down', key='service-down', every=21600))
+            self.assertFalse(notify.send('service down', key='service-down', every=21600))
+
+            db.set_settings(tg_chat='222', tg_verified=True)
+            self.assertTrue(notify.send('service down', key='service-down', every=21600))
+            self.assertFalse(notify.send('service down', key='service-down', every=21600))
+
+            db.set_settings(tg_token='7654321:' + 'b' * 35, tg_verified=True)
+            self.assertTrue(notify.send('service down', key='service-down', every=21600))
+        self.assertEqual(sent, [(token, '111'), (token, '222'),
+                                ('7654321:' + 'b' * 35, '222')])
+
+    def test_notify_dedup_cache_is_bounded_and_never_stores_raw_bot_tokens(self):
+        token = '1234567:' + 'c' * 35
+        db.set_settings(tg_token=token, tg_chat='777', tg_verified=True)
+        with mock.patch.object(notify, '_call', return_value={'ok': True}):
+            for n in range(1003):
+                self.assertTrue(notify.send('note', key='unique-%d' % n))
+        self.assertLessEqual(len(notify._recent), 1000)
+        self.assertFalse(any(token in repr(key) for key in notify._recent))
+
+    def test_notify_parallel_sends_reserve_one_in_flight_key(self):
+        token = '1234567:' + 'd' * 35
+        db.set_settings(tg_token=token, tg_chat='321', tg_verified=True)
+        entered, release = threading.Event(), threading.Event()
+        sent, outcomes = [], []
+
+        def blocking_call(bot, method, params):
+            sent.append(params['chat_id'])
+            if params['chat_id'] == '321':
+                entered.set()
+                release.wait(timeout=3)
+            return {'ok': True}
+
+        with mock.patch.object(notify, '_call', side_effect=blocking_call):
+            worker = threading.Thread(
+                target=lambda: outcomes.append(notify.send('down', key='parallel-alert')),
+                daemon=True,
+            )
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(timeout=2), 'first alert did not start')
+                self.assertFalse(notify.send('down', key='parallel-alert'))
+                # Changing a verified destination while the old one is in
+                # flight must not suppress the new owner's first warning.
+                db.set_settings(tg_chat='654', tg_verified=True)
+                self.assertTrue(notify.send('down', key='parallel-alert'))
+            finally:
+                release.set()
+                worker.join(timeout=3)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(outcomes, [True])
+        self.assertEqual(sent, ['321', '654'])
+        self.assertEqual(len(notify._pending), 0)
+
+    def test_failed_notification_does_not_keep_in_flight_reservation(self):
+        db.set_settings(tg_token='1234567:' + 'e' * 35, tg_chat='890', tg_verified=True)
+        with mock.patch.object(notify, '_call', side_effect=OSError('offline')):
+            self.assertFalse(notify.send('down', key='retry-after-failure'))
+        self.assertEqual(len(notify._pending), 0)
+        with mock.patch.object(notify, '_call', return_value={'ok': True}) as sender:
+            self.assertTrue(notify.send('down', key='retry-after-failure'))
+            sender.assert_called_once()
+
+    def test_failed_telegram_ack_must_not_suppress_next_notification(self):
+        db.set_settings(tg_token='1234567:' + 'f' * 35, tg_chat='891', tg_verified=True)
+        with mock.patch.object(notify, '_call', side_effect=[
+                {'ok': False, 'error_code': 429, 'description': 'retry later'},
+                {'ok': True}]) as telegram:
+            self.assertFalse(notify.send('down', key='api-not-accepted'))
+            self.assertTrue(notify.send('down', key='api-not-accepted'))
+            self.assertFalse(notify.send('down', key='api-not-accepted'))
+            self.assertEqual(telegram.call_count, 2)
+        self.assertFalse(notify._pending)
+
+    def test_missing_or_malformed_node_label_never_leaks_inflight_key(self):
+        db.set_settings(tg_token='1234567:' + 'g' * 35, tg_chat='892', tg_verified=True)
+
+        class BrokenLabel:
+            def __str__(self):
+                raise ValueError('invalid label')
+
+        with mock.patch.object(notify, '_call', return_value={'ok': True}) as telegram:
+            self.assertFalse(notify.send('down', key='bad-label', s={'node_name': BrokenLabel()}))
+            self.assertFalse(notify._pending)
+            self.assertTrue(notify.send('down', key='bad-label', s={'other': 'field'}))
+            telegram.assert_called_once()
+        self.assertFalse(notify._pending)
+
     def test_bot_commands_only_from_the_owner_in_a_private_chat(self):
         ok = notify._owner_private_message
         self.assertTrue(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 5}}, '5'))
