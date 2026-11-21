@@ -1226,6 +1226,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if action in ('extend', 'add_gb') and value <= 0:
             return self.json({'error': 'invalid number'}, 400)
         now = int(time.time())
+        if action == 'extend':
+            # Verify the entire requested batch before changing the first
+            # account. The single-user form's year-9999 bound applies here too.
+            for uid in ids:
+                user = db.user(uid)
+                if (user and user['expire_at']
+                        and int(max(user['expire_at'], now) + value * 86400) > MAX_ACCOUNT_EXPIRE_AT):
+                    return self.json({'error': 'expire_at is out of supported range'}, 400)
         done = 0
         for uid in ids:
             u = db.user(uid)
