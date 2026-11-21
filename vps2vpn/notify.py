@@ -54,6 +54,16 @@ def send(text, key=None, every=6 * 3600, s=None):
     # in the in-process deduplication cache after an owner rebind.
     bot_id = hashlib.sha256(s['tg_token'].encode('utf-8')).digest() if key else None
     recent_key = (bot_id, str(s['tg_chat']), key) if key else None
+    # Day-scale reminders (quota 80%, VPS renewal, account expiry) are sent once per window. An upgrade or
+    # restart empties the in-process cache, so those are also recorded in the database by wall-clock time.
+    stored_key = ('%s:%s:%s' % (bot_id.hex(), s['tg_chat'], key)) if key and every >= 86400 else None
+    if stored_key is not None:
+        try:
+            at = db.alert_sent_at(stored_key)
+        except Exception:
+            at = None
+        if at is not None and 0 <= time.time() - at < every:
+            return False
     if recent_key is not None:
         with _recent_lock:
             prev = _recent.get(recent_key)
@@ -72,6 +82,11 @@ def send(text, key=None, every=6 * 3600, s=None):
             # HTTP success alone is not proof the Telegram Bot API accepted
             # the message; unsuccessful responses must remain retryable.
             return False
+        if stored_key is not None:
+            try:
+                db.mark_alert_sent(stored_key)
+            except Exception:
+                pass                  # the in-process cache still holds it until the next restart
         if recent_key is not None:
             with _recent_lock:
                 _recent[recent_key] = (now, every)

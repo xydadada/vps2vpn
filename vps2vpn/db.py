@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS traffic (
     day TEXT NOT NULL, user_id INTEGER NOT NULL, up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (day, user_id));
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS alerts_sent (key TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS member_sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS invites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +260,24 @@ def x(sql, args=()):
     with _lock:
         cur = connect().execute(sql, args)
         return cur.lastrowid
+
+
+# --- alerts that must not repeat after a restart ------------------------------
+ALERT_KEEP = 90 * 86400
+
+
+def alert_sent_at(key):
+    """Wall-clock time a long-window alert with this key was last delivered, or None."""
+    rows = q('SELECT at FROM alerts_sent WHERE key=?', (key,))
+    return rows[0]['at'] if rows else None
+
+
+def mark_alert_sent(key, at=None):
+    at = int(at if at is not None else time.time())
+    with transaction() as c:
+        c.execute('INSERT INTO alerts_sent(key, at) VALUES(?, ?) '
+                  'ON CONFLICT(key) DO UPDATE SET at=excluded.at', (key, at))
+        c.execute('DELETE FROM alerts_sent WHERE at<?', (at - ALERT_KEEP,))
 
 
 # --- settings -----------------------------------------------------------------

@@ -139,6 +139,39 @@ class TelegramCommands(tu.Base):
         self.assertEqual(sent[0]['chat_id'], '42')
         self.assertEqual(calls[1][1]['offset'], 2)                       # old update acknowledged, not answered
 
+    def test_day_scale_reminder_is_not_repeated_after_a_restart(self):
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_verified=True)
+        sent = []
+
+        def fake_call(token, method, params=None, timeout=10):
+            sent.append((params or {}).get('text'))
+            return {'ok': True}
+        real = notify._call
+        notify._call = fake_call
+        try:
+            self.assertTrue(notify.send('ends tomorrow', key='uexp1-7-100', every=40 * 86400))
+            with notify._recent_lock:
+                notify._recent.clear()                                   # what a restart forgets
+            self.assertFalse(notify.send('ends tomorrow', key='uexp1-7-100', every=40 * 86400))
+            # Short-window alerts stay in memory only and may repeat after a restart.
+            self.assertTrue(notify.send('core down', key='down', every=600))
+            with notify._recent_lock:
+                notify._recent.clear()
+            self.assertTrue(notify.send('core down', key='down', every=600))
+            # A new owner chat still gets its first reminder.
+            db.set_settings(tg_chat='43')
+            self.assertTrue(notify.send('ends tomorrow', key='uexp1-7-100', every=40 * 86400))
+            # Once the window has passed it is sent again.
+            db.set_settings(tg_chat='42')
+            with notify._recent_lock:
+                notify._recent.clear()
+            stored = [r['key'] for r in db.q('SELECT key FROM alerts_sent') if r['key'].endswith(':42:uexp1-7-100')]
+            db.mark_alert_sent(stored[0], at=time.time() - 41 * 86400)
+            self.assertTrue(notify.send('ends tomorrow', key='uexp1-7-100', every=40 * 86400))
+        finally:
+            notify._call = real
+        self.assertEqual(len(sent), 5)
+
     def test_disabled_or_rebound_during_poll_must_drop_stale_commands(self):
         changes = (
             {'tg_token': '', 'tg_chat': ''},
