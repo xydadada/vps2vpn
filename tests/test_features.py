@@ -131,6 +131,40 @@ class TrustAndRouting(tu.Base):
         self.assertEqual(config['routing']['rules'][0]['outboundTag'], 'block')
 
 
+class MemberNumericBounds(tu.Base):
+    def test_oversized_json_numbers_are_refused_without_writes(self):
+        # Both values are valid JSON within the request-size limit. Python raises
+        # OverflowError on float(huge_int) and on int(float('inf')).
+        huge = json.loads('1' + '0' * 309)
+        infinity = json.loads('1e400')
+        inviter = mk('numeric-inviter', 20)
+        request_id = db.add_request(inviter['id'], 2, '')
+        before_invites = db.invites()
+        before_requests = db.requests()
+        before_user = db.user(inviter['id'])
+
+        cases = (
+            ('admin invite quota', lambda: members.create_invite('admin', huge, 7)),
+            ('member invite quota', lambda: members.create_invite(
+                'member', huge, 7, inviter=inviter['id'], by_member=True)),
+            ('member quota request', lambda: members.request_more(inviter['id'], huge, '')),
+            ('admin request approval', lambda: members.decide(request_id, True, add_gb=huge)),
+            ('admin invite uses', lambda: members.create_invite('admin', 1, 7, max_uses=infinity)),
+            ('admin invite validity', lambda: members.create_invite('admin', 1, infinity)),
+            ('admin invite account lifetime', lambda: members.create_invite(
+                'admin', 1, 7, expire_days=infinity)),
+            ('member invite uses', lambda: members.create_invite(
+                'member', 1, 7, max_uses=infinity, inviter=inviter['id'], by_member=True)),
+        )
+        for name, action in cases:
+            with self.subTest(name=name), self.assertRaises(members.Refused):
+                action()
+
+        self.assertEqual(db.invites(), before_invites)
+        self.assertEqual(db.requests(), before_requests)
+        self.assertEqual(db.user(inviter['id']), before_user)
+
+
 class Invites(tu.Base):
     def test_admin_code_register(self):
         rec = members.create_invite('admin', 50, 7, max_uses=2, expire_days=30, reset_day=5, note='team')
