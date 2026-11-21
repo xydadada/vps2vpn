@@ -314,6 +314,33 @@ class RestoreRouteSafety(Base):
             db.import_all(damaged)
         self.assertEqual(db.export_all(), before)
 
+    def test_backup_request_numbers_are_checked_before_replacing_rows(self):
+        from vps2vpn import members
+        uid = db.add_user('request-owner', quota_gb=4)
+        rid = db.add_request(uid, 2.5, 'more data')
+        before = db.export_all()
+        for key, values in (
+                ('user_id', ('not-an-id', None, True, 0, 1 << 63)),
+                ('add_gb', ('not-a-number', None, True, -1, float('inf'), 1 << 1100))):
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    damaged = json.loads(json.dumps(before))
+                    damaged['requests'][0][key] = value
+                    with self.assertRaisesRegex(ValueError, key):
+                        db.import_all(damaged)
+                    self.assertEqual(db.export_all(), before)
+        for rows in (None, {}, 'not-a-list', [None], [42]):
+            with self.subTest(rows=rows):
+                damaged = json.loads(json.dumps(before))
+                damaged['requests'] = rows
+                with self.assertRaises(ValueError):
+                    db.import_all(damaged)
+                self.assertEqual(db.export_all(), before)
+        db.import_all(json.loads(json.dumps(before)))
+        self.assertEqual(db.request_by_id(rid)['user_id'], uid)
+        members.decide(rid, True)
+        self.assertEqual(db.user(uid)['quota_gb'], 6.5)
+
     def test_legacy_backup_without_member_path_still_imports(self):
         db.set_settings(setup_done=True)
         original = db.export_all()
