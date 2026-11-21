@@ -403,7 +403,15 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
         today = time.strftime('%Y-%m-%d', time.localtime())
         daily = {r['user_id']: (r['up'], r['down']) for r in
                  db.q('SELECT user_id, up, down FROM traffic WHERE day=?', (today,))}
+        # JSON keys such as "1" and "01" both parse to the same user ID.
+        # Combine their deltas before checking the final persisted totals.
+        # Checking each raw row independently can overlook a collective
+        # overflow when multiple entries refer to the same account.
+        by_user = {}
         for uid, dup, ddown in deltas:
+            up0, down0 = by_user.get(uid, (0, 0))
+            by_user[uid] = (up0 + dup, down0 + ddown)
+        for uid, (dup, ddown) in by_user.items():
             current = account_totals[uid]
             historical = daily.get(uid, (0, 0))
             if any(type(v) is not int or v < 0 or v > MAX_SQLITE_INT
@@ -412,7 +420,7 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
             if (dup > MAX_SQLITE_INT - current[0] or ddown > MAX_SQLITE_INT - current[1]
                     or dup > MAX_SQLITE_INT - historical[0] or ddown > MAX_SQLITE_INT - historical[1]):
                 raise SyncError('node traffic would overflow SQLite counters')
-        db.add_traffic_many(deltas)
+        db.add_traffic_many([(uid, dup, ddown) for uid, (dup, ddown) in by_user.items()])
     server.update(info=ans.get('info') or {}, idmap=new_idmap, seen=seen, health=ans.get('health') or {},
                   version=ans.get('version', ''), last_ok=int(time.time()), error='', fail_count=0, pin=got_pin)
 
