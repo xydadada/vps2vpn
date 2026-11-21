@@ -521,6 +521,9 @@ def shadowrocket_proxy(n):
                 [('congestion_control', 'bbr'), ('udp_relay_mode', 'native')]
     else:
         return None
+    # Credentials bypass _sr_safe for comma escaping; never emit record separators.
+    if any(re.search(r'[\x00-\x1f\x7f\u0085\u2028\u2029]', str(v)) for _, v in params):
+        return None
     return '%s = %s, %s' % (_sr_name(n), head, ', '.join('%s=%s' % (k, _sr_safe(v) if k != 'auth' and k != 'password'
                                                                        else str(v).replace(',', '%2C'))
                                                           for k, v in params))
