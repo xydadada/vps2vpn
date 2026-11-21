@@ -547,6 +547,45 @@ class Installer(unittest.TestCase):
             self.assertIn('-o Dpkg::Options::=--force-confold', c)
         self.assertIn(' update ', calls[0] + ' ')
         self.assertIn(' install -y ', calls[1])
+        self.assertTrue(calls[1].endswith(' findutils passwd'), calls[1])    # minimal images lack find / useradd
+
+    def test_end_of_life_debian_11_falls_back_to_archive_debian_org(self):
+        # bullseye's security updates left deb.debian.org: installing anything updated there fails with 404
+        osr = os.path.join(self.tmp, 'os-release')
+        with open(osr, 'w') as f:
+            f.write('ID=debian\nVERSION_ID="11"\nVERSION_CODENAME=bullseye\n')
+        src = os.path.join(self.tmp, 'sources.list.d')
+        os.makedirs(src)
+        self.stub('apt-get', 'echo "$*" >> "$FIX/apt.log"\n'
+                             'case "$*" in *" install "*) [ -f "$SRC/vps2vpn-debian-archive.list" ] || exit 100 ;; esac\n')
+        body = 'PATH="$STUBS"; OS_RELEASE="%s"; APT_SOURCES="$SRC"; install_packages' % _posix(osr)
+        rc, out = self.sh(body, SRC=_posix(src))
+        self.assertEqual(rc, 0, out)
+        self.assertIn('archive.debian.org', out)
+        with open(os.path.join(src, 'vps2vpn-debian-archive.list')) as f:
+            self.assertEqual(f.read().splitlines(), [
+                'deb [check-valid-until=no] http://archive.debian.org/debian bullseye main',
+                'deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main',
+                'deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-security main'])
+        with open(os.path.join(self.fix, 'apt.log')) as f:
+            self.assertEqual([re.search(r' (update|install) ', c).group(1) for c in f.read().splitlines()],
+                             ['update', 'install', 'update', 'install'])
+        # any other release, or a second failure, is a plain error: never touch the sources of a supported one
+        os.unlink(os.path.join(src, 'vps2vpn-debian-archive.list'))
+        with open(osr, 'w') as f:
+            f.write('ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n')
+        rc, out = self.sh(body, SRC=_posix(src))
+        self.assertNotEqual(rc, 0)
+        self.assertIn('could not install the system packages', out)
+        self.assertEqual(os.listdir(src), [])
+
+    def test_install_lock_keeps_error_messages_visible(self):
+        # "exec 9>lock 2>/dev/null" once sent every later error (die) of the installer to /dev/null
+        self.stub('flock', 'exit 0\n')
+        rc, out = self.sh('LOCK="$ROOTDIR/install.lock"; one_at_a_time; die "still visible"')
+        self.assertNotEqual(rc, 0)
+        self.assertIn('error:', out)
+        self.assertIn('still visible', out)
 
     def test_python_older_than_3_8_gets_a_newer_one_next_to_it(self):
         # RHEL/Rocky/Alma 8 and openSUSE Leap 15: python3 is 3.6

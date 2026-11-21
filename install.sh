@@ -80,9 +80,28 @@ pick_python() {  # -> PY = absolute path of a Python 3.8+ (the distro's python3 
   return 1
 }
 
+debian_archive_sources() {  # -> 0 if an end-of-life Debian was given its archive.debian.org sources
+  # Debian 11 left LTS in 2026: its security updates now live only on archive.debian.org, so
+  # installing any package with a security update fails with 404 from the usual mirrors.
+  local id code f="$APT_SOURCES/vps2vpn-debian-archive.list"
+  [ -r "$OS_RELEASE" ] || return 1
+  id=$(. "$OS_RELEASE" && echo "${ID:-}"); code=$(. "$OS_RELEASE" && echo "${VERSION_CODENAME:-}")
+  [ "$id" = debian ] && [ "$code" = bullseye ] && [ ! -e "$f" ] || return 1
+  say "Debian 11 is past its end of life and its updates moved to archive.debian.org; adding it as a package source ($f)"
+  printf 'deb [check-valid-until=no] http://archive.debian.org/%s main\n' \
+    "debian $code" "debian $code-updates" "debian-security $code-security" > "$f" || return 1
+  apt-get "${APT_OPTS[@]}" update -qq || true
+}
+
 install_packages() {
   local pkgs=(python3 openssl tar unzip nftables ca-certificates)
   command -v curl >/dev/null 2>&1 || pkgs+=(curl)     # RHEL ships curl-minimal, which conflicts with "curl"
+  command -v find >/dev/null 2>&1 || pkgs+=(findutils)            # minimal RHEL-family images lack it
+  if ! command -v useradd >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null; then pkgs+=(passwd)
+    elif command -v dnf >/dev/null || command -v yum >/dev/null; then pkgs+=(shadow-utils)
+    else pkgs+=(shadow); fi
+  fi
   say "installing system packages"
   local failed="could not install the system packages (${pkgs[*]}); the package manager's message is above"
   if command -v apt-get >/dev/null; then
@@ -90,7 +109,9 @@ install_packages() {
     # keep locally changed config files without asking, and never stop at needrestart's service dialog
     export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l
     apt-get "${APT_OPTS[@]}" update -qq || true
-    apt-get "${APT_OPTS[@]}" install -y -qq "${pkgs[@]}" >/dev/null || die "$failed"
+    apt-get "${APT_OPTS[@]}" install -y -qq "${pkgs[@]}" >/dev/null \
+      || { debian_archive_sources && apt-get "${APT_OPTS[@]}" install -y -qq "${pkgs[@]}" >/dev/null; } \
+      || die "$failed"
   elif command -v dnf >/dev/null; then dnf install -y -q "${pkgs[@]}" >/dev/null || die "$failed"
   elif command -v yum >/dev/null; then yum install -y -q "${pkgs[@]}" >/dev/null || die "$failed"
   elif command -v zypper >/dev/null; then zypper -nq install "${pkgs[@]}" >/dev/null || die "$failed"
@@ -116,6 +137,9 @@ install_packages() {
 }
 
 ROUTE4=/proc/net/route
+LOCK=/run/vps2vpn-install.lock
+OS_RELEASE=/etc/os-release
+APT_SOURCES=/etc/apt/sources.list.d
 no_ipv4() {  # -> 0 if this machine has no IPv4 default route (an IPv6-only VPS)
   [ -r "$ROUTE4" ] || return 1
   ! awk 'NR > 1 && $2 == "00000000" {f = 1} END {exit !f}' "$ROUTE4"
@@ -632,7 +656,8 @@ do_uninstall() {
 one_at_a_time() {   # a retried or double-clicked deploy must not run two installs over each other
   [ "$(id -u)" = 0 ] || return 0
   command -v flock >/dev/null 2>&1 || return 0
-  exec 9>/run/vps2vpn-install.lock 2>/dev/null || return 0
+  # braces: a bare "exec 9>f 2>/dev/null" would send the rest of the installer's errors to /dev/null too
+  { exec 9>"$LOCK"; } 2>/dev/null || return 0
   if ! flock -n 9; then
     say "another vps2vpn install is running; waiting for it (up to 10 minutes)"
     flock -w 600 9 || die "another vps2vpn install is still running"

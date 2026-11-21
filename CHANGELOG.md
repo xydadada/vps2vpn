@@ -35,6 +35,18 @@
 - The admin panel refresh (`/api/state`), the once-a-minute quota/expiry check and `/expiring` build the invite index once instead of once per account (was O(n²)); the panel refresh no longer starts `openssl` each time to read the certificate names (cached until the file changes).
 - Traffic readings are written in one batched statement, and lookups that only need ids or names no longer load full account rows.
 
+**Installer**
+- RHEL/Rocky/Alma 8 and openSUSE Leap 15, whose `python3` is 3.6, get a newer Python installed next to it; the panel service, the `vps2vpn` command and `restore.sh` run on the Python the installer chose.
+- apt waits up to 5 minutes for the dpkg lock (unattended-upgrades on a VPS's first boot) instead of failing, keeps locally changed config files without asking, and never stops at needrestart's dialog.
+- The installer's error messages are visible again: taking the install lock used to send every later error to `/dev/null`, so a failing install ended without a word. A failed package install says so too.
+- `vps2vpn init` no longer crashes (and fails the install) on a system without `modprobe`, `sysctl` or `ss`; the installer also adds `kmod`, `procps`, `iproute2`, `findutils` and `useradd` where a minimal image lacks them.
+- Debian 11 is past its end of life and its updates moved to archive.debian.org: when apt gets 404s there, the installer adds the archive as a package source once and retries.
+- systemd older than 245 (RHEL/Rocky/Alma 8) no longer logs `ProtectClock` / `ProtectKernelLogs` as unknown settings in the units.
+- An IPv6-only server that cannot download from GitHub is told why and what to do.
+
+**CI**
+- New `install-distros` job: the real `install.sh` in systemd containers of Debian 11/12, Ubuntu 20.04/22.04/24.04, AlmaLinux 9 and Rocky Linux 8 — fresh install, the panel answers on its port, the cores run unprivileged, an upgrade takes a snapshot and keeps the database, rollback, uninstall and reinstall (`tests/container_install.sh`, also runnable locally with Docker).
+
 ## 0.2.7
 
 Review PRs #50, #52, #57, #58, #61, #62, #64, #66 and issues #67–#71.

@@ -27,6 +27,10 @@ py() {  # code [args] -> run with the Python the installer chose for the panel (
 setting() { py 'import sys; from vps2vpn import db; print(db.settings()[sys.argv[1]])' "$1"; }
 
 case "$IMAGE" in        # just enough to boot systemd; a real VPS image has at least this
+  debian:11)            # end of life: its updates are on archive.debian.org only (install.sh must cope by itself)
+    A=/etc/apt/sources.list.d/ci-archive.list
+    PREP="printf 'deb [check-valid-until=no] http://archive.debian.org/%s main\\n' 'debian bullseye' 'debian-security bullseye-security' > $A && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv dbus >/dev/null && rm -f $A && apt-get update -qq"
+    INIT=/lib/systemd/systemd ;;
   debian:*|ubuntu:*)
     PREP='apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd systemd-sysv dbus >/dev/null && rm -rf /var/lib/apt/lists/*'
     INIT=/lib/systemd/systemd ;;
