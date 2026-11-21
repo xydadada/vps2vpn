@@ -258,6 +258,47 @@ def _connect_node_targets(targets, timeout, source_address=None):
     raise last_error or OSError('node has no reachable public address')
 
 
+def _valid_sync_id(rid):
+    return (isinstance(rid, str) and 1 <= len(rid) <= 19 and
+            rid.isascii() and rid.isdecimal() and rid[0] != '0' and int(rid) <= db.MAX_SQLITE_INT)
+
+
+def _valid_remote_info(info):
+    """Only check metadata that subscription.server_nodes and routing directly consume."""
+    host = info.get('public_host')
+    if not isinstance(host, str) or not host.strip() or len(host) > 255 or any(ord(c) < 33 or ord(c) == 127 for c in host):
+        return False
+    if any(type(info.get(k)) is not bool for k in ('hy2_enabled', 'reality_enabled')):
+        return False
+    if any(k in info and type(info[k]) is not bool for k in ('tuic_enabled', 'ipv6_nodes', 'hy2_hop')):
+        return False
+    if 'public_ipv6' in info and not isinstance(info['public_ipv6'], str):
+        return False
+    if 'ai_score' in info and (type(info['ai_score']) is not int or not -1 <= info['ai_score'] <= 4):
+        return False
+    tls = info.get('tls')
+    if tls is not None:
+        if not isinstance(tls, dict) or set(tls) - {'sni', 'pin', 'pem'}:
+            return False
+        if tls and (not isinstance(tls.get('sni'), str) or not tls['sni']):
+            return False
+        if any(k in tls and not isinstance(tls[k], str) for k in ('pin', 'pem')):
+            return False
+    def port(key):
+        return type(info.get(key)) is int and 1 <= info[key] <= 65535
+    if info['hy2_enabled']:
+        if not port('hy2_port') or not isinstance(info.get('hy2_obfs'), str) or type(info.get('hy2_hop')) is not bool:
+            return False
+        if info['hy2_hop'] and not isinstance(info.get('hy2_hop_range'), str):
+            return False
+    if info['reality_enabled']:
+        if not port('reality_port') or any(not isinstance(info.get(k), str) for k in ('reality_target', 'reality_public_key', 'reality_short_id')):
+            return False
+    if info.get('tuic_enabled') and not port('tuic_port'):
+        return False
+    return True
+
+
 def _validate_sync_answer(ans):
     """Refuse an HTTP 200 conflict or malformed snapshot before any state change."""
     if not isinstance(ans, dict):
@@ -269,11 +310,15 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid %s' % key)
     if 'health' in ans and not isinstance(ans['health'], dict):
         raise SyncError('node sync response has invalid health')
+    for rid, local_id in ans['idmap'].items():
+        if not _valid_sync_id(rid) or type(local_id) is not int or not 0 < local_id <= db.MAX_SQLITE_INT:
+            raise SyncError('node sync response has invalid idmap')
+    # No subscribed users: an older node may omit unused protocol metadata.
+    if ans['idmap'] and not _valid_remote_info(ans['info']):
+        raise SyncError('node sync response has invalid info')
     for rid, pair in ans['traffic'].items():
         # Reject aliases ("01", "+1") before they can bill the same user twice.
-        if (not isinstance(rid, str) or not 1 <= len(rid) <= 19 or
-                not rid.isascii() or not rid.isdecimal() or rid[0] == '0' or
-                int(rid) > db.MAX_SQLITE_INT):
+        if not _valid_sync_id(rid):
             raise SyncError('node sync response has invalid traffic user ID')
         if (not isinstance(pair, (list, tuple)) or len(pair) != 2 or
                 any(type(v) is not int or not 0 <= v <= db.MAX_SQLITE_INT for v in pair)):
