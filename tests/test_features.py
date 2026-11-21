@@ -504,6 +504,50 @@ class RuleMirrorDownloads(tu.Base):
 
 
 class MonitorSpeed(unittest.TestCase):
+    def test_background_runner_forwards_speed_refresh_to_sampler(self):
+        for force in (False, True):
+            with self.subTest(force_speed=force):
+                with mock.patch.object(monitor, 'run_once', return_value={'sites': {}}) as sampler, \
+                     mock.patch.object(monitor.threading, 'Thread') as worker:
+                    worker.return_value.start.side_effect = lambda: worker.call_args.kwargs['target']()
+                    monitor.run_in_background(log=lambda _: None, with_speed=force)
+                sampler.assert_called_once_with(force_speed=force)
+
+    def test_busy_monitor_is_skipped_without_spawning_a_thread(self):
+        with monitor._run_lock:
+            with mock.patch.object(monitor.threading, 'Thread') as worker:
+                self.assertFalse(monitor.run_in_background(log=lambda _: None, with_speed=True))
+            worker.assert_not_called()
+
+    def test_scheduler_retries_unaccepted_forced_speed_check(self):
+        scheduler = jobs.Scheduler()
+        original_due = scheduler.due
+        def monitor_only_due(name, interval):
+            return original_due(name, interval) if name in ('monitor', 'monitor_speed') else False
+
+        settings = {'setup_done': True, 'monitor_enabled': True, 'abuse_guard': False}
+        with mock.patch.object(jobs.db, 'settings', return_value=settings), \
+             mock.patch.object(jobs.paths, 'LIVE', True), \
+             mock.patch.object(scheduler, 'due', side_effect=monitor_only_due), \
+             mock.patch.object(jobs.monitor, 'run_in_background', side_effect=[False, True]) as launch:
+            scheduler.tick()
+            self.assertNotIn('monitor', scheduler.last)
+            self.assertNotIn('monitor_speed', scheduler.last)
+            scheduler.tick()
+            self.assertIn('monitor', scheduler.last)
+            self.assertIn('monitor_speed', scheduler.last)
+        self.assertEqual(launch.call_count, 2)
+        self.assertEqual(launch.call_args_list[0].kwargs, {'with_speed': True})
+        self.assertEqual(launch.call_args_list[1].kwargs, {'with_speed': True})
+
+    def test_thread_start_failure_releases_monitor_reservation(self):
+        with mock.patch.object(monitor.threading, 'Thread') as worker:
+            worker.return_value.start.side_effect = RuntimeError('thread unavailable')
+            with self.assertRaisesRegex(RuntimeError, 'thread unavailable'):
+                monitor.run_in_background(log=lambda _: None, with_speed=True)
+        self.assertTrue(monitor._run_lock.acquire(blocking=False))
+        monitor._run_lock.release()
+
     def measure(self, packet):
         class FakeSocket:
             def __init__(self, response):
