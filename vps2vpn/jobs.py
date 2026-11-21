@@ -405,7 +405,10 @@ class History:
         if load:
             try:
                 with open(self.path) as f:
-                    self.points = [p for p in json.load(f) if isinstance(p, list) and len(p) == 5][-self.KEEP:]
+                    saved = json.load(f)
+                if not isinstance(saved, list):
+                    raise ValueError('history cache must be a list')
+                self.points = [p for p in saved if isinstance(p, list) and len(p) == 5][-self.KEEP:]
             except (OSError, ValueError):
                 pass
 
