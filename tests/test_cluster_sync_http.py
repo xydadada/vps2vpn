@@ -53,6 +53,9 @@ class NodeSyncHttpErrors(tu.Base):
         legacy_tls = {'ok': True, 'info': dict(info, tls={}),
                       'idmap': {rid: 42}, 'traffic': {}}
         self.assertIs(cluster._validate_sync_answer(legacy_tls), legacy_tls)
+        minimal_tls = {'ok': True, 'info': dict(info, tls={'sni': 'node.example'}),
+                       'idmap': {rid: 42}, 'traffic': {}}
+        self.assertIs(cluster._validate_sync_answer(minimal_tls), minimal_tls)
         old = {'id': '11111111', 'name': 'old-good', 'url': 'https://node.example/panel',
                'key': 'key', 'pin': 'aa' * 32, 'info': info, 'idmap': {rid: 42},
                'seen': {rid: [9, 10]}, 'fail_count': 0}
@@ -62,6 +65,7 @@ class NodeSyncHttpErrors(tu.Base):
             dict(info, hy2_hop_range=[]),
             dict(info, reality_enabled=True, reality_public_key=None),
             dict(info, tls=['invalid']),
+            dict(info, tls={'pin': 'ab' * 32}),
             dict(info, ai_score='invalid'),
             dict(info, ipv6_nodes=True, public_ipv6=[]),
         )
