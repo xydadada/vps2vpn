@@ -1602,8 +1602,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 notify.send('new account %s (invite code) / 新用户 %s 通过邀请码注册' % (db.user(uid)['name'], db.user(uid)['name']),
                             key='reg-%d' % uid)
                 apply_async()
+            # Password or subscription-token rotation may have revoked sessions
+            # while PBKDF2 ran. Recheck the account and mint the cookie atomically.
+            with db.transaction():
+                current = db.user(uid)
+                stale = current is None or (api == 'login' and any(
+                    current[k] != cand[k] for k in ('name', 'login_hash', 'sub_token', 'uuid')))
+                session = None if stale else db.new_member_session(uid)
+            if stale:
+                return self.json({'error': 'account credentials changed; retry'}, 409)
             self._release_attempt()
-            return self.json({'ok': True}, headers={'Set-Cookie': self.member_cookie(db.new_member_session(uid))})
+            return self.json({'ok': True}, headers={'Set-Cookie': self.member_cookie(session)})
         if u is None:
             return self.json({'error': 'login required'}, 401)
         if api == 'logout' and not by_link:
