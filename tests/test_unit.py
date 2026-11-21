@@ -453,6 +453,48 @@ class Ops(Base):
         self.assertLessEqual(len(notify._recent), 1000)
         self.assertFalse(any(token in repr(key) for key in notify._recent))
 
+    def test_notify_parallel_sends_reserve_one_in_flight_key(self):
+        token = '1234567:' + 'd' * 35
+        db.set_settings(tg_token=token, tg_chat='321', tg_verified=True)
+        entered, release = threading.Event(), threading.Event()
+        sent, outcomes = [], []
+
+        def blocking_call(bot, method, params):
+            sent.append(params['chat_id'])
+            entered.set()
+            release.wait(timeout=3)
+            return {'ok': True}
+
+        with mock.patch.object(notify, '_call', side_effect=blocking_call):
+            worker = threading.Thread(
+                target=lambda: outcomes.append(notify.send('down', key='parallel-alert')),
+                daemon=True,
+            )
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(timeout=2), 'first alert did not start')
+                self.assertFalse(notify.send('down', key='parallel-alert'))
+                # Changing a verified destination while the old one is in
+                # flight must not suppress the new owner's first warning.
+                db.set_settings(tg_chat='654', tg_verified=True)
+                self.assertTrue(notify.send('down', key='parallel-alert'))
+            finally:
+                release.set()
+                worker.join(timeout=3)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(outcomes, [True])
+        self.assertEqual(sent, ['321', '654'])
+        self.assertEqual(len(notify._pending), 0)
+
+    def test_failed_notification_does_not_keep_in_flight_reservation(self):
+        db.set_settings(tg_token='1234567:' + 'e' * 35, tg_chat='890', tg_verified=True)
+        with mock.patch.object(notify, '_call', side_effect=OSError('offline')):
+            self.assertFalse(notify.send('down', key='retry-after-failure'))
+        self.assertEqual(len(notify._pending), 0)
+        with mock.patch.object(notify, '_call', return_value={'ok': True}) as sender:
+            self.assertTrue(notify.send('down', key='retry-after-failure'))
+            sender.assert_called_once()
+
     def test_bot_commands_only_from_the_owner_in_a_private_chat(self):
         ok = notify._owner_private_message
         self.assertTrue(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 5}}, '5'))
