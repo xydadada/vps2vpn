@@ -466,6 +466,65 @@ class AdminWeb(tu.Base):
         self.assertEqual(db.settings()['admin_totp'], '')
 
 
+    def _login_paused_during_auth_change(self, change):
+        """Hold a real HTTPS login after its old settings snapshot was read."""
+        self.assertEqual(self.login()[0], 200)
+        entered, resume = threading.Event(), threading.Event()
+        result = []
+        original_check = secure.check_password
+        worker = None
+
+        def slow_password_check(password, stored):
+            if threading.current_thread() is worker:
+                entered.set()
+                if not resume.wait(5):
+                    raise RuntimeError('login race test timed out')
+            return original_check(password, stored)
+
+        def old_login():
+            result.append(self.req('POST', '/adm/api/login',
+                                   {'username': 'admin', 'password': 'adminpassword'}))
+
+        worker = threading.Thread(target=old_login, daemon=True)
+        with mock.patch.object(secure, 'check_password', side_effect=slow_password_check):
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5), 'old login never reached password validation')
+                change()
+            finally:
+                resume.set()
+                worker.join(5)
+        self.assertFalse(worker.is_alive(), 'old login did not complete')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], 409, result[0][1])
+        self.assertEqual(json.loads(result[0][1])['error'], 'login settings changed; retry')
+        self.assertTrue(db.session_ok(self.cookie.split('=', 1)[1]))
+
+    def test_pending_password_only_login_cannot_outrun_totp_enrollment(self):
+        secret = secure.totp_secret()
+
+        def enable():
+            st, body, _ = self.req('POST', '/adm/api/totp',
+                                    {'secret': secret, 'code': secure.totp(secret)})
+            self.assertEqual(st, 200, body)
+
+        self._login_paused_during_auth_change(enable)
+        self.cookie = ''
+        st, body, _ = self.login()
+        self.assertEqual((st, json.loads(body)['error']), (403, 'totp_required'))
+        self.assertEqual(self.login(code=secure.totp(secret))[0], 200)
+
+    def test_pending_old_password_login_cannot_outrun_password_change(self):
+        def change_password():
+            st, body, _ = self.req('POST', '/adm/api/password',
+                                    {'old': 'adminpassword', 'new': 'newadminpassword'})
+            self.assertEqual(st, 200, body)
+
+        self._login_paused_during_auth_change(change_password)
+        self.cookie = ''
+        self.assertEqual(self.login()[0], 403)
+        self.assertEqual(self.login(password='newadminpassword')[0], 200)
+
     def test_parallel_totp_disable_cannot_erase_successful_enrollment(self):
         self.login()
         new_secret = secure.totp_secret()
