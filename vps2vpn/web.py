@@ -1269,7 +1269,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         prefix = re.sub(r'[\s\x00-\x1f\x7f]+', '', str(d.get('prefix', '')))[:24]
         try:
             count = int(d.get('count', 0))
-        except (TypeError, ValueError, OverflowError):
+        except (TypeError, ValueError):
             return self.json({'error': 'invalid number'}, 400)
         if not prefix or not 1 <= count <= 200:
             return self.json({'error': 'prefix and a count of 1-200 required'}, 400)
