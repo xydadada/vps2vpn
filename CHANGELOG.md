@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+**For the owner**
+- Telegram reminds you when an account ends: 3 days before and again the day before (working accounts only; extending it and letting it run out again reminds you again). New bot command `/expiring` lists accounts that end within 7 days or have used 80% of their quota.
+
+**Subscriptions**
+- A working account that ends within 7 days or has used 90% of its quota (after what it shares with invitees) gets an `Announce` line in its app saying so (Happ, Hiddify, Streisand… show it), the same heads-up as on the member page.
+- How often apps refresh the subscription (`Profile-Update-Interval`) is a setting now: 1–168 hours, default 12 as before.
+
 ## 0.2.7
 
 Review PRs #50, #52, #57, #58, #61, #62, #64, #66 and issues #67–#71.

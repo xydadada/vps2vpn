@@ -1691,6 +1691,52 @@ class SubscriptionUX(tu.Base):
             self.assertIn('请联系管理员', self._decode(h['Announce']))
             h['Announce'].encode('ascii')
 
+    def test_heads_up_announce_for_a_working_account(self):
+        s = db.settings()
+        now = time.time()
+        u = mk('soon', 10, expire_at=int(now + 2.5 * 86400))
+        _, _, h = subscription.render('links', s, u, 'https://x')
+        text = self._decode(h['Announce'])
+        self.assertIn('3 天后到期', text)
+        self.assertIn('expires in 3 day(s)', text)
+        self.assertIn('请联系管理员', text)
+        h['Announce'].encode('ascii')
+        # far away, never, already past: nothing to say (a past date is the stopped-account text's job)
+        for exp in (int(now + 30 * 86400), 0):
+            _, _, h = subscription.render('clash', s, dict(u, expire_at=exp), 'https://x')
+            self.assertNotIn('Announce', h, exp)
+        self.assertIsNone(subscription.warning_text(dict(u, expire_at=int(now - 60))))
+        # 90% of the quota used: how much is left
+        low = dict(u, expire_at=0, used_down=int(9.5 * (1 << 30)))
+        text = self._decode(subscription.render('singbox', s, low, 'https://x')[2]['Announce'])
+        self.assertIn('0.50 GB', text)
+        self.assertIn('流量只剩', text)
+        self.assertNotIn('Announce', subscription.render('links', s, dict(low, used_down=8 << 30), 'https://x')[2])
+        # the effective quota counts: 8 GB used of 10 is fine, of 10 minus 1.5 shared with an invitee it is not
+        self.assertIn('Announce', subscription.render('links', s, dict(low, used_down=8 << 30), 'https://x', 8.5)[2])
+        self.assertNotIn('Announce', subscription.render('links', s, dict(low, quota_gb=0), 'https://x')[2])
+        both = subscription.warning_text(dict(low, expire_at=int(now + 86400)))
+        self.assertIn('到期', both[0])
+        self.assertIn('GB of data left', both[1])
+        # a stopped account keeps its own reason, not the heads-up
+        off = dict(low, enabled=0, disabled_reason='quota')
+        self.assertIn('Quota used up', self._decode(subscription.render('links', s, off, 'https://x')[2]['Announce']))
+
+    def test_update_interval_setting(self):
+        s = db.settings()
+        self.assertEqual(s['sub_update_hours'], 12)
+        u = mk('upd')
+        self.assertEqual(subscription.render('links', s, u, 'https://x')[2]['Profile-Update-Interval'], '12')
+        for ok in (1, 6, '24', 168):
+            self.assertEqual(web.validate_settings({'sub_update_hours': ok}, s), {'sub_update_hours': int(ok)})
+        for bad in (0, -1, 169, 'often', None, 1e400, '1.5', 1.5, True):
+            self.assertIsInstance(web.validate_settings({'sub_update_hours': bad}, s), str, bad)
+        db.set_settings(sub_update_hours=6)
+        self.assertEqual(subscription.render('clash', db.settings(), u, 'https://x')[2]['Profile-Update-Interval'], '6')
+        # a bad value that got stored anyway (old backup, edited database) falls back to 12
+        for bad in (0, 5000, 'x', None):
+            self.assertEqual(subscription.update_hours(dict(s, sub_update_hours=bad)), 12, bad)
+
     def test_support_url_validation(self):
         s = db.settings()
         for ok in ('https://t.me/help', 'http://example.org/support?x=1', 'tg://resolve?domain=helpdesk', ''):
@@ -1864,6 +1910,32 @@ class SubscriptionUXWeb(tu.Base):
         self.assertEqual(r.getheader('Support-Url'), 'tg://resolve?domain=help')
         st, body, _ = self.req('POST', '/adm/api/settings', {'support_url': 'https://a.b/\r\nX: y'})
         self.assertEqual(st, 400)
+
+    def test_heads_up_and_interval_over_https(self):
+        u = mk('ending', 10, expire_at=int(time.time() + 86400 + 600))
+        path = '/s/%s' % u['sub_token']
+        st, _, r = self.req('GET', path, headers={'User-Agent': 'Happ/1.0'})
+        self.assertEqual(st, 200)
+        self.assertIn('expires in 2 day(s)', self._b64(r.getheader('Announce')))
+        self.assertEqual(r.getheader('Profile-Update-Interval'), '12')
+        st, body, _ = self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
+        self.assertEqual(st, 200, body)
+        st, body, _ = self.req('POST', '/adm/api/settings', {'sub_update_hours': 3})
+        self.assertEqual(st, 200, body)
+        st, _, r = self.req('GET', path, headers={'User-Agent': 'Happ/1.0'})
+        self.assertEqual(r.getheader('Profile-Update-Interval'), '3')
+        st, body, _ = self.req('GET', '/adm/api/state')
+        self.assertEqual(json.loads(body)['settings']['sub_update_hours'], 3)
+        st, _, _ = self.req('POST', '/adm/api/settings', {'sub_update_hours': 999})
+        self.assertEqual(st, 400)
+        # a member who shares part of the quota is warned against what is left to them
+        inv = mk('inv', 2, invited_by=u['id'], invite_deduct=1.5)
+        db.update_user(u['id'], expire_at=0, used_down=int(8 * (1 << 30)))
+        st, _, r = self.req('GET', path, headers={'User-Agent': 'Happ/1.0'})
+        self.assertIn('0.50 GB', self._b64(r.getheader('Announce')))
+        db.update_user(inv['id'], invite_deduct=0)
+        st, _, r = self.req('GET', path, headers={'User-Agent': 'Happ/1.0'})
+        self.assertIsNone(r.getheader('Announce'))
 
     def test_disabled_user_over_https(self):
         u = mk('gone', 1, enabled=0, disabled_reason='quota')

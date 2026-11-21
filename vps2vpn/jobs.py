@@ -198,6 +198,72 @@ def renew_reminder(s, now=None):
     return step
 
 
+# --- accounts about to expire ---------------------------------------------------------------------
+ACCOUNT_REMIND_DAYS = (3, 1)        # Telegram heads-up to the owner this many days before an account ends
+
+
+def _days_until(ts, now):
+    """Whole calendar days from today to the day of `ts` (local time): 0 = today, 1 = tomorrow."""
+    a, b = time.localtime(now), time.localtime(ts)
+    start = time.mktime((a.tm_year, a.tm_mon, a.tm_mday, 0, 0, 0, 0, 0, -1))
+    end = time.mktime((b.tm_year, b.tm_mon, b.tm_mday, 0, 0, 0, 0, 0, -1))
+    return int(round((end - start) / 86400))
+
+
+def expiry_reminders(now=None):
+    """Tell the owner (Telegram) about working accounts that end within 3 days, and again the day before.
+
+    Accounts of a main server are left to it, paused ones were already reported, and "N days from first
+    use" accounts have no date yet. The key names the expiry date, so an account that is extended and
+    later runs out again is reminded again. Returns [(user name, step)] for the reminders due."""
+    now = now or time.time()
+    out = []
+    for u in db.users():
+        exp = u['expire_at']
+        if u['remote_id'] or not u['enabled'] or not exp or exp <= now:
+            continue
+        left = _days_until(exp, now)
+        step = next((d for d in sorted(ACCOUNT_REMIND_DAYS) if left <= d), None)
+        if step is None:
+            continue
+        date = time.strftime('%Y-%m-%d %H:%M', time.localtime(exp))
+        when = 'today' if left <= 0 else 'tomorrow' if left == 1 else 'in %d days' % left
+        when_zh = '今天' if left <= 0 else '明天' if left == 1 else '%d 天后' % left
+        notify.send('%s expires %s (%s) / %s %s到期（%s），需要续期请在面板里延长' % (
+            u['name'], when, date, u['name'], when_zh, date), key='uexp%d-%d-%d' % (step, u['id'], exp), every=40 * 86400)
+        out.append((u['name'], step))
+    return out
+
+
+def tg_expiring(s, now=None, days=7):
+    """/expiring: working accounts that end within `days` days or have used 80% of their quota."""
+    zh = s['language'] != 'en'
+    now = now or time.time()
+    users = db.users()
+    soon, low = [], []
+    for u in users:
+        if u['remote_id'] or not u['enabled']:
+            continue
+        if u['expire_at'] and now < u['expire_at'] <= now + days * 86400:
+            soon.append(u)
+        quota = members.effective_quota(u, users, now)
+        if quota and u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
+            low.append((u, quota))
+    lines = []
+    if soon:
+        lines.append(('%d 天内到期：' if zh else 'Ending within %d days:') % days)
+        for u in sorted(soon, key=lambda u: u['expire_at']):
+            lines.append('⏳ %s  %s' % (u['name'], time.strftime('%Y-%m-%d %H:%M', time.localtime(u['expire_at']))))
+    if low:
+        lines.append('流量快用完（≥80%）：' if zh else 'Almost out of data (80% or more):')
+        for u, quota in sorted(low, key=lambda x: -(x[0]['used_up'] + x[0]['used_down']) / x[1]):
+            used = (u['used_up'] + u['used_down']) / (1 << 30)
+            lines.append('📉 %s  %.2f / %g GB' % (u['name'], used, quota))
+    if not lines:
+        return ('%d 天内没有要到期或快用完流量的账号' if zh else 'Nothing ends or runs out within %d days') % days
+    return '\n'.join(lines)
+
+
 # --- lines the apps cannot reach ---------------------------------------------------------------
 LINES = {'reality': ('reality_port', 'tcp', 'VLESS + REALITY'),
          'hy2': ('hy2_port', 'udp', 'Hysteria 2'),
@@ -537,6 +603,8 @@ def tg_command(text):
         return tg_users(s)
     if cmd == '/user':
         return tg_users(s, arg.strip()) if arg.strip() else ('用法：/user 名字' if zh else 'Usage: /user NAME')
+    if cmd == '/expiring':
+        return tg_expiring(s)
     if cmd == '/backup':
         data = json.dumps(db.export_all(), ensure_ascii=False).encode()
         return ('file', 'vps2vpn-%s.json' % time.strftime('%Y%m%d-%H%M'), data,
@@ -549,8 +617,8 @@ def tg_command(text):
         return '\n'.join('❌ %s: %s' % (r['id'], r.get('fix') or r.get('detail', '')) for r in bad)
     if cmd == '/ai':
         return ai_text(aicheck.run())
-    return ('可用命令：\n/status 服务器状态\n/users 使用者用量\n/user 名字 某个人的详情\n/doctor 一键体检\n/ai AI 可用性检测\n/backup 发送备份' if zh else
-            'Commands:\n/status server status\n/users usage per user\n/user NAME one user\n/doctor health check\n/ai AI availability\n/backup send a backup')
+    return ('可用命令：\n/status 服务器状态\n/users 使用者用量\n/user 名字 某个人的详情\n/expiring 快到期或快用完的账号\n/doctor 一键体检\n/ai AI 可用性检测\n/backup 发送备份' if zh else
+            'Commands:\n/status server status\n/users usage per user\n/user NAME one user\n/expiring accounts ending or running out soon\n/doctor health check\n/ai AI availability\n/backup send a backup')
 
 
 def ai_text(res):
@@ -666,6 +734,7 @@ class Scheduler:
             rules.refresh_in_background(log)
         if self.due('renew', 3600):
             renew_reminder(s)
+            expiry_reminders()
         if self.due('watchdog', 300) and paths.LIVE:
             watchdog(s)
         if self.due('ip', 6 * 3600) or self.ipwatch.seen:

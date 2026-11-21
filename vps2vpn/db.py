@@ -144,6 +144,7 @@ DEFAULTS = {
     'member_invites': True,     # members may share part of their quota through invite codes
     'member_requests': True,    # members may ask the admin for more quota
     'member_notice': '',        # short message from the admin shown at the top of every member page
+    'sub_update_hours': 12,     # Profile-Update-Interval: how often apps refresh the subscription (1-168 h)
     'support_url': '',          # http(s):// or tg:// link apps show as "support" (Support-Url header); empty = none
     # Server-wide monthly traffic (many providers bill or cap it)
     'server_cap_gb': 0,         # 0 = no cap; alerts at 80% and 100%

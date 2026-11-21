@@ -38,6 +38,80 @@ class Renewal(tu.Base):
         self.assertEqual(jobs.renew_reminder(dict(s, vps_renew_at='bad'), now + day), None)
 
 
+class AccountExpiry(tu.Base):
+    def setUp(self):
+        super().setUp()
+        self.sent = []
+        self._send = notify.send
+        notify.send = lambda text, key=None, every=0, **kw: self.sent.append((key, text))
+
+    def tearDown(self):
+        notify.send = self._send
+        super().tearDown()
+
+    def test_reminders_three_days_and_one_day_before(self):
+        now = time.mktime((2026, 11, 20, 15, 0, 0, 0, 0, -1))
+        day = 86400
+        at = lambda d, h=12: int(time.mktime((2026, 11, 20 + d, h, 0, 0, 0, 0, -1)))
+        a = tf.mk('alice', expire_at=at(3))
+        tf.mk('far', expire_at=at(5))
+        tf.mk('never')
+        tf.mk('gone', expire_at=int(now - 60))                         # already over: the pause alert says so
+        tf.mk('paused', expire_at=at(1), enabled=0, disabled_reason='manual')
+        tf.mk('node-acc', expire_at=at(1), remote_id=7)                # the main server reminds its own accounts
+        tf.mk('first-use', expire_after_days=30)                       # no date until first used
+        self.assertEqual(jobs.expiry_reminders(now), [('alice', 3)])
+        key, text = self.sent[-1]
+        self.assertEqual(key, 'uexp3-%d-%d' % (a['id'], at(3)))
+        self.assertIn('alice expires in 3 days (2026-11-23 12:00)', text)
+        self.assertIn('alice 3 天后到期', text)
+        self.assertEqual(jobs.expiry_reminders(now + day)[0], ('alice', 3))          # same key: notify dedups
+        self.assertEqual(self.sent[-1][0], key)
+        self.assertEqual(jobs.expiry_reminders(now + 2 * day), [('alice', 1), ('far', 3)])
+        text = [t for k, t in self.sent if k.startswith('uexp1-%d-' % a['id'])][-1]
+        self.assertIn('alice expires tomorrow', text)
+        self.assertIn('明天', text)
+        self.assertIn(('alice', 1), jobs.expiry_reminders(now + 3 * day - 5 * 3600))     # 10:00, ends at 12:00
+        self.assertIn('alice expires today', [t for k, t in self.sent if k.startswith('uexp1-%d-' % a['id'])][-1])
+        # extended: a new date is a new reminder
+        db.update_user(a['id'], expire_at=at(33))
+        self.assertEqual(jobs.expiry_reminders(now + 30 * day), [('alice', 3)])
+        self.assertEqual(self.sent[-1][0], 'uexp3-%d-%d' % (a['id'], at(33)))
+
+    def test_scheduler_runs_reminders_hourly(self):
+        db.set_settings(setup_done=True)
+        tf.mk('soon', expire_at=int(time.time() + 86400))
+        sch = jobs.Scheduler()
+        for name in ('collect', 'traffic', 'abuse', 'monitor', 'cert', 'rules', 'rules-missing', 'watchdog', 'ip', 'aicheck', 'backup'):
+            sch.last[name] = time.monotonic()
+        sch.tick()
+        self.assertTrue(any(k.startswith('uexp1-') for k, _ in self.sent), self.sent)
+        n = len(self.sent)
+        sch.tick()                                                     # not again within the hour
+        self.assertEqual(len(self.sent), n)
+
+    def test_expiring_command(self):
+        GIB = 1 << 30
+        now = time.time()
+        tf.mk('later', 10, expire_at=int(now + 6 * 86400))
+        tf.mk('sooner', 0, expire_at=int(now + 86400))
+        tf.mk('heavy', 10, used_down=9 * GIB)
+        tf.mk('fine', 10, used_down=GIB, expire_at=int(now + 60 * 86400))
+        tf.mk('stopped', 10, used_down=10 * GIB, enabled=0, disabled_reason='quota')
+        out = jobs.tg_command('/expiring')
+        self.assertLess(out.index('sooner'), out.index('later'))        # soonest first
+        self.assertIn('heavy  9.00 / 10 GB', out)
+        for name in ('fine', 'stopped'):
+            self.assertNotIn(name, out)
+        db.set_settings(language='en')
+        self.assertIn('Ending within 7 days', jobs.tg_command('/expiring'))
+        self.assertIn('/expiring', jobs.tg_command('/help'))
+        db.delete_user(db.user_by_name('heavy')['id'])
+        for name in ('later', 'sooner'):
+            db.delete_user(db.user_by_name(name)['id'])
+        self.assertEqual(jobs.tg_command('/expiring'), 'Nothing ends or runs out within 7 days')
+
+
 class LineReports(tu.Base):
     def setUp(self):
         super().setUp()

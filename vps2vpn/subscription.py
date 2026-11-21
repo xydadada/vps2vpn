@@ -129,6 +129,48 @@ def status_text(u):
     return STATUS_TEXT.get(u.get('disabled_reason') or '', DISABLED_TEXT)
 
 
+# A working account close to its end: the apps that show `Announce` (Happ, Hiddify, Streisand...) say so,
+# with the same thresholds as the member page.
+WARN_DAYS = 7
+WARN_USED = 0.9
+
+
+def warning_text(u, quota_gb=None, now=None):
+    """(zh, en) heads-up for a working account that expires within WARN_DAYS days or has used WARN_USED of
+    its quota (`quota_gb`: the effective quota, defaults to the account's own), or None."""
+    if not u.get('enabled', 1):
+        return None
+    now = time.time() if now is None else now
+    parts = []
+    exp = int(u.get('expire_at') or 0)
+    if exp and now < exp <= now + WARN_DAYS * 86400:
+        days = max(1, int(-(-(exp - now) // 86400)))          # 1.2 days left reads "2 days"
+        date = time.strftime('%Y-%m-%d', time.localtime(exp))
+        parts.append(('%d 天后到期（%s）' % (days, date), 'expires in %d day(s) on %s' % (days, date)))
+    quota = u.get('quota_gb') if quota_gb is None else quota_gb
+    if quota and quota > 0:
+        total = quota * (1 << 30)
+        used = int(u.get('used_up') or 0) + int(u.get('used_down') or 0)
+        if used >= WARN_USED * total:
+            left = max(0.0, (total - used) / (1 << 30))
+            parts.append(('流量只剩 %.2f GB' % left, '%.2f GB of data left' % left))
+    if not parts:
+        return None
+    return ('，'.join(p[0] for p in parts), '; '.join(p[1] for p in parts))
+
+
+UPDATE_HOURS_DEFAULT = 12
+
+
+def update_hours(s):
+    """Profile-Update-Interval in hours, from the `sub_update_hours` setting (1-168, anything else: 12)."""
+    try:
+        v = int(s.get('sub_update_hours') or UPDATE_HOURS_DEFAULT)
+    except (TypeError, ValueError):
+        return UPDATE_HOURS_DEFAULT
+    return v if 1 <= v <= 168 else UPDATE_HOURS_DEFAULT
+
+
 def placeholder_name(u):
     """Name of the unusable entry a disabled account sees in its app, or '' while it works."""
     st = status_text(u)
@@ -568,11 +610,12 @@ def detect_format(ua, wanted='', accept=None):
     return ''      # a browser: show the landing page
 
 
-def render(fmt, s, u, base_url):
-    """(content_type, body, extra_headers)"""
+def render(fmt, s, u, base_url, quota_gb=None):
+    """(content_type, body, extra_headers). `quota_gb`: the account's effective quota (after what it shares
+    with invitees), used for the low-data heads-up; defaults to its own quota."""
     title = s['node_name'] or 'vps2vpn'
     qname = urllib.parse.quote(title, safe='')
-    headers = {'Subscription-Userinfo': userinfo_header(u), 'Profile-Update-Interval': '12',
+    headers = {'Subscription-Userinfo': userinfo_header(u), 'Profile-Update-Interval': str(update_hours(s)),
                'Content-Disposition': "attachment; filename*=UTF-8''%s" % qname,
                'Profile-Title': header_b64(title),
                # the person's own page (usage, requests); a browser opening the subscription link gets it
@@ -584,6 +627,10 @@ def render(fmt, s, u, base_url):
     st = status_text(u)
     if st:
         headers['Announce'] = header_b64('%s %s - 请联系管理员 / Contact the admin' % st)
+    else:
+        warn = warning_text(u, quota_gb)
+        if warn:
+            headers['Announce'] = header_b64('%s，续期或加流量请联系管理员 / Account %s - contact the admin' % warn)
     if fmt == 'clash':
         return 'text/yaml; charset=utf-8', clash_yaml(s, u, base_url), headers
     if fmt == 'singbox':

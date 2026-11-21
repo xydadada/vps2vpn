@@ -709,7 +709,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                               "script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
         if not u['enabled']:
             s = dict(s, reality_enabled=False, hy2_enabled=False, tuic_enabled=False, servers=[])   # usage header still sent
-        ctype, body, headers = subscription.render(fmt, s, u, base)
+        try:
+            quota_eff = members.effective_quota(u) if u['enabled'] else None
+        except Exception as e:          # only for the heads-up text: never fail the subscription over it
+            jobs.log('could not work out the effective quota: %r' % e)
+            quota_eff = None
+        ctype, body, headers = subscription.render(fmt, s, u, base, quota_eff)
         if self.command == 'GET':
             try:
                 db.record_sub_fetch(u, ua)
@@ -1916,6 +1921,17 @@ def validate_settings(d, s):
         if v and not re.fullmatch(subscription.SUPPORT_URL_RE, v):
             return 'support link must start with http://, https:// or tg:// (one line, no spaces)'
         out['support_url'] = v
+    if 'sub_update_hours' in d:
+        v = d['sub_update_hours']
+        try:
+            if isinstance(v, bool) or (isinstance(v, float) and not v.is_integer()):
+                raise ValueError(v)
+            h = int(v)
+        except (TypeError, ValueError, OverflowError):
+            return 'update interval must be a whole number of hours'
+        if not 1 <= h <= 168:
+            return 'update interval must be 1-168 hours'
+        out['sub_update_hours'] = h
     if 'vps_renew_note' in d:
         out['vps_renew_note'] = str(d['vps_renew_note'] or '').strip()[:40]
     if 'hy2_hop_range' in d:
