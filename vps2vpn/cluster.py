@@ -101,7 +101,7 @@ def parse_join_code(code):
 
 
 def _clean_label(text, limit=24):
-    return re.sub(r'[\x00-\x1f\x7f]', '', str(text or '')).strip()[:limit]
+    return re.sub(r'[\x00-\x1f\x7f\u0085\u2028\u2029]', '', str(text or '')).strip()[:limit]
 
 
 def _remote_name(uname, master, rid, skip_uid=None):
