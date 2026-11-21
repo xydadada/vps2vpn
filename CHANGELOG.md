@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.11
 
 **Client updates**
 - The panel keeps the app installers members download at the newest vps2vpn client release by itself: every 6 hours it asks GitHub for the latest release and fetches the installer each platform updates itself from (the Windows setup program, an Android APK) with its `.sig`. It is published only when that is the release key's signature for it, the same check the app makes. Older copies it fetched itself are removed; installers you put in `/var/lib/vps2vpn/client` by hand stay. Settings → app updates → "Fetch the newest app from GitHub" turns it off. From client 1.0.9 the apps download a newer version in the background and install it with one tap.
