@@ -12,6 +12,7 @@ import os
 import socket
 import sqlite3
 import ssl
+import tempfile
 import threading
 import time
 import unittest
@@ -645,6 +646,38 @@ class MonitorSpeed(unittest.TestCase):
 
 class RuleFileColdCache(tu.Base):
     """Cold Shadowrocket requests must not turn invalid upstream data into a permanent cache."""
+
+    def test_busy_refresh_returns_503_without_occupying_a_worker(self):
+        # A public request must not wait behind a remote fetch holding the
+        # shared refresh lock. Run the request in a thread so the regression
+        # fails within one second rather than hanging the entire test suite.
+        with tempfile.TemporaryDirectory() as directory:
+            filename = os.path.join(directory, 'private.list')
+            sent = []
+            handler = type('HandlerStub', (), {
+                'send': lambda _, *args, **kwargs: sent.append((args, kwargs)),
+                'not_found': lambda _: self.fail('known rule set refused'),
+            })()
+            with mock.patch.object(rules, 'local_file', return_value=filename), \
+                 mock.patch.object(rules, 'fetch_converted', return_value=b'DOMAIN-SUFFIX,example.org\n') as fetch:
+                self.assertTrue(rules._refresh_lock.acquire(blocking=False))
+                try:
+                    worker = threading.Thread(
+                        target=web.Handler.rule_file, args=(handler, 'private', 'list'), daemon=True)
+                    worker.start()
+                    worker.join(timeout=1)
+                    self.assertFalse(worker.is_alive(), 'cold public request blocked behind the refresh lock')
+                    self.assertEqual(sent[-1][0][0], 503)
+                    fetch.assert_not_called()
+                finally:
+                    rules._refresh_lock.release()
+                    worker.join(timeout=2)
+
+                self.assertFalse(os.path.exists(filename))
+                web.Handler.rule_file(handler, 'private', 'list')
+                self.assertEqual(sent[-1][0][0], 200)
+                fetch.assert_called_once()
+                self.assertTrue(os.path.isfile(filename))
 
     def test_empty_converted_rules_do_not_get_cached(self):
         paths.ensure_dirs()

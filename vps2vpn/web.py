@@ -724,21 +724,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         f = rules.local_file(name, fmt)
         if not os.path.exists(f):
             if fmt == 'shadowrocket':     # needs converting, so it cannot be a redirect: fetch it now
-                with rules._refresh_lock:
+                # Do not park every public HTTP worker behind a slow upstream
+                # fetch. The first cold request owns the refresh; all other
+                # callers either use its completed atomic cache or fail fast.
+                if not rules._refresh_lock.acquire(blocking=False):
                     if not os.path.exists(f):
-                        try:
-                            converted = rules.fetch_converted(name, fmt)
-                            # A successful HTTP response can still contain no
-                            # convertible rules (e.g. a CDN's HTML error page).
-                            # Do not make this empty result a persistent 200
-                            # cache entry on the first anonymous request.
-                            rows = converted.splitlines()
-                            prefixes = (b'DOMAIN,', b'DOMAIN-SUFFIX,', b'IP-CIDR,', b'IP-CIDR6,')
-                            if not rows or any(not row.startswith(prefixes) or row.endswith(b',') for row in rows):
+                        return self.send(503, 'rule set not available yet')
+                else:
+                    try:
+                        if not os.path.exists(f):
+                            try:
+                                converted = rules.fetch_converted(name, fmt)
+                                # A successful HTTP response can still contain no
+                                # convertible rules (e.g. a CDN's HTML error page).
+                                # Do not make this empty result a persistent 200
+                                # cache entry on the first anonymous request.
+                                rows = converted.splitlines()
+                                prefixes = (b'DOMAIN,', b'DOMAIN-SUFFIX,', b'IP-CIDR,', b'IP-CIDR6,')
+                                if not rows or any(not row.startswith(prefixes) or row.endswith(b',') for row in rows):
+                                    return self.send(503, 'rule set not available yet')
+                                paths.write_atomic(f, converted, 0o644)
+                            except OSError:
                                 return self.send(503, 'rule set not available yet')
-                            paths.write_atomic(f, converted, 0o644)
-                        except OSError:
-                            return self.send(503, 'rule set not available yet')
+                    finally:
+                        rules._refresh_lock.release()
             else:
                 return self.send(302, '', headers={'Location': rules.upstream_url(name, fmt, cdn=True)})
         with open(f, 'rb') as fh:
