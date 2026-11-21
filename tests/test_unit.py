@@ -64,6 +64,23 @@ class AdminEnabledValues(unittest.TestCase):
                 self.assertEqual(web.user_fields({'enabled': val}), 'enabled: expected true or false')
 
 
+class AdminUserExpiryValidation(unittest.TestCase):
+    def test_rejects_unpersistable_expire_at_before_sqlite_write(self):
+        for raw in ((1 << 63), (1 << 70), '253402300800'):
+            with self.subTest(value=raw):
+                self.assertEqual(web.user_fields({'expire_at': raw}), 'expire_at is out of supported range')
+
+    def test_accepts_supported_expirations_and_preserves_negative_to_zero(self):
+        self.assertEqual(web.user_fields({'expire_at': '253402300799'}), {'expire_at': 253402300799})
+        self.assertEqual(web.user_fields({'expire_at': -1}), {'expire_at': 0})
+        self.assertEqual(web.user_fields({'expire_at': 0}), {'expire_at': 0})
+
+    def test_non_finite_numeric_values_are_bad_requests_not_overflow_errors(self):
+        for field in ('expire_at', 'reset_day', 'max_ips', 'expire_after_days', 'expire_days'):
+            with self.subTest(field=field):
+                self.assertEqual(web.user_fields({field: float('inf')}), 'invalid number')
+
+
 class BenchSources(unittest.TestCase):
     """A refusing or breaking Cloudflare must not show up as a 0 Mb download."""
 
