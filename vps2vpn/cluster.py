@@ -269,6 +269,47 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid %s' % key)
     if 'health' in ans and not isinstance(ans['health'], dict):
         raise SyncError('node sync response has invalid health')
+    # idmap is consumed by subscription.server_nodes as a numeric user ID.
+    # Validate *before* saving it, not on the next subscription request.
+    for rid, local_uid in ans['idmap'].items():
+        if (not isinstance(rid, str) or not 1 <= len(rid) <= 19 or
+                not rid.isascii() or not rid.isdecimal() or rid[0] == '0' or
+                int(rid) > db.MAX_SQLITE_INT or type(local_uid) is not int or
+                not 0 < local_uid <= db.MAX_SQLITE_INT):
+            raise SyncError('node sync response has invalid account mapping')
+    if ans['idmap']:
+        # An empty mapping cannot produce remote subscription entries. Keep
+        # accepting older nodes with no accounts, but reject incomplete active
+        # metadata before it can break every client format for a mapped user.
+        info = ans['info']
+        if not isinstance(info.get('public_host'), str) or not info['public_host'].strip():
+            raise SyncError('node sync response has invalid public host')
+        for key in ('hy2_enabled', 'reality_enabled'):
+            if type(info.get(key)) is not bool:
+                raise SyncError('node sync response has invalid ' + key)
+        for key in ('tuic_enabled', 'ipv6_nodes'):
+            if key in info and type(info[key]) is not bool:
+                raise SyncError('node sync response has invalid ' + key)
+        for enabled, port in (('hy2_enabled', 'hy2_port'), ('reality_enabled', 'reality_port'),
+                              ('tuic_enabled', 'tuic_port')):
+            if info.get(enabled) and (type(info.get(port)) is not int or not 1 <= info[port] <= 65535):
+                raise SyncError('node sync response has invalid ' + port)
+        if info['hy2_enabled']:
+            if (type(info.get('hy2_hop')) is not bool or not isinstance(info.get('hy2_obfs'), str) or
+                    (info['hy2_hop'] and not isinstance(info.get('hy2_hop_range'), str))):
+                raise SyncError('node sync response has invalid Hysteria options')
+        if info['reality_enabled'] and any(not isinstance(info.get(k), str)
+                                          for k in ('reality_target', 'reality_public_key', 'reality_short_id')):
+            raise SyncError('node sync response has invalid Reality options')
+        tls = info.get('tls')
+        if tls is not None and (not isinstance(tls, dict) or
+                                any(not isinstance(tls.get(k), str) for k in ('sni', 'pin', 'pem'))):
+            raise SyncError('node sync response has invalid TLS metadata')
+        if info.get('ipv6_nodes') and info.get('public_ipv6') and not isinstance(info['public_ipv6'], str):
+            raise SyncError('node sync response has invalid IPv6 host')
+        score = info.get('ai_score', -1)
+        if type(score) is not int or not -1 <= score <= 4:
+            raise SyncError('node sync response has invalid AI score')
     for rid, pair in ans['traffic'].items():
         # Reject aliases ("01", "+1") before they can bill the same user twice.
         if (not isinstance(rid, str) or not 1 <= len(rid) <= 19 or
