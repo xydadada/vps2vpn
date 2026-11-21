@@ -9,6 +9,7 @@ import os
 import re
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -19,6 +20,9 @@ _recent = {}          # key -> (monotonic time sent, every), so one problem does
 _recent_lock = threading.Lock()
 _pending = set()          # alerts reserved during a blocking Telegram sendMessage request
 MAX_TEXT = 4000
+# Telegram promises its large integers fit a double (53 bits). Anything beyond is a corrupt response and
+# would push the getUpdates cursor past every real update, so it is never used as an offset.
+MAX_UPDATE_ID = (1 << 53) - 1
 
 
 def _call(token, method, params=None, timeout=10):
@@ -200,6 +204,13 @@ def bot_loop(stop, handle, log):
             if offset is not None:
                 params['offset'] = offset
             res = _call(token, 'getUpdates', params, timeout=35)
+        except urllib.error.HTTPError as e:
+            if e.code == 400:
+                # Bad Request (e.g. an offset Telegram rejects): retrying with the same cursor fails forever.
+                # Re-prime instead; the first batch after priming is skipped, so nothing is replayed.
+                offset, primed = None, False
+            stop.wait(30)
+            continue
         except (OSError, ValueError):
             stop.wait(30)
             continue
@@ -230,8 +241,8 @@ def bot_loop(stop, handle, log):
             if not isinstance(upd, dict):
                 continue
             update_id = upd.get('update_id')
-            if type(update_id) is not int or update_id < 0:
-                continue
+            if type(update_id) is not int or not 0 <= update_id <= MAX_UPDATE_ID:
+                continue                  # an absurd id must not poison the cursor
             if offset is not None and update_id < offset:
                 continue                  # never replay or rewind on out-of-order data
             offset = update_id + 1

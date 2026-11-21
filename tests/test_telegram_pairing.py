@@ -1,5 +1,6 @@
 """Regression tests for Telegram bot chat ownership verification."""
 import unittest
+import urllib.error
 from unittest.mock import Mock, patch
 
 from vps2vpn import notify
@@ -133,7 +134,40 @@ class TelegramPairing(unittest.TestCase):
              }):
             notify.bot_loop(stop, Mock(), lambda line: None)
         stop.wait.assert_called_once_with(30)
+    def _poll(self, replies, polls):
+        settings = {'tg_token': 'bot-token', 'tg_chat': '42', 'tg_verified': True,
+                    'tg_bot': True, 'setup_done': True}
+        stop = Mock()
+        stop.is_set.side_effect = [False] * polls + [True]
+        handle = Mock(return_value=None)
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
+             patch.object(notify, '_call', side_effect=replies) as call:
+            notify.bot_loop(stop, handle, lambda line: None)
+        return [c.args[2].get('offset') for c in call.call_args_list], handle
 
+    def test_oversized_update_id_never_becomes_the_cursor(self):
+        offsets, handle = self._poll([
+            {'ok': True, 'result': []},
+            {'ok': True, 'result': [message(42, '/status', update_id=7),
+                                    message(42, '/bogus', update_id=10 ** 100),
+                                    message(42, '/help', update_id=8)]},
+            {'ok': True, 'result': []},
+        ], 3)
+        self.assertEqual(offsets, [None, None, 9])
+        self.assertEqual([c.args[0] for c in handle.call_args_list], ['/status', '/help'])
+
+    def test_rejected_offset_reprimes_without_replaying_commands(self):
+        bad_request = urllib.error.HTTPError('https://api.telegram.org', 400, 'Bad Request', {}, None)
+        offsets, handle = self._poll([
+            {'ok': True, 'result': []},
+            {'ok': True, 'result': [message(42, '/status', update_id=5)]},
+            bad_request,
+            {'ok': True, 'result': [message(42, '/status', update_id=5)]},   # backlog after re-priming
+            {'ok': True, 'result': [message(42, '/help', update_id=6)]},
+        ], 5)
+        self.assertEqual(offsets, [None, None, 6, None, 6])
+        self.assertEqual([c.args[0] for c in handle.call_args_list], ['/status', '/help'])
 
 
 if __name__ == '__main__':
