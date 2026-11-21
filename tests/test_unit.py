@@ -49,6 +49,15 @@ class Secure(unittest.TestCase):
         self.assertFalse(secure.check_password('x', 'garbage'))
         self.assertFalse(secure.hmac_eq('', ''))
 
+    def test_password_invalid_base64_fails_closed(self):
+        cases = (
+            'pbkdf2_sha256$240000$A$YWJj',
+            'pbkdf2_sha256$240000$YWJj$A',
+        )
+        for stored in cases:
+            with self.subTest(stored=stored):
+                self.assertFalse(secure.check_password('guess', stored))
+
 
 class AdminEnabledValues(unittest.TestCase):
 
