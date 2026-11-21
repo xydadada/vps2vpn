@@ -763,6 +763,18 @@ def import_all(data):
             'used_down', 'enabled', 'disabled_reason', 'note', 'last_seen', 'last_reset', 'created_at',
             'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
             'sub_fetched_at', 'sub_ua')
+    # SQLite accepts text in INTEGER/REAL request columns; views and quota
+    # approvals later assume the restored values are numeric.
+    request_rows = data.get('requests', [])
+    if not isinstance(request_rows, list):
+        raise ValueError('backup requests must be a list')
+    for i, row in enumerate(request_rows, 1):
+        if (not isinstance(row, dict) or type(row.get('user_id')) is not int or
+                not 0 < row['user_id'] <= _SQLITE_MAX):
+            raise ValueError('request %d: invalid user_id' % i)
+        amount = row.get('add_gb')
+        if type(amount) not in (int, float) or not 0 <= amount <= 1e9 or not math.isfinite(amount):
+            raise ValueError('request %d: invalid add_gb' % i)
     table_cols = {'invites': INVITE_COLS, 'requests': REQUEST_COLS}
     with transaction() as c:
         c.execute('DELETE FROM settings')
