@@ -1102,9 +1102,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if len(pw) > 128 or not secure.check_password(pw, s['admin_hash']):
                 self._record_fail()
                 return self.json({'error': 'current password is wrong'}, 403)
+            # Disable and enrollment must have one serialization point. A
+            # concurrent enrollment must not report success only to have this
+            # request overwrite its newly enrolled secret after releasing the lock.
             with _totp_lock:
-                _totp_last_step.pop(s['admin_totp'], None)
-            db.set_settings(admin_totp='')
+                active_secret = db.settings()['admin_totp']
+                _totp_last_step.pop(active_secret, None)
+                db.set_settings(admin_totp='')
             return self._new_admin_session()
         sec = str(d.get('secret', '')).strip().upper()
         if not re.fullmatch(r'[A-Z2-7]{16,64}', sec):
@@ -1265,7 +1269,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         prefix = re.sub(r'[\s\x00-\x1f\x7f]+', '', str(d.get('prefix', '')))[:24]
         try:
             count = int(d.get('count', 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return self.json({'error': 'invalid number'}, 400)
         if not prefix or not 1 <= count <= 200:
             return self.json({'error': 'prefix and a count of 1-200 required'}, 400)
