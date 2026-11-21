@@ -724,7 +724,7 @@ def _check_import_user(u, i):
         raise ValueError('user %d: invalid id' % i)
     for k in _IMPORT_REAL:
         v = u.get(k, 0)
-        if type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1e9:
+        if type(v) not in (int, float) or not 0 <= v <= 1e9 or not math.isfinite(v):
             raise ValueError('user %d: %s must be a number' % (i, k))
     if u.get('enabled', 1) not in (0, 1) or not 0 <= u.get('reset_day', 0) <= 28:
         raise ValueError('user %d: invalid enabled or reset day' % i)

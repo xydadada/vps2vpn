@@ -298,7 +298,8 @@ class RestoreRouteSafety(Base):
         db.import_all(json.loads(json.dumps(before)))              # a real backup still restores
         self.assertEqual(db.export_all()['users'], before['users'])
         invalid = (('expire_at', 'not-a-number'), ('used_up', -1), ('used_down', 1 << 63), ('quota_gb', 'lots'),
-                   ('quota_gb', 1e400), ('enabled', 2), ('reset_day', 31), ('name', 7), ('sub_token', ''),
+                   ('quota_gb', 1e400), ('quota_gb', 1 << 1100), ('invite_deduct', 1 << 1100),
+                   ('enabled', 2), ('reset_day', 31), ('name', 7), ('sub_token', ''),
                    ('max_ips', 1.5), ('id', 'x'), ('note', None))
         for key, value in invalid:
             with self.subTest(key=key, value=value):
