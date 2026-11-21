@@ -1,5 +1,6 @@
 """Secrets, password hashing and REALITY (X25519) keys - standard library only."""
 import base64
+import binascii
 import hashlib
 import hmac
 import os
@@ -44,7 +45,7 @@ def check_password(password, stored):
             return False
         calc = hashlib.pbkdf2_hmac('sha256', password.encode(), b64url_decode(salt), n)
         return hmac.compare_digest(calc, b64url_decode(digest))
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, binascii.Error):
         return False
 
 
@@ -138,5 +139,5 @@ def totp_check(secret, code, at=None, window=1):
     now = time.time() if at is None else at
     try:
         return any(hmac.compare_digest(totp(secret, now + k * 30), code) for k in range(-window, window + 1))
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, binascii.Error):
         return False
