@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.10
 
 **Security**
 - A panel with a trusted certificate (a domain with Let's Encrypt) no longer sends a subscription, with the account's proxy credentials, over plain HTTP: `http://` subscription links get a redirect to HTTPS first (apps follow it, so old links keep working). A self-signed panel still serves plain HTTP, which most apps need there (#84).
