@@ -595,7 +595,7 @@ def shadowrocket(s, u, base_url, sub_url=''):
     if sub_url:
         general.append('update-url = %s?format=shadowrocket' % sub_url)
     head = '# vps2vpn %s - %s\n# Nodes, routing and DNS in one file. Pick this config, set Global Routing to "Config".\n' % (
-        u['name'], time.strftime('%Y-%m-%d %H:%M'))
+        _sr_label(u['name']), time.strftime('%Y-%m-%d %H:%M'))
     return head + '\n'.join(general) + '\n\n[Proxy]\n' + '\n'.join(lines) + '\n\n[Proxy Group]\n' + \
         '\n'.join(groups) + '\n\n[Rule]\n' + '\n'.join(rule_lines) + '\n'
 
