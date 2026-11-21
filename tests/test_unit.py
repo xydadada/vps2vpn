@@ -265,6 +265,40 @@ class Users(Base):
         self.assertEqual(db.users()[0]['enabled'], 1)
 
 
+class RestoreRouteSafety(Base):
+    def test_invalid_backup_paths_are_rejected_before_any_database_writes(self):
+        db.set_settings(setup_done=True)
+        uid = db.add_user('restored-user', 5)
+        self.assertTrue(db.user(uid))
+        before = db.export_all()
+        invalid = (
+            ('panel_path', 42),
+            ('member_path', ['not-a-path']),
+            ('panel_path', ''),
+            ('panel_path', '../admin'),
+            ('member_path', 'member/api'),
+            ('panel_path', 'x' * 129),
+            ('member_path', before['settings']['panel_path']),
+            ('setup_done', 'true'),
+            ('member_enabled', 'false'),
+        )
+        for key, value in invalid:
+            with self.subTest(key=key, value=value):
+                damaged = json.loads(json.dumps(before))
+                damaged['settings'][key] = value
+                with self.assertRaises(ValueError):
+                    db.import_all(damaged)
+                self.assertEqual(db.export_all(), before)
+
+    def test_legacy_backup_without_member_path_still_imports(self):
+        db.set_settings(setup_done=True)
+        original = db.export_all()
+        original['settings'].pop('member_path')
+        db.import_all(original)
+        self.assertEqual(db.settings()['panel_path'], original['settings']['panel_path'])
+        self.assertEqual(db.settings()['member_path'], '')
+
+
 class Subscriptions(Base):
     def test_formats(self):
         from vps2vpn import cores

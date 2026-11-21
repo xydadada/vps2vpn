@@ -2,6 +2,7 @@
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -674,6 +675,23 @@ def import_all(data):
     if not isinstance(data.get('settings'), dict) or not isinstance(data.get('users'), list):
         raise ValueError('not a vps2vpn backup file')
     keep = {k: v for k, v in data['settings'].items() if k in DEFAULTS}
+    # Route prefixes from a damaged/edited backup must not poison every future
+    # HTTP request. The panel concatenates these values as strings on *all*
+    # requests, and an empty or colliding admin path can lock out the owner.
+    # Validate before deleting any existing rows so restore failures are atomic.
+    for flag in ('setup_done', 'member_enabled'):
+        if flag in keep and type(keep[flag]) is not bool:
+            raise ValueError('invalid %s in backup' % flag)
+    for key in ('panel_path', 'member_path'):
+        value = keep.get(key, DEFAULTS[key])
+        if not isinstance(value, str) or (value and not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)):
+            raise ValueError('invalid %s in backup' % key)
+    panel_path = keep.get('panel_path', DEFAULTS['panel_path'])
+    member_path = keep.get('member_path', DEFAULTS['member_path'])
+    if keep.get('setup_done', DEFAULTS['setup_done']) and not panel_path:
+        raise ValueError('a configured backup needs a panel_path')
+    if panel_path and panel_path == member_path:
+        raise ValueError('panel_path and member_path must differ')
     # A backup can be old, copied from another install, or edited: it is never
     # evidence that this bot/chat was verified on the restored installation.
     keep['tg_verified'] = False
