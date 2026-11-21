@@ -613,6 +613,76 @@ class AuthHardening(tu.Base):
         self.assertEqual(st, 400)
         self.assertTrue(secure.check_password('adminpassword', db.settings()['admin_hash']))
 
+    def test_stale_admin_password_change_cannot_undo_a_new_password(self):
+        self.assertEqual(self.login()[0], 200)
+        old_cookie = self.cookie
+        entered, resume = threading.Event(), threading.Event()
+        result = []
+        original = secure.check_password
+
+        def delay_first(password, stored):
+            if password == 'adminpassword' and not entered.is_set():
+                entered.set()
+                if not resume.wait(10):
+                    raise RuntimeError('admin password interleaving timed out')
+            return original(password, stored)
+
+        def old_change():
+            result.append(self.req('POST', '/adm/api/password',
+                                   {'old': 'adminpassword', 'new': 'stale-password'}))
+
+        worker = threading.Thread(target=old_change, daemon=True)
+        with mock.patch.object(secure, 'check_password', side_effect=delay_first):
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5), 'old password check did not start')
+                status, body, _ = self.req('POST', '/adm/api/password',
+                                           {'old': 'adminpassword', 'new': 'newer-password'})
+                self.assertEqual(status, 200, body)
+            finally:
+                resume.set()
+                worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], 409, result[0][1])
+        self.assertFalse(db.session_ok(old_cookie.split('=', 1)[1]))
+        self.assertTrue(secure.check_password('newer-password', db.settings()['admin_hash']))
+        self.assertFalse(secure.check_password('stale-password', db.settings()['admin_hash']))
+
+    def test_stale_totp_disable_cannot_erase_new_factor(self):
+        self.assertEqual(self.login()[0], 200)
+        entered, resume = threading.Event(), threading.Event()
+        result = []
+        original = secure.check_password
+
+        def delay_disable(password, stored):
+            if password == 'adminpassword' and not entered.is_set():
+                entered.set()
+                if not resume.wait(10):
+                    raise RuntimeError('TOTP disable interleaving timed out')
+            return original(password, stored)
+
+        def old_disable():
+            result.append(self.req('POST', '/adm/api/totp',
+                                   {'off': True, 'password': 'adminpassword'}))
+
+        worker = threading.Thread(target=old_disable, daemon=True)
+        with mock.patch.object(secure, 'check_password', side_effect=delay_disable):
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5), 'old disable did not verify password')
+                secret = secure.totp_secret()
+                status, body, _ = self.req('POST', '/adm/api/totp',
+                                           {'secret': secret, 'code': secure.totp(secret)})
+                self.assertEqual(status, 200, body)
+            finally:
+                resume.set()
+                worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], 409, result[0][1])
+        self.assertEqual(db.settings()['admin_totp'], secret)
+
     def test_member_password_change_is_rate_limited(self):
         uid = self._member('zed', 'zedpassword1')
         link = '/s/%s/api/password' % db.user(uid)['sub_token']
