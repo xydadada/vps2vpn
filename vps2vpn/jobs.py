@@ -405,11 +405,17 @@ class History:
         # otherwise reach the browser's CPU/memory/network plots.
         if not isinstance(point, list) or len(point) != 5 or type(point[0]) is not int:
             return False
-        if point[0] < 0:
+        if not 0 <= point[0] <= 253402300799:  # JavaScript Date/SQLite-safe epoch
             return False
         for index in range(1, 5):
             value = point[index]
-            if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+            if value is None:
+                continue
+            if type(value) not in (int, float):
+                return False
+            # math.isfinite() converts ints to float; a huge JSON integer
+            # would itself raise OverflowError and re-break cache startup.
+            if type(value) is float and not math.isfinite(value):
                 return False
             if value is not None and index in (1, 2) and not 0 <= value <= 100:
                 return False
