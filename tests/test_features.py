@@ -1213,6 +1213,67 @@ class Servers(tu.Base):
         self.assertEqual(db.settings()['node_master_id'], '')
         self.assertEqual(count, [2])
 
+    def test_sync_rejects_malformed_node_info_and_idmap(self):
+        u = mk('metadata-user')
+        rid = str(u['id'])
+        info = cluster.public_info(db.settings())
+        valid = {'ok': True, 'info': info, 'idmap': {rid: 42}, 'traffic': {}}
+        self.assertIs(cluster._validate_sync_answer(valid), valid)
+        empty = {'ok': True, 'info': {}, 'idmap': {}, 'traffic': {}}
+        self.assertIs(cluster._validate_sync_answer(empty), empty)  # legacy empty snapshot
+
+        cases = (
+            dict(valid, info={'hy2_enabled': True}),
+            dict(valid, info=dict(info, hy2_port='443')),
+            dict(valid, info=dict(info, hy2_obfs=None)),
+            dict(valid, info=dict(info, tls={'sni': 'node.example', 'port': 80})),
+            dict(valid, info=dict(info, ai_score='3')),
+            dict(valid, info=dict(info, ipv6_nodes='true')),
+            dict(valid, idmap={rid: '42'}),
+            dict(valid, idmap={rid: True}),
+            dict(valid, idmap={'0' + rid: 42}),
+        )
+        for bad in cases:
+            with self.subTest(bad=bad), self.assertRaisesRegex(cluster.SyncError, 'invalid (info|idmap)'):
+                cluster._validate_sync_answer(bad)
+
+    def test_bad_node_metadata_cannot_replace_last_good_snapshot_or_stop_siblings(self):
+        user = mk('node-metadata-subscriber')
+        rid = str(user['id'])
+        info = cluster.public_info(db.settings())
+
+        def node(sid, label):
+            return {'id': sid, 'name': label, 'url': 'https://node.example/' + label,
+                    'key': 'secret', 'pin': '', 'enabled': True,
+                    'info': info, 'idmap': {rid: 42}, 'seen': {rid: [0, 0]}, 'fail_count': 0}
+
+        db.set_settings(servers=[node('abcd0001', 'bad'), node('abcd0002', 'healthy')])
+
+        def reply(server, request, timeout=15):
+            if server['name'] == 'bad':
+                return {'ok': True, 'info': {'hy2_enabled': True},
+                        'idmap': {rid: 42}, 'traffic': {rid: [5, 10]}}, 'aa' * 32
+            return {'ok': True, 'info': info,
+                    'idmap': {rid: 42}, 'traffic': {rid: [7, 11]}}, 'bb' * 32
+
+        with mock.patch.object(cluster, '_request', side_effect=reply) as request:
+            cluster.sync_all(log=lambda _: None)
+        self.assertEqual(request.call_count, 2)
+        states = {x['name']: x for x in db.settings()['servers']}
+        self.assertEqual(states['bad']['info'], info)
+        self.assertEqual(states['bad']['idmap'], {rid: 42})
+        self.assertEqual(states['bad']['seen'][rid], [0, 0])
+        self.assertEqual(states['bad']['fail_count'], 1)
+        self.assertEqual(states['healthy']['fail_count'], 0)
+        self.assertEqual((db.user(user['id'])['used_up'], db.user(user['id'])['used_down']), (7, 11))
+
+        s, u = db.settings(), db.user(user['id'])
+        for formatter in (subscription.clash, subscription.singbox, subscription.shadowrocket):
+            with self.subTest(formatter=formatter.__name__):
+                self.assertTrue(formatter(s, u, 'https://example.org'))
+        self.assertTrue(subscription.links_base64(s, u))
+
+
     def test_main_side_counts_and_subscribes(self):
         u = mk('ann', 10)
         info = cluster.public_info(dict(db.settings(), public_host='198.51.100.5', node_name='tokyo'))
