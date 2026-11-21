@@ -17,6 +17,7 @@ from . import db
 API = 'https://api.telegram.org/bot%s/%s'
 _recent = {}          # key -> (monotonic time sent, every), so one problem does not flood the chat
 _recent_lock = threading.Lock()
+_pending = set()          # alerts reserved during a blocking Telegram sendMessage request
 MAX_TEXT = 4000
 
 
@@ -52,8 +53,11 @@ def send(text, key=None, every=6 * 3600, s=None):
     if recent_key is not None:
         with _recent_lock:
             prev = _recent.get(recent_key)
-            if prev is not None and now - prev[0] < every:
+            if recent_key in _pending or (prev is not None and now - prev[0] < every):
                 return False
+            # Reserve before making the network call: two concurrent workers
+            # must not both deliver the same alert. Failed sends free the key.
+            _pending.add(recent_key)
     msg = ('[%s] %s' % (s['node_name'], text))[:MAX_TEXT]
     try:
         _call(s['tg_token'], 'sendMessage', {'chat_id': s['tg_chat'], 'text': msg,
@@ -74,6 +78,10 @@ def send(text, key=None, every=6 * 3600, s=None):
         return True
     except (OSError, ValueError):
         return False
+    finally:
+        if recent_key is not None:
+            with _recent_lock:
+                _pending.discard(recent_key)
 
 
 def _owner_private_message(message, chat_id):
