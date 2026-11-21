@@ -281,12 +281,12 @@ def summary():
             'speed_history': [[e['at'], (e.get('speed') or {}).get('mbps')] for e in h[-96:]]}
 
 
-def run_in_background(log=print):
+def run_in_background(log=print, with_speed=False):
     def go():
         if not _run_lock.acquire(blocking=False):     # previous round still running: skip
             return
         try:
-            e = run_once()
+            e = run_once(force_speed=with_speed)
             down = [k for k, v in e['sites'].items() if not v['ok'] and k.endswith('/4')]
             if down:
                 log('monitor: cannot reach %s' % ', '.join(k.split('/')[0] for k in down))
