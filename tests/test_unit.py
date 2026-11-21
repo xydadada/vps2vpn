@@ -666,6 +666,19 @@ class Web(Base):
         finally:
             c.close()
 
+    def test_invite_http_rejects_oversized_valid_json_integer(self):
+        db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
+        status, body, _ = self.req('POST', self.pp + '/api/login',
+                                   {'username': 'admin', 'password': 'rightpassword'})
+        self.assertEqual(status, 200, body)
+        huge_json_integer = json.loads('1' + '0' * 309)
+        before = db.invites()
+        status, body, _ = self.req('POST', self.pp + '/api/invites',
+                                   {'kind': 'admin', 'quota_gb': huge_json_integer, 'valid_days': 7})
+        self.assertEqual(status, 400, body)
+        self.assertIn(b'number', body)
+        self.assertEqual(db.invites(), before)
+
     def test_user_and_node_enabled_endpoints_reject_ambiguous_values(self):
         db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
         status, _, _ = self.req('POST', self.pp + '/api/login',
