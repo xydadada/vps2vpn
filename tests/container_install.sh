@@ -20,7 +20,10 @@ step() { echo; echo "::group::$*"; }
 endstep() { echo "::endgroup::"; }
 mask() { sed -E -e 's#(https?://)[^ ]*#\1***#g' -e 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/x.x.x.x/g'; }
 in_c() { docker exec "$NAME" "$@"; }
-py() { docker exec -e PYTHONPATH="$APP" "$NAME" python3 -c "$@"; }
+py() {  # code [args] -> run with the Python the installer chose for the panel (python3 may be too old)
+  docker exec -e PYTHONPATH="$APP" "$NAME" sh -c \
+    'p=$(sed -n "s/.* exec \([^ ]*\) -m vps2vpn.*/\1/p" /usr/local/bin/vps2vpn 2>/dev/null); exec "${p:-python3}" -c "$@"' sh "$@"
+}
 setting() { py 'import sys; from vps2vpn import db; print(db.settings()[sys.argv[1]])' "$1"; }
 
 case "$IMAGE" in        # just enough to boot systemd; a real VPS image has at least this
@@ -44,7 +47,7 @@ trap cleanup EXIT
 
 step "build $IMAGE with systemd"
 printf 'FROM %s\nRUN %s\nSTOPSIGNAL SIGRTMIN+3\nCMD ["%s"]\n' "$IMAGE" "$PREP" "$INIT" \
-  | docker build -q -t "$TAG" - >/dev/null
+  | docker build --progress=plain -t "$TAG" - > /tmp/v2v-build.txt 2>&1   || { tail -n 40 /tmp/v2v-build.txt; exit 1; }
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   "$TAG" >/dev/null
@@ -70,23 +73,28 @@ panel_code() {  # [setup] -> HTTP status of the panel page over TLS, asked from 
 }
 
 wait_panel() {  # -> 0 once the panel answers 200
-  local i
-  for i in $(seq 20); do [ "$(panel_code)" = 200 ] && return 0; sleep 1; done
+  for _ in $(seq 20); do [ "$(panel_code)" = 200 ] && return 0; sleep 1; done
   return 1
 }
 
+run_install() {  # what -> runs install.sh from the checkout's tarball, shows its output, and on failure where it stopped
+  local rc=0
+  in_c env V2V_SRC=/root/v.tgz PS4='+ ${LINENO}: ' bash -x /root/install.sh install > /tmp/v2v-trace.txt 2>&1 || rc=$?
+  grep -v '^+' /tmp/v2v-trace.txt > /tmp/v2v-out.txt || true
+  mask < /tmp/v2v-out.txt
+  if [ "$rc" = 0 ]; then ok "$1 exits 0"; else
+    bad "$1 exits 0 (exit $rc); the installer's last steps:"
+    grep '^+' /tmp/v2v-trace.txt | tail -n 15 | cut -c1-200 | mask
+  fi
+}
+
 step "fresh install"
-if in_c env V2V_SRC=/root/v.tgz bash /root/install.sh install > /tmp/v2v-out.txt 2>&1; then
-  ok "install.sh install exits 0"
-else
-  bad "install.sh install exits 0"
-fi
-mask < /tmp/v2v-out.txt
+run_install "install.sh install"
 grep -q 'vps2vpn is installed' /tmp/v2v-out.txt && ok "installer prints the setup link" || bad "installer prints the setup link"
 endstep
 
 step "after the first install"
-in_c python3 -c 'import sys; print("python", sys.version.split()[0])'
+py 'import sys; print("panel runs on Python", sys.version.split()[0], sys.executable)' || true
 for u in vps2vpn vps2vpn-xray vps2vpn-hysteria vps2vpn-tuic; do
   in_c test -f "/etc/systemd/system/$u.service" && ok "$u.service written" || bad "$u.service written"
 done
@@ -115,16 +123,11 @@ wait_panel && ok "panel answers after setup" || bad "panel answers after setup"
 # what an upgrade must keep: the admin login and the users (compared inside the container, never printed)
 py 'import hashlib; from vps2vpn import db; s = db.settings()
 print(hashlib.sha256((s["admin_hash"] + "|" + ",".join(sorted(u["sub_token"] for u in db.users()))).encode()).hexdigest())' \
-  > /tmp/v2v-before.txt
+  > /tmp/v2v-before.txt || true
 endstep
 
 step "second run: upgrade over the running install"
-if in_c env V2V_SRC=/root/v.tgz bash /root/install.sh install > /tmp/v2v-out.txt 2>&1; then
-  ok "second install.sh run exits 0"
-else
-  bad "second install.sh run exits 0"
-fi
-mask < /tmp/v2v-out.txt
+run_install "second install.sh run"
 grep -q 'up to date' /tmp/v2v-out.txt && ok "reports an upgrade, not a new install" || bad "reports an upgrade, not a new install"
 snap=$(in_c sh -c 'ls -d /var/lib/vps2vpn/upgrade-snapshots/*/ 2>/dev/null | tail -1' || true)
 if [ -n "$snap" ] && in_c test -s "${snap}vps2vpn.db" && in_c test -s "${snap}app.tar.gz" && in_c test -f "${snap}restore.sh"; then
@@ -134,7 +137,7 @@ else
 fi
 py 'import hashlib; from vps2vpn import db; s = db.settings()
 print(hashlib.sha256((s["admin_hash"] + "|" + ",".join(sorted(u["sub_token"] for u in db.users()))).encode()).hexdigest())' \
-  > /tmp/v2v-after.txt
+  > /tmp/v2v-after.txt || true
 [ -s /tmp/v2v-after.txt ] && cmp -s /tmp/v2v-before.txt /tmp/v2v-after.txt && ok "admin login and users kept" || bad "admin login and users kept"
 [ "$(setting setup_done)" = True ] && ok "setup stays done" || bad "setup stays done"
 wait_panel && ok "panel answers after the upgrade" || bad "panel answers after the upgrade"
@@ -160,7 +163,7 @@ step "uninstall keeps the data, reinstall picks it up"
 in_c bash /root/install.sh uninstall >/dev/null 2>&1 && ok "uninstall" || bad "uninstall"
 in_c sh -c '! systemctl is-active --quiet vps2vpn && [ ! -e /etc/systemd/system/vps2vpn.service ]' && ok "services removed" || bad "services removed"
 in_c test -s /var/lib/vps2vpn/vps2vpn.db && ok "database kept" || bad "database kept"
-in_c env V2V_SRC=/root/v.tgz bash /root/install.sh install > /tmp/v2v-out.txt 2>&1 && ok "reinstall" || { bad "reinstall"; mask < /tmp/v2v-out.txt; }
+run_install "reinstall"
 grep -q 'up to date' /tmp/v2v-out.txt && ok "reinstall finds the old setup" || bad "reinstall finds the old setup"
 wait_panel && ok "panel answers after reinstall" || bad "panel answers after reinstall"
 endstep

@@ -526,6 +526,75 @@ class Installer(unittest.TestCase):
         with open(os.path.join(self.fix, 'systemctl.log')) as f:
             self.assertEqual(f.read().split(), ['stop', 'vps2vpn', 'start', 'vps2vpn'])
 
+    def stub(self, name, body):
+        path = os.path.join(self.stubs, name)
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write('#!/bin/sh\n' + body)
+        os.chmod(path, 0o755)
+
+    def test_apt_waits_for_the_dpkg_lock_and_never_prompts(self):
+        # a fresh Ubuntu VPS runs unattended-upgrades at first boot; needrestart asks which services to restart
+        self.stub('apt-get', 'echo "DF=$DEBIAN_FRONTEND NR=$NEEDRESTART_SUSPEND $*" >> "$FIX/apt.log"\n')
+        rc, out = self.sh('PATH="$STUBS"; install_packages; echo "PY=$PY"')
+        self.assertEqual(rc, 0, out)
+        self.assertIn('PY=' + _posix(os.path.join(self.stubs, 'python3')), out)
+        with open(os.path.join(self.fix, 'apt.log')) as f:
+            calls = f.read().splitlines()
+        self.assertEqual(len(calls), 2, calls)
+        for c in calls:
+            self.assertIn('DF=noninteractive NR=1 ', c)
+            self.assertIn('-o DPkg::Lock::Timeout=300', c)
+            self.assertIn('-o Dpkg::Options::=--force-confold', c)
+        self.assertIn(' update ', calls[0] + ' ')
+        self.assertIn(' install -y ', calls[1])
+
+    def test_python_older_than_3_8_gets_a_newer_one_next_to_it(self):
+        # RHEL/Rocky/Alma 8 and openSUSE Leap 15: python3 is 3.6
+        self.stub('python3', 'if [ "$1" = --version ]; then echo "Python 3.6.8"; exit 0; fi\nexit 1\n')
+        self.stub('python3.12', '[ -f "$FIX/has-python3.12" ] || exit 127\nexec "%s" "$@"\n' % _posix(sys.executable))
+        self.stub('dnf', 'echo "$*" >> "$FIX/dnf.log"\n'
+                         'case "$*" in *python3.12*) : > "$FIX/has-python3.12" ;; esac\n')
+        rc, out = self.sh('PATH="$STUBS"; install_packages; echo "PY=$PY"')
+        self.assertEqual(rc, 0, out)
+        self.assertIn('Python 3.6.8 is too old', out)
+        self.assertIn('PY=' + _posix(os.path.join(self.stubs, 'python3.12')), out)
+        with open(os.path.join(self.fix, 'dnf.log')) as f:
+            self.assertEqual(f.read().splitlines()[-1], 'install -y -q python3.12')
+        # no newer Python to be had: a clear error instead of a panel that cannot start
+        self.stub('dnf', 'case "$*" in *python3.1*|*python39*|*python31*) exit 1 ;; esac\n')
+        os.unlink(os.path.join(self.fix, 'has-python3.12'))
+        rc, out = self.sh('PATH="$STUBS"; install_packages; echo "PY=$PY"')
+        self.assertNotEqual(rc, 0)
+        self.assertIn('python 3.8 or newer is required (found: Python 3.6.8)', out)
+        # a package manager that fails says so, instead of set -e stopping the installer without a word
+        self.stub('dnf', 'exit 1\n')
+        rc, out = self.sh('PATH="$STUBS"; install_packages')
+        self.assertNotEqual(rc, 0)
+        self.assertIn('could not install the system packages', out)
+
+    def test_services_and_commands_run_the_chosen_python(self):
+        with open(INSTALL_SH, encoding='utf-8') as f:
+            sh = f.read()
+        self.assertIn('ExecStart=$PY -m vps2vpn serve', sh)
+        self.assertIn('exec $PY -m vps2vpn', sh)                       # /usr/local/bin/vps2vpn
+        self.assertNotRegex(sh, r'(?m)^[^#\n]*(?<![.\w])python3 -[cm] ')  # every call goes through $PY
+
+    def test_ipv6_only_download_failure_says_why(self):
+        routes = os.path.join(self.tmp, 'route')
+        with open(routes, 'w') as f:
+            f.write('Iface\tDestination\tGateway\n')                   # IPv6-only: no IPv4 routes at all
+        body = 'ROUTE4="%s"; fetch https://github.com/x/y/archive/none.tar.gz "$ROOTDIR/out"' % _posix(routes)
+        rc, out = self.sh(body)
+        self.assertNotEqual(rc, 0)
+        self.assertIn('download failed', out)
+        self.assertIn('no IPv4', out)
+        with open(routes, 'a') as f:
+            f.write('eth0\t00000000\t0102A8C0\n')
+        rc, out = self.sh(body)
+        self.assertNotEqual(rc, 0)
+        self.assertIn('download failed', out)
+        self.assertNotIn('no IPv4', out)
+
     def test_fresh_install_makes_no_snapshot(self):
         rc, out = self.sh('snapshot_before_upgrade; echo "SNAP=[$SNAPSHOT]"')
         self.assertEqual(rc, 0, out)
