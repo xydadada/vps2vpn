@@ -282,7 +282,10 @@ def _validate_sync_answer(ans):
         # accepting older nodes with no accounts, but reject incomplete active
         # metadata before it can break every client format for a mapped user.
         info = ans['info']
-        if not isinstance(info.get('public_host'), str) or not info['public_host'].strip():
+        host = info.get('public_host')
+        # The host is written verbatim into every subscription format.
+        if (not isinstance(host, str) or not host or len(host) > 255 or
+                any(ord(c) < 33 or ord(c) == 127 for c in host)):
             raise SyncError('node sync response has invalid public host')
         for key in ('hy2_enabled', 'reality_enabled'):
             if type(info.get(key)) is not bool:
