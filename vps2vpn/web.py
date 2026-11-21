@@ -1265,7 +1265,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         prefix = re.sub(r'[\s\x00-\x1f\x7f]+', '', str(d.get('prefix', '')))[:24]
         try:
             count = int(d.get('count', 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return self.json({'error': 'invalid number'}, 400)
         if not prefix or not 1 <= count <= 200:
             return self.json({'error': 'prefix and a count of 1-200 required'}, 400)
@@ -1455,7 +1455,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         d = self.body_json()
         try:
             inviter = int(d.get('inviter') or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return self.json({'error': 'invalid inviter'}, 400)
         rec = lambda: {'invite': members.invite_view(db.invite(members.create_invite(
             d.get('kind', 'admin'), d.get('quota_gb', 0), d.get('valid_days', 7), d.get('max_uses', 1),
@@ -1974,7 +1974,7 @@ def validate_settings(d, s):
         if k in d:
             try:
                 p = int(d[k])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return 'invalid port'
             if not 1 <= p <= 65535:
                 return 'port must be 1-65535'
@@ -1990,7 +1990,7 @@ def validate_settings(d, s):
     if 'server_reset_day' in d:
         try:
             out['server_reset_day'] = int(d['server_reset_day'] or 1)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 'invalid number'
         if not 1 <= out['server_reset_day'] <= 28:
             return 'reset day must be 1-28'
