@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.8
 
 **For the owner**
 - Telegram reminds you when an account ends: 3 days before and again the day before (working accounts only; extending it and letting it run out again reminds you again). New bot command `/expiring` lists accounts that end within 7 days or have used 80% of their quota.
