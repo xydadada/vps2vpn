@@ -740,6 +740,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = db.user_by_token(token)
         if not u or not s['setup_done']:
             return self.not_found()
+        # When a trusted HTTPS endpoint is available, never send the node
+        # credentials or subscription QR payload over cleartext HTTP. Legacy
+        # self-signed installations still need their existing HTTP links.
+        if not self.secure_ok():
+            host = s['domain'] or s['public_host'] or self._local_host()
+            if certs.trusted(host):
+                return self.send(307, '', headers={
+                    'Location': self._https_location(s), 'Cache-Control': 'no-store',
+                })
         base = self.base_url(s)
         sub_url = '%s/s/%s' % (base, token)
         if qr_svg:
