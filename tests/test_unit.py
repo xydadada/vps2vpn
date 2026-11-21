@@ -496,6 +496,31 @@ class Ops(Base):
             self.assertTrue(notify.send('down', key='retry-after-failure'))
             sender.assert_called_once()
 
+    def test_failed_telegram_ack_must_not_suppress_next_notification(self):
+        db.set_settings(tg_token='1234567:' + 'f' * 35, tg_chat='891', tg_verified=True)
+        with mock.patch.object(notify, '_call', side_effect=[
+                {'ok': False, 'error_code': 429, 'description': 'retry later'},
+                {'ok': True}]) as telegram:
+            self.assertFalse(notify.send('down', key='api-not-accepted'))
+            self.assertTrue(notify.send('down', key='api-not-accepted'))
+            self.assertFalse(notify.send('down', key='api-not-accepted'))
+            self.assertEqual(telegram.call_count, 2)
+        self.assertFalse(notify._pending)
+
+    def test_missing_or_malformed_node_label_never_leaks_inflight_key(self):
+        db.set_settings(tg_token='1234567:' + 'g' * 35, tg_chat='892', tg_verified=True)
+
+        class BrokenLabel:
+            def __str__(self):
+                raise ValueError('invalid label')
+
+        with mock.patch.object(notify, '_call', return_value={'ok': True}) as telegram:
+            self.assertFalse(notify.send('down', key='bad-label', s={'node_name': BrokenLabel()}))
+            self.assertFalse(notify._pending)
+            self.assertTrue(notify.send('down', key='bad-label', s={'other': 'field'}))
+            telegram.assert_called_once()
+        self.assertFalse(notify._pending)
+
     def test_bot_commands_only_from_the_owner_in_a_private_chat(self):
         ok = notify._owner_private_message
         self.assertTrue(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 5}}, '5'))
