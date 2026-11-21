@@ -7,7 +7,7 @@ import re
 import time
 import urllib.parse
 
-from . import certs, rules
+from . import certs, rules, system
 
 GROUP_NAMES = {
     'zh': {'proxy': '节点选择', 'auto': '自动选择', 'ai': 'AI服务', 'cn': '国内服务', 'final': '漏网之鱼'},
@@ -62,7 +62,7 @@ def nodes(s, u):
     """Protocol-neutral description of this user's proxies: this server first, then joined servers."""
     from . import aicheck
     main_label = s['node_name'] or 'vps2vpn'
-    out = server_nodes(s, tls_info(s), main_label, u['id'], u)
+    out = server_nodes(dict(s, hy2_hop=system.hopping_listed(s)), tls_info(s), main_label, u['id'], u)
     for n in out:
         n['ai_score'] = aicheck.score(aicheck.latest())
     seen_labels = {main_label}

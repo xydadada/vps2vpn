@@ -394,7 +394,10 @@ def apply(s=None, force=False):
                 r = system.systemctl('restart', unit)
                 if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
                     errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
-        system.port_hopping(s)
+        hop = system.port_hopping(s)
+        if hop and hop.startswith('failed'):
+            # Subscriptions stop listing the hop range; the watchdog tries again every 5 minutes.
+            print('port hopping could not be set up (%s); listing only the Hysteria port' % hop, flush=True)
         if errors:
             raise RuntimeError('; '.join(errors))
         return changed

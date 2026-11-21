@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.parse
 
-from . import certs, db, notify, paths, secure
+from . import certs, db, notify, paths, secure, system
 
 SYNC_EVERY = 60
 UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
@@ -57,6 +57,7 @@ def public_info(s):
             'reality_target', 'reality_public_key', 'reality_short_id', 'hy2_enabled', 'hy2_port', 'hy2_hop',
             'hy2_hop_range', 'hy2_obfs', 'tuic_enabled', 'tuic_port')
     info = {k: s[k] for k in keys}
+    info['hy2_hop'] = system.hopping_listed(s)     # the main server lists what actually works here
     info['tls'] = tls_info(s)
     from . import aicheck
     res = aicheck.latest()      # lets the main server send AI traffic to the server that suits it best

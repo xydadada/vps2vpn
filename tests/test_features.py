@@ -388,6 +388,30 @@ class ScaleHelpers(tu.Base):
             sched.tick()
         enforce.assert_called_once()
 
+    def test_failed_port_hopping_is_not_listed_in_subscriptions(self):
+        # A hop range whose nft redirect is missing sends clients to ports nothing listens on (#97).
+        u = mk('hopper')
+        db.set_settings(hy2_enabled=True, hy2_hop=True, public_host='198.51.100.9')
+        s = db.settings()
+        failed = mock.Mock(returncode=1, stderr='Operation not permitted')
+        with mock.patch.object(paths, 'LIVE', True),                 mock.patch.object(system.shutil, 'which', return_value='/usr/sbin/nft'),                 mock.patch.object(system.subprocess, 'run', return_value=failed),                 mock.patch.object(system, '_persist_hopping') as persist:
+            self.assertTrue(system.port_hopping(s).startswith('failed'))
+            persist.assert_not_called()
+        try:
+            hy2 = [n for n in subscription.nodes(s, db.user(u['id'])) if n['type'] == 'hy2']
+            self.assertEqual(len(hy2), 1)
+            self.assertNotIn('hop', hy2[0])
+            self.assertIs(cluster.public_info(s)['hy2_hop'], False)
+            with mock.patch.object(paths, 'LIVE', True),                     mock.patch.object(system.shutil, 'which', return_value=None):
+                self.assertEqual(system.port_hopping(s), 'failed: nft is not installed')
+            self.assertFalse(system.hopping_listed(s))
+            with mock.patch.object(paths, 'LIVE', True),                     mock.patch.object(system.shutil, 'which', return_value='/usr/sbin/nft'),                     mock.patch.object(system.subprocess, 'run', return_value=mock.Mock(returncode=0, stderr='')),                     mock.patch.object(system, '_persist_hopping'):
+                self.assertEqual(system.port_hopping(s), 'ok')
+            hy2 = [n for n in subscription.nodes(s, db.user(u['id'])) if n['type'] == 'hy2']
+            self.assertIn('hop', hy2[0])
+        finally:
+            system._hopping_failed = False
+
     def test_indexes_used_by_hot_queries_exist(self):
         have = {r['name'] for r in db.q("SELECT name FROM sqlite_master WHERE type='index'")}
         for name in ('idx_users_invited_by', 'idx_users_remote_id', 'idx_traffic_user_day', 'idx_events_kind_id',

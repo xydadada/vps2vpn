@@ -195,21 +195,43 @@ def _unpersist_hopping():
         pass
 
 
+_hopping_failed = False     # port hopping is on, but its kernel rule could not be installed
+
+
 def port_hopping(s):
-    """Clients pick random UDP ports in the range; the kernel sends them all to Hysteria."""
-    if not paths.LIVE or not shutil.which('nft'):
+    """Clients pick random UDP ports in the range; the kernel sends them all to Hysteria.
+    Returns None (not a live server), 'off', 'ok' or 'failed: <why>'."""
+    global _hopping_failed
+    if not paths.LIVE:
         return None
-    if not (s['hy2_enabled'] and s['hy2_hop']):
+    wanted = bool(s['hy2_enabled'] and s['hy2_hop'])
+    if not shutil.which('nft'):
+        _hopping_failed = wanted
+        return 'failed: nft is not installed' if wanted else None
+    if not wanted:
         run(['nft', 'delete', 'table', 'inet', NFT_TABLE], timeout=15)
         _unpersist_hopping()
+        _hopping_failed = False
         return 'off'
     # Atomic replace in one nft transaction (avoids packet-drop window between delete and recreate).
     script = nft_rules(s)
-    r = subprocess.run(['nft', '-f', '-'], input=script, capture_output=True, text=True, timeout=15)
+    try:
+        r = subprocess.run(['nft', '-f', '-'], input=script, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError) as e:
+        _hopping_failed = True
+        return 'failed: %s' % e
     if r.returncode != 0:
+        _hopping_failed = True
         return 'failed: ' + r.stderr[-200:]
     _persist_hopping(script)
+    _hopping_failed = False
     return 'ok'
+
+
+def hopping_listed(s):
+    """Whether subscriptions list the hop range. Not while its kernel rule is known to be missing:
+    a client would pick ports nothing listens on. They keep the plain Hysteria port meanwhile."""
+    return bool(s['hy2_hop']) and not _hopping_failed
 
 
 # --- host firewall (only if one is already active; we never enable one) ----------
