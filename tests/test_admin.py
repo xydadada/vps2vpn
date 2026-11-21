@@ -337,6 +337,31 @@ class AdminWeb(tu.Base):
         st, body, _ = self.req('POST', '/adm/api/users-bulk', {'ids': ids, 'action': 'delete'})
         self.assertIsNone(db.user(ids[0]))
 
+    def test_nonfinite_admin_numbers_are_bad_requests_without_changes(self):
+        # JSON numbers such as 1e309 decode to float('inf'), then int(inf)
+        # raises OverflowError. Every affected API should return HTTP 400.
+        self.login()
+        users_before = len(db.users())
+        invites_before = len(db.invites())
+        settings_before = db.settings()
+        nonfinite = float('inf')
+        cases = (
+            ('users-batch', {'prefix': 'nonfinite', 'count': nonfinite}),
+            ('invites', {'kind': 'admin', 'inviter': nonfinite}),
+            ('invites', {'kind': 'admin', 'max_uses': nonfinite}),
+            ('invites', {'kind': 'admin', 'valid_days': nonfinite}),
+            ('settings', {'hy2_port': nonfinite}),
+            ('settings', {'server_reset_day': nonfinite}),
+        )
+        for endpoint, payload in cases:
+            with self.subTest(endpoint=endpoint, payload=payload):
+                status, body, _ = self.req('POST', '/adm/api/' + endpoint, payload)
+                self.assertEqual(status, 400, body)
+        self.assertEqual(len(db.users()), users_before)
+        self.assertEqual(len(db.invites()), invites_before)
+        self.assertEqual(db.settings()['hy2_port'], settings_before['hy2_port'])
+        self.assertEqual(db.settings()['server_reset_day'], settings_before['server_reset_day'])
+
     def test_bulk_rejects_oversized_requests_atomically(self):
         self.login()
         uid = db.add_user('bulk-limit', 10)
