@@ -11,6 +11,7 @@ URL map (paths are secret random prefixes chosen at install time):
   /<member_path>/            member centre: sign in with name + password, or register with an invite code
   /<panel_path>/             admin panel (and /api/node/sync for a main server, authorised by the node key)
 """
+import binascii
 import hmac
 import html
 import http.server
@@ -74,7 +75,7 @@ def _totp_consume(secret, code):
             if hmac.compare_digest(secure.totp(secret, (cur + k) * 30), digits):
                 matched = cur + k
                 break
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, binascii.Error):
         return False
     if matched is None:
         return False
