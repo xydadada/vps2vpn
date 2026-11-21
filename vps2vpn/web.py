@@ -1933,7 +1933,7 @@ def validate_settings(d, s):
     out = {}
     bools = ('reality_enabled', 'hy2_enabled', 'tuic_enabled', 'hy2_hop', 'block_ads', 'block_bt', 'ai_group',
              'tune_network', 'ipv6_nodes', 'member_enabled', 'member_invites', 'member_requests', 'monitor_enabled',
-             'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause')
+             'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause', 'client_auto_update')
     for k in bools:
         if k in d:
             try:

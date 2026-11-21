@@ -159,6 +159,7 @@ DEFAULTS = {
     # vps2vpn app updates: set by hand, or found in /var/lib/vps2vpn/client (newest file wins when no version is set)
     'client_version': '',
     'client_url': '',
+    'client_auto_update': True,  # fetch the newest signed client from GitHub into the client folder
     'client_notes': '',         # {'hy2': {'<user id>': [time, host]}} lines the apps say they cannot reach         # {'period': 'YYYY-MM', 'rx': bytes, 'tx': bytes, 'last_rx':..., 'last_tx':...}
     # Watching
     'monitor_enabled': True,    # probe GitHub/YouTube/ChatGPT/Google/X from the server every 5 minutes

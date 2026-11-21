@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from . import abuse, aicheck, certs, cluster, cores, db, members, monitor, notify, paths, rules, system
+from . import abuse, aicheck, certs, clientsync, cluster, cores, db, members, monitor, notify, paths, rules, system
 
 LOG = []          # recent events shown in the panel
 _log_lock = threading.Lock()
@@ -140,6 +140,14 @@ def enforce(now=None):
 
 
 COLLECT_EVERY = 20     # seconds between traffic readings (cores.apply also reads right before a restart)
+
+
+def client_sync(s):
+    """The newest signed client release from GitHub into the members' download folder."""
+    try:
+        clientsync.sync(s, log=log)
+    except Exception as e:           # GitHub unreachable, disk full: try again at the next round
+        log('client update from GitHub failed: %s' % e)
 
 
 def collect():
@@ -779,6 +787,8 @@ class Scheduler:
                     self.last.pop('monitor_speed', None)
         if paths.LIVE and self.due('cert', 3600) and time.monotonic() >= self.cert_backoff_until:
             self.renew_cert(s)
+        if paths.LIVE and s.get('client_auto_update', True) and self.due('client', 6 * 3600):
+            threading.Thread(target=client_sync, args=(s,), daemon=True, name='clientsync').start()
         if self.due('rules', 86400) or (rules.mirror_age() is None and self.due('rules-missing', 600)):
             rules.refresh_in_background(log)
         if self.due('renew', 3600):

@@ -22,7 +22,7 @@ import unittest.mock
 from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from vps2vpn import abuse, certs, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, system, web
+from vps2vpn import abuse, certs, clientsync, cluster, cores, db, jobs, members, monitor, paths, rules, secure, subscription, system, web
 
 GIB = 1 << 30
 
@@ -2337,3 +2337,117 @@ class SubscriptionUXWeb(tu.Base):
             for secret in (u['uuid'], u['hy2_pass'], s['reality_public_key']):
                 self.assertNotIn(secret, text)
             self.assertIn('Quota used up', self._b64(r.getheader('Announce')))
+
+
+def _ed25519_sign(seed, msg):
+    """Test-only signer for clientsync's verifier (RFC 8032)."""
+    c = clientsync
+
+    def compress(pt):
+        zi = pow(pt[2], c._P - 2, c._P)
+        x, y = pt[0] * zi % c._P, pt[1] * zi % c._P
+        return (y | ((x & 1) << 255)).to_bytes(32, 'little')
+
+    h = hashlib.sha512(seed).digest()
+    a = int.from_bytes(h[:32], 'little') & ((1 << 254) - 8) | (1 << 254)
+    pub = compress(c._mul(a, c._G))
+    r = int.from_bytes(hashlib.sha512(h[32:] + msg).digest(), 'little') % c._L
+    big_r = compress(c._mul(r, c._G))
+    k = int.from_bytes(hashlib.sha512(big_r + pub + msg).digest(), 'little') % c._L
+    return pub, big_r + ((r + k * a) % c._L).to_bytes(32, 'little')
+
+
+class ClientSync(unittest.TestCase):
+    """The panel keeps its client folder at the newest signed GitHub release."""
+
+    SEED = b'\x07' * 32
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__('shutil').rmtree(self.dir, ignore_errors=True))
+        self.pub = _ed25519_sign(self.SEED, b'')[0]
+        p = mock.patch.object(clientsync, 'PUBLIC_KEY', self.pub)
+        p.start()
+        self.addCleanup(p.stop)
+        self.web = {}
+        o = mock.patch.object(clientsync.urllib.request, 'urlopen', self._open)
+        o.start()
+        self.addCleanup(o.stop)
+
+    def _open(self, req, timeout=None):
+        url = req.full_url if hasattr(req, 'full_url') else req
+        if url not in self.web:
+            raise OSError('404 ' + url)
+        return io.BytesIO(self.web[url])
+
+    def _release(self, version, files, prerelease=False, sign=True):
+        assets = []
+        for name, data in files.items():
+            self.web['https://dl.example/' + name] = data
+            assets.append({'name': name, 'browser_download_url': 'https://dl.example/' + name})
+            if sign:
+                st = clientsync.statement(name, hashlib.sha256(data).hexdigest(), len(data))
+                sig = base64.b64encode(_ed25519_sign(self.SEED, st)[1]) + b'\n'
+                self.web['https://dl.example/' + name + '.sig'] = sig
+                assets.append({'name': name + '.sig', 'browser_download_url': 'https://dl.example/' + name + '.sig'})
+        self.web[clientsync.RELEASE_API] = json.dumps(
+            {'tag_name': 'v' + version, 'prerelease': prerelease, 'assets': assets}).encode()
+
+    def _sync(self, **s):
+        return clientsync.sync(dict({'client_auto_update': True}, **s), log=lambda _: None, folder=self.dir)
+
+    def test_verifier_matches_rfc8032(self):
+        pk = bytes.fromhex('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a')
+        sig = bytes.fromhex('e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b')
+        self.assertTrue(clientsync.ed25519_verify(pk, b'', sig))
+        self.assertFalse(clientsync.ed25519_verify(pk, b'x', sig))
+        # A non-canonical S (S + L) must not pass as the same signature.
+        s = int.from_bytes(sig[32:], 'little') + clientsync._L
+        self.assertFalse(clientsync.ed25519_verify(pk, b'', sig[:32] + s.to_bytes(32, 'little')))
+
+    def test_publishes_the_signed_self_updating_installer_once(self):
+        self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'setup' * 100,
+                                'vps2vpn-1.0.9-windows-amd64-portable.zip': b'zip' * 100})
+        self.assertEqual(self._sync(), '1.0.9')
+        self.assertEqual(sorted(n for n in os.listdir(self.dir) if not n.startswith('.')),
+                         ['vps2vpn-1.0.9-windows-amd64-setup.exe', 'vps2vpn-1.0.9-windows-amd64-setup.exe.sig'])
+        with open(os.path.join(self.dir, 'vps2vpn-1.0.9-windows-amd64-setup.exe'), 'rb') as f:
+            self.assertEqual(f.read(), b'setup' * 100)
+        self.assertIsNone(self._sync())              # nothing newer: nothing downloaded again
+        # Members are now offered it, signed.
+        with mock.patch.object(paths, 'CLIENT', self.dir):
+            found = web.client_files()
+        self.assertEqual(found['version'], '1.0.9')
+        self.assertEqual(found['files'], {'windows': 'vps2vpn-1.0.9-windows-amd64-setup.exe'})
+        self.assertEqual(found['unsigned'], [])
+
+    def test_a_bad_signature_or_a_prerelease_is_not_published(self):
+        self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'setup'})
+        self.web['https://dl.example/vps2vpn-1.0.9-windows-amd64-setup.exe'] = b'tampered'
+        self.assertIsNone(self._sync())
+        self.assertEqual([n for n in os.listdir(self.dir) if not n.startswith('.')], [])
+        self._release('2.0.0', {'vps2vpn-2.0.0-windows-amd64-setup.exe': b'x'}, prerelease=True)
+        self.assertIsNone(self._sync())
+        self._release('2.0.0', {'vps2vpn-2.0.0-windows-amd64-setup.exe': b'x'}, sign=False)
+        self.assertIsNone(self._sync())
+        self.assertEqual([n for n in os.listdir(self.dir) if not n.startswith('.')], [])
+
+    def test_replaces_only_its_own_older_downloads_and_respects_the_setting(self):
+        manual = os.path.join(self.dir, 'vps2vpn-0.9.0-android-arm64.apk')
+        with open(manual, 'wb') as f:
+            f.write(b'mine')
+        self._release('1.0.8', {'vps2vpn-1.0.8-windows-amd64-setup.exe': b'old'})
+        self.assertEqual(self._sync(), '1.0.8')
+        self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'new'})
+        self.assertIsNone(self._sync(client_auto_update=False))
+        self.assertEqual(self._sync(), '1.0.9')
+        names = sorted(n for n in os.listdir(self.dir) if not n.startswith('.'))
+        self.assertEqual(names, ['vps2vpn-0.9.0-android-arm64.apk', 'vps2vpn-1.0.9-windows-amd64-setup.exe',
+                                 'vps2vpn-1.0.9-windows-amd64-setup.exe.sig'])
+        # An installer the owner put there that is already newer wins.
+        with open(os.path.join(self.dir, 'vps2vpn-2.0.0-windows-amd64-setup.exe'), 'wb') as f:
+            f.write(b'owner')
+        with open(os.path.join(self.dir, 'vps2vpn-2.0.0-windows-amd64-setup.exe.sig'), 'w') as f:
+            f.write('sig\n')
+        self._release('1.1.0', {'vps2vpn-1.1.0-windows-amd64-setup.exe': b'newer'})
+        self.assertIsNone(self._sync())
