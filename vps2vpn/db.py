@@ -755,6 +755,19 @@ def import_all(data):
         raise ValueError('panel_path and member_path must differ')
     for i, u in enumerate(data['users'], 1):
         _check_import_user(u, i)
+    # Text affinity permits malformed CSV here; invite_view later calls
+    # int() on every listed user id, breaking the entire invite page.
+    for table in ('invites', 'requests'):
+        rows = data.get(table, [])
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ValueError('invalid %s records in backup' % table)
+    for i, inv in enumerate(data.get('invites', []), 1):
+        used_by = inv.get('used_by', '')
+        if not isinstance(used_by, str) or any(
+                not (1 <= len(uid) <= 19 and uid.isascii() and uid.isdecimal()
+                     and 0 < int(uid) <= _SQLITE_MAX)
+                for uid in used_by.split(',') if uid):
+            raise ValueError('invite %d: invalid used_by in backup' % i)
     # A backup can be old, copied from another install, or edited: it is never
     # evidence that this bot/chat was verified on the restored installation.
     keep['tg_verified'] = False
