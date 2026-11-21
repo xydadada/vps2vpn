@@ -1237,7 +1237,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # twice. Preserve request order after de-duplication.
             ids = list(dict.fromkeys(user_id(i) for i in raw_ids))
             value = float(d.get('value') or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):    # a 310-digit JSON integer overflows float()
             return self.json({'error': 'invalid number'}, 400)
         if not math.isfinite(value) or abs(value) > 1e6:
             return self.json({'error': 'invalid number'}, 400)

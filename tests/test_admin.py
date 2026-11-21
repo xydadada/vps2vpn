@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import unittest
+from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
 from vps2vpn import certs, db, jobs, notify, rules, secure, subscription, web
@@ -351,6 +352,19 @@ class AdminWeb(tu.Base):
                                     {'ids': [uid, bad_id], 'action': 'add_gb', 'value': 99})
             self.assertEqual(status, 400, bad_id)
         self.assertEqual(db.user(uid)['quota_gb'], 13)
+
+    def test_bulk_value_too_large_for_float_is_rejected_not_500(self):
+        self.login()
+        uid = db.add_user('bulk-huge', 10)
+        with mock.patch.object(web.jobs, 'enforce') as enforce:
+            for action in ('extend', 'add_gb', 'set_quota'):
+                status, body, _ = self.req('POST', '/adm/api/users-bulk',
+                                           {'ids': [uid], 'action': action, 'value': 10 ** 309})
+                self.assertEqual(status, 400, body)
+                self.assertIn('invalid number', json.loads(body)['error'])
+            enforce.assert_not_called()
+        self.assertEqual(db.user(uid)['quota_gb'], 10)
+        self.assertEqual(db.user(uid)['expire_at'], 0)
 
     def test_two_step_sign_in_and_history(self):
         self.login()
