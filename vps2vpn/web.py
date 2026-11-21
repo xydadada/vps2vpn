@@ -1123,10 +1123,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # concurrent enrollment must not report success only to have this
             # request overwrite its newly enrolled secret after releasing the lock.
             with _totp_lock:
-                active_secret = db.settings()['admin_totp']
-                _totp_last_step.pop(active_secret, None)
-                db.set_settings(admin_totp='')
-            return self._new_admin_session()
+                def off():
+                    _totp_last_step.pop(s['admin_totp'], None)
+                    db.set_settings(admin_totp='')
+                return self._change_admin_sign_in(s, off)
         sec = str(d.get('secret', '')).strip().upper()
         if not re.fullmatch(r'[A-Z2-7]{16,64}', sec):
             return self.json({'error': 'bad secret'}, 400)
@@ -1145,6 +1145,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if active:
             return self.json({'error': 'disable existing 2FA before enrolling again'}, 409)
         return self._new_admin_session()
+
+    def _change_admin_sign_in(self, s, change):
+        """Apply `change` to how the admin signs in, then end every session and start one for this browser.
+
+        The password check that allowed it ran against `s`, read when the request came in. If the user
+        name, password or 2FA changed since then, or this session was ended meanwhile (another request
+        changed them), the change would undo that one with credentials that no longer count: refuse.
+        """
+        with db.transaction():
+            current = db.settings()
+            if (any(current[k] != s[k] for k in ('admin_user', 'admin_hash', 'admin_totp'))
+                    or not db.session_ok(self.cookie('v2v'))):
+                stale = True
+            else:
+                stale = False
+                change()
+                db.end_all_sessions()
+                tok = db.new_session()
+        if stale:
+            return self.json({'error': 'sign-in settings changed meanwhile; reload and try again'}, 409)
+        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(tok)})
 
     def _new_admin_session(self):
         """After a change to how the admin signs in: every session ends (a stolen copy of this one too) and
@@ -1758,9 +1779,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'password must be at least 8 characters'}, 400)
         if len(new) > 128:               # sign-in refuses longer passwords: it would lock the admin out
             return self.json({'error': 'password: 8 to 128 characters'}, 400)
-        db.set_settings(admin_hash=secure.hash_password(new), admin_user=str(d.get('username') or s['admin_user'])[:32])
-        db.end_all_sessions()
-        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
+        new_hash = secure.hash_password(new)     # slow: before the transaction, not inside it
+        user = str(d.get('username') or s['admin_user'])[:32]
+        return self._change_admin_sign_in(s, lambda: db.set_settings(admin_hash=new_hash, admin_user=user))
 
     def api_check_targets(self, method, s):
         best, res = system.best_target()

@@ -539,6 +539,57 @@ class AdminWeb(tu.Base):
         self.assertEqual(self.login()[0], 403)
         self.assertEqual(self.login(password='newadminpassword')[0], 200)
 
+    def _admin_change_paused(self, path, body, change):
+        """Hold an authenticated sign-in change in its password check while `change` runs (#110)."""
+        self.assertEqual(self.login()[0], 200)
+        entered, resume = threading.Event(), threading.Event()
+        result = []
+        original_check = secure.check_password
+
+        def slow_password_check(password, stored):
+            if not entered.is_set():
+                entered.set()
+                if not resume.wait(10):
+                    raise RuntimeError('sign-in change race test timed out')
+            return original_check(password, stored)
+
+        worker = threading.Thread(target=lambda: result.append(self.req('POST', path, body)), daemon=True)
+        with mock.patch.object(secure, 'check_password', side_effect=slow_password_check):
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5), 'the change never reached its password check')
+                change()
+            finally:
+                resume.set()
+                worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result[0][0], 409, result[0][1])
+
+    def test_pending_password_change_cannot_undo_a_later_one(self):
+        def other_change():
+            st, body, _ = self.req('POST', '/adm/api/password', {'old': 'adminpassword', 'new': 'secondpassword'})
+            self.assertEqual(st, 200, body)
+
+        self._admin_change_paused('/adm/api/password', {'old': 'adminpassword', 'new': 'firstpassword1'},
+                                  other_change)
+        self.assertTrue(secure.check_password('secondpassword', db.settings()['admin_hash']))
+        self.cookie = ''
+        self.assertEqual(self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'firstpassword1'})[0], 403)
+        self.assertEqual(self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'secondpassword'})[0], 200)
+
+    def test_pending_2fa_disable_cannot_undo_a_password_change(self):
+        secret = secure.totp_secret()
+        self.login()
+        self.assertEqual(self.req('POST', '/adm/api/totp', {'secret': secret, 'code': secure.totp(secret)})[0], 200)
+
+        def change_password():
+            st, body, _ = self.req('POST', '/adm/api/password', {'old': 'adminpassword', 'new': 'secondpassword'})
+            self.assertEqual(st, 200, body)
+
+        with mock.patch.object(type(self), 'login', lambda self_, **kw: (200, '', {})):
+            self._admin_change_paused('/adm/api/totp', {'off': True, 'password': 'adminpassword'}, change_password)
+        self.assertEqual(db.settings()['admin_totp'], secret)
+
     def test_parallel_totp_disable_cannot_erase_successful_enrollment(self):
         self.login()
         new_secret = secure.totp_secret()
@@ -583,7 +634,9 @@ class AdminWeb(tu.Base):
             try:
                 self.assertTrue(off_entered.wait(5), 'disable never reached the DB write')
                 enroll_thread.start()
-                self.assertTrue(enroll_verified.wait(5), 'enrollment did not validate its code')
+                # The disable holds the settings transaction from its check to its write, so the
+                # enrollment may not even get to validate its code before that commits.
+                enroll_verified.wait(1)
                 self.assertFalse(enroll_done.wait(0.1),
                                  'enrollment must wait for in-flight disable to commit')
             finally:
@@ -594,8 +647,13 @@ class AdminWeb(tu.Base):
         self.assertFalse(off_thread.is_alive())
         self.assertFalse(enroll_thread.is_alive())
         self.assertEqual(results['off'][0], 200, results)
-        self.assertEqual(results['enroll'][0], 200, results)
-        self.assertEqual(db.settings()['admin_totp'], new_secret)
+        # The disable ends every session; an enrollment that reaches its session check after that is
+        # signed out. Either way a reported success is never erased.
+        if results['enroll'][0] == 200:
+            self.assertEqual(db.settings()['admin_totp'], new_secret)
+        else:
+            self.assertEqual(results['enroll'][0], 401, results)
+            self.assertEqual(db.settings()['admin_totp'], '')
 
     def test_sign_out_other_devices(self):
         self.login()
