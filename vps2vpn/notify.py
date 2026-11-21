@@ -3,6 +3,7 @@
 Setup in the panel: create a bot with @BotFather, paste its token, send the bot any message, then
 press "Find my chat" - the panel reads the chat id from the bot's updates.
 """
+import hashlib
 import json
 import os
 import re
@@ -44,7 +45,10 @@ def send(text, key=None, every=6 * 3600, s=None):
     now = time.monotonic()            # wall-clock jumps (NTP, manual set) must not mute or unmute alerts
     # A fresh verified owner binding must receive its first warning even when
     # the previous owner was sent an alert with the same key minutes ago.
-    recent_key = (s['tg_token'], str(s['tg_chat']), key) if key else None
+    # A digest distinguishes bot credentials without keeping retired raw tokens
+    # in the in-process deduplication cache after an owner rebind.
+    bot_id = hashlib.sha256(s['tg_token'].encode('utf-8')).digest() if key else None
+    recent_key = (bot_id, str(s['tg_chat']), key) if key else None
     if recent_key is not None:
         with _recent_lock:
             prev = _recent.get(recent_key)
@@ -60,6 +64,13 @@ def send(text, key=None, every=6 * 3600, s=None):
                 if len(_recent) > 1000:
                     for k in [k for k, v in _recent.items() if now - v[0] >= max(v[1], 86400)]:
                         _recent.pop(k, None)
+                    # High-cardinality alert keys or repeated rebindings may
+                    # all be fresh. Expiry alone cannot cap this dictionary.
+                    overflow = len(_recent) - 1000
+                    if overflow > 0:
+                        oldest = sorted(_recent, key=lambda k: _recent[k][0])
+                        for k in oldest[:overflow]:
+                            _recent.pop(k, None)
         return True
     except (OSError, ValueError):
         return False
