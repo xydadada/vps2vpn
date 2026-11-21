@@ -759,6 +759,21 @@ class Web(Base):
         finally:
             c.close()
 
+    def test_restore_rejects_bad_invite_history_and_keeps_admin_usable(self):
+        db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
+        status, body, _ = self.req('POST', self.pp + '/api/login',
+                                   {'username': 'admin', 'password': 'rightpassword'})
+        self.assertEqual(status, 200, body)
+        db.add_invite(code='RESTORE-OK', kind='admin', valid_until=int(time.time()) + 3600)
+        before = db.export_all()
+        damaged = json.loads(json.dumps(before))
+        damaged['invites'][0]['used_by'] = 'not-an-id'
+        status, body, _ = self.req('POST', self.pp + '/api/restore', damaged)
+        self.assertEqual(status, 400, body)
+        self.assertEqual(db.export_all(), before)
+        status, body, _ = self.req('GET', self.pp + '/api/invites')
+        self.assertEqual(status, 200, body)
+
     def test_invite_http_rejects_oversized_valid_json_integer(self):
         db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
         status, body, _ = self.req('POST', self.pp + '/api/login',
