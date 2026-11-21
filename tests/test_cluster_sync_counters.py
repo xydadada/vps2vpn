@@ -67,6 +67,23 @@ class NodeTrafficBoundaries(tu.Base):
         self.assertEqual(server['fail_count'], 1)
         self.assertEqual(server['seen'][first], [0, 0])
 
+    def test_shared_db_writer_rolls_back_local_core_overflow(self):
+        a, b = db.add_user('local-a'), db.add_user('local-b')
+        db.update_user(b, used_up=MAX - 1)
+        # This same DB path is used by cores.save_traffic(), not just nodes.
+        with self.assertRaises(OverflowError):
+            db.add_traffic_many([(a, 8, 0), (b, 2, 0)])
+        self.assertEqual(db.user(a)['used_up'], 0)
+        self.assertEqual(db.user(b)['used_up'], MAX - 1)
+        self.assertEqual(db.q('SELECT * FROM traffic'), [])
+
+    def test_shared_db_writer_rejects_collective_overflow(self):
+        uid = db.add_user('local-alias')
+        half = MAX // 2 + 10
+        with self.assertRaises(OverflowError):
+            db.add_traffic_many([(uid, half, 0), (uid, half, 0)])
+        self.assertEqual(db.user(uid)['used_up'], 0)
+
     def test_bad_node_counters_do_not_starve_the_next_healthy_node(self):
         user = db.add_user('shared')
         one = self._server(user)
