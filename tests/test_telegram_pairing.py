@@ -71,8 +71,8 @@ class TelegramPairing(unittest.TestCase):
         stop = Mock()
         stop.is_set.side_effect = [False, True]
         handle = Mock()
-        with patch.object(notify.db, 'settings', return_value=settings), \\
-             patch.object(notify, '_bot_binding_active', return_value=True), \\
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
              patch.object(notify, '_call', return_value={'ok': True, 'result': {'unexpected': 'shape'}}):
             notify.bot_loop(stop, handle, lambda line: None)
         handle.assert_not_called()
@@ -88,23 +88,23 @@ class TelegramPairing(unittest.TestCase):
                    {'update_id': 3, 'message': 'bad'},
                    {'update_id': 4, 'message': {'text': 99}},
                    message(42, '/status', update_id=5)]
-        with patch.object(notify.db, 'settings', return_value=settings), \\
-             patch.object(notify, '_bot_binding_active', return_value=True), \\
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
              patch.object(notify, '_call', side_effect=[
                  {'ok': True, 'result': []},
                  {'ok': True, 'result': records},
              ]) as call:
             notify.bot_loop(stop, handle, lambda line: None)
         handle.assert_called_once_with('/status')
-        self.assertEqual(call.call_args.args[2]['offset'], 6) if False else None
+        self.assertEqual(call.call_count, 2)
 
     def test_bot_loop_backs_off_when_no_update_id_can_advance(self):
         settings = {'tg_token': 'bot-token', 'tg_chat': '42', 'tg_verified': True,
                     'tg_bot': True, 'setup_done': True}
         stop = Mock()
         stop.is_set.side_effect = [False, True]
-        with patch.object(notify.db, 'settings', return_value=settings), \\
-             patch.object(notify, '_bot_binding_active', return_value=True), \\
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
              patch.object(notify, '_call', return_value={
                  'ok': True, 'result': [None] * 100,
              }):
