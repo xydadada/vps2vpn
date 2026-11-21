@@ -305,7 +305,7 @@ def _validate_sync_answer(ans):
         if tls is not None and (not isinstance(tls, dict) or
                                 any(not isinstance(tls.get(k), str) for k in ('sni', 'pin', 'pem'))):
             raise SyncError('node sync response has invalid TLS metadata')
-        if info.get('ipv6_nodes') and info.get('public_ipv6') and not isinstance(info['public_ipv6'], str):
+        if 'public_ipv6' in info and not isinstance(info['public_ipv6'], str):
             raise SyncError('node sync response has invalid IPv6 host')
         score = info.get('ai_score', -1)
         if type(score) is not int or not -1 <= score <= 4:
