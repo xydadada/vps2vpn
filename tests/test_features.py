@@ -1410,6 +1410,19 @@ class Servers(tu.Base):
                              {'users': []})
 
 
+    def test_joined_node_label_is_safe_and_nonempty(self):
+        s = db.settings()
+        self.assertEqual(cluster.unique_name('\r\n', s), 'server')
+        self.assertEqual(cluster.unique_name('   ', s), 'server')
+        self.assertEqual(cluster.unique_name(42, s), '42')
+        self.assertEqual(cluster.unique_name('Edge\r\n[Proxy]\nEvil', s), 'Edge[Proxy]Evil')
+        self.assertEqual(cluster.unique_name('Edge\u2028[Proxy]\u0085Evil', s), 'Edge[Proxy]Evil')
+        self.assertEqual(cluster.unique_name('Edge\u2029West', s), 'EdgeWest')
+        self.assertEqual(cluster.unique_name('\u0085', s), 'server')
+        self.assertEqual(subscription._sr_label(cluster.unique_name('\r\n', s)), 'server')
+        db.set_settings(servers=[{'id': 'abcd1234', 'name': 'server'}])
+        self.assertEqual(cluster.unique_name('\r\n', db.settings()), 'server 2')
+
     def test_join_code(self):
         db.set_settings(panel_path='pp', node_name='Osaka')
         code = cluster.join_code(db.settings(), 'https://203.0.113.7:9443')

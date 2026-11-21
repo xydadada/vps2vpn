@@ -102,7 +102,7 @@ def parse_join_code(code):
 
 
 def _clean_label(text, limit=24):
-    return re.sub(r'[\x00-\x1f\x7f]', '', str(text or '')).strip()[:limit]
+    return re.sub(r'[\x00-\x1f\x7f\u0085\u2028\u2029]', '', str(text or '')).strip()[:limit]
 
 
 def _remote_name(uname, master, rid, skip_uid=None):
@@ -560,7 +560,7 @@ def _sync_all(log):
 def unique_name(name, s, skip=None):
     """Two servers in one city would both be "悉尼"; apps refuse duplicate entry names, so the next is "悉尼 2"."""
     taken = {s.get('node_name') or 'vps2vpn'} | {x['name'] for x in s['servers'] if x['id'] != skip}
-    name = name[:24] or 'server'
+    name = _clean_label(name) or 'server'
     out, i = name, 2
     while out in taken:
         out = '%s %d' % (name[:21], i)
