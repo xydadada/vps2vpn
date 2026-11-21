@@ -419,7 +419,7 @@ class History:
                 return False
             if value is not None and index in (1, 2) and not 0 <= value <= 100:
                 return False
-            if value is not None and index in (3, 4) and value < 0:
+            if index in (3, 4) and not 0 <= value < (1 << 63):
                 return False
         return True
 
