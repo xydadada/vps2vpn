@@ -343,6 +343,23 @@ class Abuse(tu.Base):
 
 
 
+class HistoryCache(tu.Base):
+    def test_non_array_json_cannot_abort_history_initialization(self):
+        path = os.path.join(paths.VAR, 'bad-history.json')
+        for payload in ('null', 'true', '123', '{"points": []}'):
+            with self.subTest(payload=payload):
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(payload)
+                self.assertEqual(jobs.History(path=path).snapshot(), [])
+
+    def test_valid_list_keeps_only_five_field_samples(self):
+        path = os.path.join(paths.VAR, 'mixed-history.json')
+        good = [1000, 15.0, 40.0, 12, 13]
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump([[], good, None, [1, 2, 3]], f)
+        self.assertEqual(jobs.History(path=path).snapshot(), [good])
+
+
 class Monitor(tu.Base):
     def test_summary(self):
         monitor._hist = []
