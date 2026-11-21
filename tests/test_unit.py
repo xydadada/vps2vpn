@@ -314,6 +314,35 @@ class RestoreRouteSafety(Base):
             db.import_all(damaged)
         self.assertEqual(db.export_all(), before)
 
+    def test_invite_usage_history_is_preflighted_before_restore(self):
+        from vps2vpn import members
+        uid = db.add_user('invite-restore', quota_gb=2)
+        db.add_invite(code='restore-usage-code', kind='admin', valid_until=int(time.time()) + 86400,
+                      used_by=str(uid), uses=1, status='used')
+        before = db.export_all()
+        bad_histories = ('not-an-id', '1,', '1,,2', '01', '0', '1\n2', '9' * 24, None, ['1'])
+        for history in bad_histories:
+            with self.subTest(history=history):
+                damaged = json.loads(json.dumps(before))
+                damaged['invites'][0]['used_by'] = history
+                with self.assertRaisesRegex(ValueError, 'invite'):
+                    db.import_all(damaged)
+                self.assertEqual(db.export_all(), before)
+        for bad_rows in (None, {}, [42]):
+            with self.subTest(rows=bad_rows):
+                damaged = json.loads(json.dumps(before))
+                damaged['invites'] = bad_rows
+                with self.assertRaises(ValueError):
+                    db.import_all(damaged)
+                self.assertEqual(db.export_all(), before)
+        db.import_all(before)
+        self.assertEqual(members.invite_view(db.invites()[0], {uid: 'invite-restore'})['used_by'],
+                         ['invite-restore'])
+        legacy = json.loads(json.dumps(before))
+        del legacy['invites'][0]['used_by']
+        db.import_all(legacy)
+        self.assertEqual(db.invites()[0]['used_by'], '')
+
     def test_legacy_backup_without_member_path_still_imports(self):
         db.set_settings(setup_done=True)
         original = db.export_all()
