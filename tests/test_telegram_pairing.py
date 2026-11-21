@@ -1,6 +1,6 @@
 """Regression tests for Telegram bot chat ownership verification."""
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from vps2vpn import notify
 
@@ -64,6 +64,76 @@ class TelegramPairing(unittest.TestCase):
             self.assertEqual(notify.find_chat('token', CODE), (None, None))
         with patch.object(notify, '_call', return_value={'ok': True, 'result': {'unexpected': 'shape'}}):
             self.assertEqual(notify.find_chat('token', CODE), (None, None))
+
+    def test_bot_loop_rejects_malformed_result_without_crashing(self):
+        settings = {'tg_token': 'bot-token', 'tg_chat': '42', 'tg_verified': True,
+                    'tg_bot': True, 'setup_done': True}
+        stop = Mock()
+        stop.is_set.side_effect = [False, True]
+        handle = Mock()
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
+             patch.object(notify, '_call', return_value={'ok': True, 'result': {'unexpected': 'shape'}}):
+            notify.bot_loop(stop, handle, lambda line: None)
+        handle.assert_not_called()
+        stop.wait.assert_called_once_with(30)
+
+    def test_bot_loop_skips_malformed_updates_and_runs_next_valid_command(self):
+        settings = {'tg_token': 'bot-token', 'tg_chat': '42', 'tg_verified': True,
+                    'tg_bot': True, 'setup_done': True}
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        handle = Mock(return_value=None)
+        records = [None, 'invalid', {'update_id': True},
+                   {'update_id': 3, 'message': 'bad'},
+                   {'update_id': 4, 'message': {'text': 99}},
+                   message(42, '/status', update_id=5)]
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
+             patch.object(notify, '_call', side_effect=[
+                 {'ok': True, 'result': []},
+                 {'ok': True, 'result': records},
+             ]) as call:
+            notify.bot_loop(stop, handle, lambda line: None)
+        handle.assert_called_once_with('/status')
+        self.assertEqual(call.call_count, 2)
+
+    def test_bot_loop_advances_cursor_without_replaying_out_of_order_ids(self):
+        settings = {'tg_token': 'bot-token', 'tg_chat': '42', 'tg_verified': True,
+                    'tg_bot': True, 'setup_done': True}
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, False, True]
+        handle = Mock(return_value=None)
+        records = [message(42, '/status', update_id=9),
+                   message(42, '/replayed', update_id=8),
+                   message(42, '/duplicate', update_id=9),
+                   message(42, '/help', update_id=10)]
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
+             patch.object(notify, '_call', side_effect=[
+                 {'ok': True, 'result': []},
+                 {'ok': True, 'result': records},
+                 {'ok': True, 'result': []},
+             ]) as call:
+            notify.bot_loop(stop, handle, lambda line: None)
+        self.assertEqual([args.args[2].get('offset') for args in call.call_args_list],
+                         [None, None, 11])
+        self.assertEqual([args.args[0] for args in handle.call_args_list],
+                         ['/status', '/help'])
+
+    def test_bot_loop_backs_off_when_no_update_id_can_advance(self):
+        settings = {'tg_token': 'bot-token', 'tg_chat': '42', 'tg_verified': True,
+                    'tg_bot': True, 'setup_done': True}
+        stop = Mock()
+        stop.is_set.side_effect = [False, True]
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
+             patch.object(notify, '_call', return_value={
+                 'ok': True, 'result': [None] * 100,
+             }):
+            notify.bot_loop(stop, Mock(), lambda line: None)
+        stop.wait.assert_called_once_with(30)
+
 
 
 if __name__ == '__main__':

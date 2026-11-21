@@ -183,20 +183,40 @@ def bot_loop(stop, handle, log):
         if not _bot_binding_active(s):
             offset, primed = None, False
             continue
-        batch = res.get('result') or []
+        batch = res.get('result')
+        if not isinstance(batch, list):
+            # A malformed but HTTP-200 response must not terminate the bot
+            # thread, and must not mark a stale backlog as drained.
+            log('telegram: malformed getUpdates result (expected list)')
+            stop.wait(30)
+            continue
         first = not primed
-        # drain the backlog completely (getUpdates returns at most 100 per call) before acting on anything
+        # Drain the backlog completely (getUpdates returns at most 100 per call).
         primed = primed or len(batch) < 100
+        advanced = False
         for upd in batch:
             # A change mid-batch must also cancel every remaining command.
             if not _bot_binding_active(s):
                 offset, primed = None, False
                 break
-            offset = upd['update_id'] + 1
+            if not isinstance(upd, dict):
+                continue
+            update_id = upd.get('update_id')
+            if type(update_id) is not int or update_id < 0:
+                continue
+            if offset is not None and update_id < offset:
+                continue                  # never replay or rewind on out-of-order data
+            offset = update_id + 1
+            advanced = True
             if first:
-                continue              # old messages from before the panel started: do not act on them
-            msg = upd.get('message') or {}
-            text = (msg.get('text') or '').strip()
+                continue                  # never act on pre-start commands
+            msg = upd.get('message')
+            if not isinstance(msg, dict):
+                continue
+            raw_text = msg.get('text')
+            if not isinstance(raw_text, str):
+                continue
+            text = raw_text.strip()
             if not text.startswith('/') or not _owner_private_message(msg, s['tg_chat']):
                 continue
             try:
@@ -214,3 +234,8 @@ def bot_loop(stop, handle, log):
                 send_file(out[1], out[2], out[3], s=s)
             elif out:
                 reply(s, s['tg_chat'], out)
+        if batch and not advanced:
+            # No trustworthy update IDs means a cursor cannot progress. Avoid
+            # hot-looping on a poisoned response and re-prime before commands.
+            primed = False
+            stop.wait(30)
