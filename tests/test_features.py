@@ -1140,6 +1140,33 @@ class Shadowrocket(tu.Base):
         self.assertNotIn('hysteria2,', conf)                      # salamander is not expressible there
         self.assertEqual(subscription.detect_format('', 'shadowrocket'), 'shadowrocket')
 
+    def test_restored_username_cannot_inject_shadowrocket_sections(self):
+        user = mk('legitimate', 10)
+        backup = db.export_all()
+        backup['users'][0]['name'] = 'Alice\n[Proxy]\nInjected = direct'
+        db.import_all(backup)
+        conf = subscription.shadowrocket(db.settings(), db.user(user['id']), 'https://example.org')
+        self.assertEqual(conf.splitlines().count('[Proxy]'), 1)
+        self.assertEqual(conf.splitlines().count('[Proxy Group]'), 1)
+        self.assertEqual(conf.splitlines().count('[Rule]'), 1)
+        self.assertIn('# vps2vpn Alice [Proxy] Injected - direct -', conf.splitlines()[0])
+
+    def test_restored_credentials_cannot_inject_shadowrocket_proxy_records(self):
+        user = mk('restored-credentials', 10)
+        original = db.export_all()
+        for field in ('hy2_pass', 'uuid'):
+            with self.subTest(field=field):
+                backup = json.loads(json.dumps(original))
+                backup['users'][0][field] = 'injected\n[Proxy]\nBad = direct'
+                db.import_all(backup)
+                conf = subscription.shadowrocket(db.settings(), db.user(user['id']), 'https://example.org')
+                self.assertEqual(conf.splitlines().count('[Proxy]'), 1)
+                self.assertEqual(conf.splitlines().count('[Proxy Group]'), 1)
+                self.assertEqual(conf.splitlines().count('[Rule]'), 1)
+                self.assertNotIn('Bad = direct', conf)
+                self.assertNotIn(' = tuic, ', conf)
+                self.assertIn(' = vless, ' if field == 'hy2_pass' else ' = hysteria2, ', conf)
+
     def test_joined_node_label_cannot_inject_ini_sections(self):
         user = mk('shadowrocket-member', 20)
         db.set_settings(hy2_obfs='')

@@ -521,6 +521,9 @@ def shadowrocket_proxy(n):
                 [('congestion_control', 'bbr'), ('udp_relay_mode', 'native')]
     else:
         return None
+    # Credentials bypass _sr_safe for comma escaping; never emit record separators.
+    if any(re.search(r'[\x00-\x1f\x7f\u0085\u2028\u2029]', str(v)) for _, v in params):
+        return None
     return '%s = %s, %s' % (_sr_name(n), head, ', '.join('%s=%s' % (k, _sr_safe(v) if k != 'auth' and k != 'password'
                                                                        else str(v).replace(',', '%2C'))
                                                           for k, v in params))
@@ -595,7 +598,7 @@ def shadowrocket(s, u, base_url, sub_url=''):
     if sub_url:
         general.append('update-url = %s?format=shadowrocket' % sub_url)
     head = '# vps2vpn %s - %s\n# Nodes, routing and DNS in one file. Pick this config, set Global Routing to "Config".\n' % (
-        u['name'], time.strftime('%Y-%m-%d %H:%M'))
+        _sr_label(u['name']), time.strftime('%Y-%m-%d %H:%M'))
     return head + '\n'.join(general) + '\n\n[Proxy]\n' + '\n'.join(lines) + '\n\n[Proxy Group]\n' + \
         '\n'.join(groups) + '\n\n[Rule]\n' + '\n'.join(rule_lines) + '\n'
 
