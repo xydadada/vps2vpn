@@ -4,6 +4,15 @@
 
 **Security**
 - A panel with a trusted certificate (a domain with Let's Encrypt) no longer sends a subscription, with the account's proxy credentials, over plain HTTP: `http://` subscription links get a redirect to HTTPS first (apps follow it, so old links keep working). A self-signed panel still serves plain HTTP, which most apps need there (#84).
+- Turning admin 2FA off and enrolling a new authenticator at the same moment can no longer leave 2FA silently off after the enrollment said it succeeded (#78).
+
+**Restore**
+- A backup whose panel or member-centre path is not a plain path segment (a number, a list, `../admin`, empty on a configured panel, or both the same) is refused before anything is replaced, instead of locking the admin out of the panel (#81, #82).
+- Every user row of a backup is checked first as well: whole numbers within SQLite's range, finite quotas, text where text belongs. A row with `"expire_at": "not-a-number"` used to be stored as text and break that account's subscription on every request (#85).
+
+**Robustness**
+- Numbers like `1e400` or a 310-digit integer in a request answer 400 instead of 500 in batch creation, invites, member invite revoke, quota requests and the port, server cap and reset-day settings (#72, #74, #86; PRs #75, #79, #87).
+- Several servers: a node answering an error as a JSON array or `null` no longer aborts the whole sync round, and node traffic counters that would not fit SQLite's 64-bit integers are refused (the node is marked failed, nothing is billed, the other nodes still sync) (#76, #77; PRs #80, #83).
 
 ## 0.2.9
 

@@ -1,6 +1,7 @@
 """SQLite storage: settings, users, sessions, daily traffic, invite codes, quota requests and events."""
 import contextlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -667,6 +668,39 @@ def export_all():
 
 
 IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': '', 'sub_ua': ''}
+_IMPORT_INT = ('expire_at', 'reset_day', 'used_up', 'used_down', 'enabled', 'last_seen', 'created_at', 'invited_by',
+               'remote_id', 'max_ips', 'paused_until', 'expire_after_days', 'sub_fetched_at')
+_IMPORT_REAL = ('quota_gb', 'invite_deduct')
+_IMPORT_TEXT = ('name', 'uuid', 'hy2_pass', 'sub_token', 'disabled_reason', 'note', 'last_reset', 'login_hash',
+                'sub_ua')
+_SQLITE_MAX = (1 << 63) - 1
+
+
+def _check_import_user(u, i):
+    """A backup's user row, before anything is deleted. SQLite would store "abc" in an INTEGER column as text,
+    and that account's subscription would then fail on every request."""
+    if not isinstance(u, dict):
+        raise ValueError('user %d in the backup is not a record' % i)
+    for k in _IMPORT_TEXT:
+        if k in u and not isinstance(u[k], str):
+            raise ValueError('user %d: %s must be text' % (i, k))
+    for k in ('name', 'uuid', 'hy2_pass', 'sub_token'):
+        if not isinstance(u.get(k), str) or not u[k]:
+            raise ValueError('user %d: %s is missing' % (i, k))
+    for k in _IMPORT_INT:
+        v = u.get(k, 0)
+        if type(v) is bool:
+            v = int(v)
+        if type(v) is not int or not 0 <= v <= _SQLITE_MAX:
+            raise ValueError('user %d: %s must be a whole number' % (i, k))
+    if 'id' in u and u['id'] is not None and (type(u['id']) is not int or not 0 < u['id'] <= _SQLITE_MAX):
+        raise ValueError('user %d: invalid id' % i)
+    for k in _IMPORT_REAL:
+        v = u.get(k, 0)
+        if type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1e9:
+            raise ValueError('user %d: %s must be a number' % (i, k))
+    if u.get('enabled', 1) not in (0, 1) or not 0 <= u.get('reset_day', 0) <= 28:
+        raise ValueError('user %d: invalid enabled or reset day' % i)
 
 
 def import_all(data):
@@ -692,6 +726,8 @@ def import_all(data):
         raise ValueError('a configured backup needs a panel_path')
     if panel_path and panel_path == member_path:
         raise ValueError('panel_path and member_path must differ')
+    for i, u in enumerate(data['users'], 1):
+        _check_import_user(u, i)
     # A backup can be old, copied from another install, or edited: it is never
     # evidence that this bot/chat was verified on the restored installation.
     keep['tg_verified'] = False

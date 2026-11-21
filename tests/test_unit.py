@@ -290,6 +290,29 @@ class RestoreRouteSafety(Base):
                     db.import_all(damaged)
                 self.assertEqual(db.export_all(), before)
 
+    def test_backup_user_rows_are_checked_before_anything_is_replaced(self):
+        db.set_settings(setup_done=True)
+        uid = db.add_user('row-check', 5)
+        db.update_user(uid, quota_gb=2.5, used_up=10, expire_at=2000000000)
+        before = db.export_all()
+        db.import_all(json.loads(json.dumps(before)))              # a real backup still restores
+        self.assertEqual(db.export_all()['users'], before['users'])
+        invalid = (('expire_at', 'not-a-number'), ('used_up', -1), ('used_down', 1 << 63), ('quota_gb', 'lots'),
+                   ('quota_gb', 1e400), ('enabled', 2), ('reset_day', 31), ('name', 7), ('sub_token', ''),
+                   ('max_ips', 1.5), ('id', 'x'), ('note', None))
+        for key, value in invalid:
+            with self.subTest(key=key, value=value):
+                damaged = json.loads(json.dumps(before))
+                damaged['users'][0][key] = value
+                with self.assertRaises(ValueError):
+                    db.import_all(damaged)
+                self.assertEqual(db.export_all(), before)
+        damaged = json.loads(json.dumps(before))
+        damaged['users'].append('not a row')
+        with self.assertRaises(ValueError):
+            db.import_all(damaged)
+        self.assertEqual(db.export_all(), before)
+
     def test_legacy_backup_without_member_path_still_imports(self):
         db.set_settings(setup_done=True)
         original = db.export_all()
