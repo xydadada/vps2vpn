@@ -51,6 +51,22 @@ class NodeTrafficBoundaries(tu.Base):
         self.assertEqual((row['up'], row['kind']), (MAX - 3, 'integer'))
         self.assertEqual(db.user(uid)['used_up'], 0)
 
+    def test_numeric_alias_keys_cannot_collectively_overflow_a_single_user(self):
+        uid = db.add_user('alias-boundary')
+        first = str(uid)
+        alias = '0' + first
+        server = self._server(uid)
+        server['seen'][alias] = [0, 0]
+        # Each individual delta fits signed SQLite, but together they do not.
+        half = MAX // 2 + 10
+        answer = self._answer({first: [half, 0], alias: [half, 0]})
+        with mock.patch.object(cluster, '_request', return_value=(answer, 'cc' * 32)):
+            self.assertFalse(cluster.sync_one(server, log=lambda _: None))
+        counter = db.q('SELECT used_up, typeof(used_up) kind FROM users WHERE id=?', (uid,))[0]
+        self.assertEqual((counter['used_up'], counter['kind']), (0, 'integer'))
+        self.assertEqual(server['fail_count'], 1)
+        self.assertEqual(server['seen'][first], [0, 0])
+
     def test_bad_node_counters_do_not_starve_the_next_healthy_node(self):
         user = db.add_user('shared')
         one = self._server(user)
