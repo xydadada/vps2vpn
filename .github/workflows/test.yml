@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck -S warning install.sh deploy-mac.command tests/vps_acceptance.sh
+      - run: shellcheck -S warning install.sh deploy-mac.command tests/vps_acceptance.sh tests/container_install.sh
       - run: node --check vps2vpn/static/app.js && node --check vps2vpn/static/kit.js && node --check vps2vpn/static/member.js
       - name: PowerShell deployer parses and builds its window
         shell: pwsh
@@ -80,3 +80,17 @@ jobs:
       - name: Print installer service journal on failure
         if: failure()
         run: sudo journalctl -u vps2vpn -u vps2vpn-xray -u vps2vpn-hysteria -u vps2vpn-tuic -n 100 --no-pager
+
+  install-distros:
+    # the real installer in a container per distro people rent VPSes with, systemd as PID 1:
+    # fresh install, panel answers on its port, upgrade snapshot keeps the database, rollback, reinstall
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['debian:11', 'debian:12', 'ubuntu:20.04', 'ubuntu:22.04', 'ubuntu:24.04',
+                'almalinux:9', 'rockylinux/rockylinux:8']
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/container_install.sh '${{ matrix.image }}'
