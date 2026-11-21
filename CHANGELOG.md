@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+**Restore**
+- Traffic that was read from the cores but could not be saved yet is no longer billed after a restore to whoever the backup gives the same account number: the restore resets the cores' counters under the old accounts and drops what was pending. A restore that fails keeps it for the old account.
+
 ## 0.2.11
 
 **Client updates**

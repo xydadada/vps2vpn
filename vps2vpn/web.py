@@ -1841,7 +1841,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'POST only'}, 405)
         try:
             body = self.body_json(limit=32 << 20)
-            with cluster.restoring():
+            with cores.replacing_accounts(s), cluster.restoring():
                 db.import_all(body)
         except (ValueError, KeyError, TypeError, sqlite3.Error) as e:
             return self.json({'error': 'restore failed: %s' % e}, 400)

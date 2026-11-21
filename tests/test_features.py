@@ -381,6 +381,36 @@ class ScaleHelpers(tu.Base):
             self.assertEqual(cores.save_traffic(db.settings()), [])
         self.assertEqual((db.user(a['id'])['used_up'], db.user(a['id'])['used_down']), (101, 202))
 
+    def test_unsaved_traffic_is_not_billed_to_whoever_a_restore_gives_the_id(self):
+        # #106: bytes read for account 1 must not land on another person restored as account 1.
+        alice = mk('alice')
+        backup = db.export_all()
+        real = db.add_traffic_many
+        with mock.patch.object(cores, 'collect_traffic', return_value={alice['id']: (1234, 5678)}),                 mock.patch.object(db, 'add_traffic_many', side_effect=sqlite3.OperationalError('database is locked')):
+            with self.assertRaises(sqlite3.OperationalError):
+                cores.save_traffic(db.settings())
+        # A restore that fails keeps them for Alice.
+        with mock.patch.object(cores, 'collect_traffic', return_value={}):
+            with self.assertRaises(ValueError):
+                with cores.replacing_accounts(db.settings()):
+                    db.import_all({'format': 'nope'})
+        self.assertEqual(cores._unsaved, {alice['id']: (1234, 5678)})
+        # A restore that succeeds: the same id now names Bob.
+        for u in backup['users']:
+            if u['id'] == alice['id']:
+                u.update(name='bob', uuid='22222222-3333-4444-5555-666666666666', sub_token='bobtoken' * 4,
+                         used_up=0, used_down=0)
+        counted = {alice['id']: (7, 7)}     # counted by the cores under the old accounts
+        with mock.patch.object(cores, 'collect_traffic', side_effect=lambda s: counted.copy()) as read:
+            with cores.replacing_accounts(db.settings()):
+                db.import_all(backup)
+            read.assert_called_once()
+        self.assertEqual(cores._unsaved, {})
+        with mock.patch.object(cores, 'collect_traffic', return_value={}),                 mock.patch.object(db, 'add_traffic_many', side_effect=real):
+            self.assertEqual(cores.save_traffic(db.settings()), [])
+        bob = db.user(alice['id'])
+        self.assertEqual((bob['name'], bob['used_up'], bob['used_down']), ('bob', 0, 0))
+
     def test_quotas_are_enforced_when_a_traffic_reading_fails(self):
         db.set_settings(setup_done=True)
         sched = jobs.Scheduler()

@@ -1,5 +1,6 @@
 """Server-side configs for Xray (VLESS+REALITY), Hysteria 2 and sing-box (TUIC), applying them, and reading
 traffic and who is online."""
+import contextlib
 import copy
 import hashlib
 import ipaddress
@@ -326,6 +327,9 @@ def _xray_live_update(s, old, new):
 # Reading a core's counters resets them, so bytes read but not yet stored exist nowhere else.
 # If storing them fails (database locked, disk full), they wait here for the next reading.
 _unsaved = {}
+# Held from reading the cores to storing what they said, and by a restore while it replaces the
+# accounts, so bytes counted for one account id are never billed to whoever has that id afterwards.
+# Lock order: _apply_lock, then this, then the database and TUIC meter locks.
 _unsaved_lock = threading.Lock()
 
 
@@ -333,9 +337,9 @@ def save_traffic(s=None):
     """Read and reset the cores' counters and add them to the users' usage. Returns the deltas.
     A failed database write raises, and what was read is billed with the next successful one."""
     s = s or db.settings()
-    known = db.user_ids()
-    fresh = collect_traffic(s)
     with _unsaved_lock:
+        known = db.user_ids()
+        fresh = collect_traffic(s)
         for uid, (up, down) in fresh.items():
             if up or down:
                 up0, down0 = _unsaved.get(uid, (0, 0))
@@ -350,12 +354,27 @@ def save_traffic(s=None):
     return deltas
 
 
+@contextlib.contextmanager
+def replacing_accounts(s):
+    """Hold while a backup replaces the accounts. Once it has, what the cores counted so far and
+    whatever was waiting to be stored belong to accounts that no longer exist (the restored ids may
+    name other people): drop it. A restore that fails leaves both untouched."""
+    with _unsaved_lock:
+        yield
+        try:
+            collect_traffic(s)      # reading resets the counters, still under the old accounts
+        except Exception as e:      # a core that cannot be read restarts with zero counters anyway
+            print('could not reset traffic counters after restore: %s' % e, flush=True)
+        _unsaved.clear()
+
+
 def _save_before_restart(s, units):
     """A core starts its counters from zero when it restarts, so whatever it counted since the last
     collection would be lost: collect from the cores about to go down first. Only running ones are asked
     (a stopped core has nothing left, and asking it would only wait for a timeout). Never raises: a failed
-    reading must not keep a core from restarting. Lock order is _apply_lock, then the database and TUIC
-    meter locks, as write_configs already does; no holder of those ever waits for _apply_lock."""
+    reading must not keep a core from restarting. Lock order is _apply_lock, then _unsaved_lock, then the
+    database and TUIC meter locks, as write_configs already does; no holder of those ever waits for
+    _apply_lock."""
     try:
         running = [u for u in units if system.unit_active(u) is True]
         if running:
