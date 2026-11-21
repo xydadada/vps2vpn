@@ -1031,6 +1031,24 @@ class Shadowrocket(tu.Base):
         self.assertNotIn('hysteria2,', conf)                      # salamander is not expressible there
         self.assertEqual(subscription.detect_format('', 'shadowrocket'), 'shadowrocket')
 
+    def test_joined_node_label_cannot_inject_ini_sections(self):
+        user = mk('shadowrocket-member', 20)
+        db.set_settings(hy2_obfs='')
+        info = cluster.public_info(db.settings())
+        dangerous = 'Edge\\r\\n[Proxy]\\nEvil'.replace('\\r', '\r').replace('\\n', '\n')
+        node = {'id': 'abcd1234', 'name': dangerous, 'enabled': True,
+                'info': info, 'idmap': {str(user['id']): 42}}
+        db.set_settings(servers=[node])
+        conf = subscription.shadowrocket(db.settings(), user, 'https://example.org')
+
+        self.assertEqual(conf.splitlines().count('[Proxy]'), 1)
+        self.assertEqual(conf.splitlines().count('[Proxy Group]'), 1)
+        self.assertEqual(conf.splitlines().count('[Rule]'), 1)
+        remote_line = next(line for line in conf.splitlines() if 'Edge [Proxy] Evil Hysteria2' in line)
+        self.assertIn(' = hysteria2, ', remote_line)
+        self.assertEqual(subscription._sr_label('上海 Tokyo, A=B'), '上海 Tokyo  A-B')
+        self.assertEqual(len(subscription._sr_label('x\\u2028y'.replace('\\u2028', '\u2028')).splitlines()), 1)
+
     def test_rule_conversion(self):
         out = rules.to_shadowrocket(b'+.google.com\nexample.org\n# c\nregexp:^x\n', 'geosite').decode().splitlines()
         self.assertEqual(out, ['DOMAIN-SUFFIX,google.com', 'DOMAIN,example.org'])
