@@ -323,14 +323,30 @@ def _xray_live_update(s, old, new):
     return _xray_hot_add(s, new, added)
 
 
+# Reading a core's counters resets them, so bytes read but not yet stored exist nowhere else.
+# If storing them fails (database locked, disk full), they wait here for the next reading.
+_unsaved = {}
+_unsaved_lock = threading.Lock()
+
+
 def save_traffic(s=None):
-    """Read and reset the cores' counters and add them to the users' usage. Returns the deltas."""
+    """Read and reset the cores' counters and add them to the users' usage. Returns the deltas.
+    A failed database write raises, and what was read is billed with the next successful one."""
     s = s or db.settings()
     known = db.user_ids()
-    deltas = [(uid, up, down) for uid, (up, down) in collect_traffic(s).items()
-              if uid in known and (up or down)]
-    if deltas:
-        db.add_traffic_many(deltas)
+    fresh = collect_traffic(s)
+    with _unsaved_lock:
+        for uid, (up, down) in fresh.items():
+            if up or down:
+                up0, down0 = _unsaved.get(uid, (0, 0))
+                _unsaved[uid] = (up0 + up, down0 + down)
+        # Accounts deleted meanwhile have nobody left to bill.
+        for uid in [uid for uid in _unsaved if uid not in known]:
+            del _unsaved[uid]
+        deltas = [(uid, up, down) for uid, (up, down) in _unsaved.items()]
+        if deltas:
+            db.add_traffic_many(deltas)
+        _unsaved.clear()
     return deltas
 
 

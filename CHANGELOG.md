@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Accounting**
+- Traffic read from Xray, Hysteria or TUIC (reading resets their counters) is no longer lost when the database write fails (locked, disk full): it is kept and billed with the next successful reading, once. Expiry and quotas are still enforced on a tick whose reading failed (#96).
+
+**Several servers**
+- A node whose answer has malformed server details or account mappings (a port that is not a number, a missing Reality key, a host with a line break, an ID like `"01"`) is refused before it is saved. It used to be stored and then break every subscription format for the accounts it served; now the node is marked failed and the last good details stay in use (#94; PR #98).
+
 **Restore**
 - A backup whose quota is an integer too large for a float (such as 2^1100) is refused with a clear message instead of an internal error (#95).
 

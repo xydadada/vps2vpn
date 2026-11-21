@@ -367,6 +367,27 @@ class ScaleHelpers(tu.Base):
             self.assertEqual(cores.save_traffic(db.settings()), [(a['id'], 5, 6)])
         self.assertEqual(db.user(a['id'])['used_down'], 6)
 
+    def test_traffic_read_before_a_failed_write_is_billed_once_later(self):
+        # Reading the cores resets them, so a failed write must not lose those bytes (#96).
+        a = mk('a')
+        real = db.add_traffic_many
+        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (100, 200)}),                 mock.patch.object(db, 'add_traffic_many', side_effect=sqlite3.OperationalError('database is locked')):
+            with self.assertRaises(sqlite3.OperationalError):
+                cores.save_traffic(db.settings())
+        self.assertEqual(db.user(a['id'])['used_up'], 0)
+        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (1, 2)}),                 mock.patch.object(db, 'add_traffic_many', side_effect=real):
+            self.assertEqual(cores.save_traffic(db.settings()), [(a['id'], 101, 202)])
+        with mock.patch.object(cores, 'collect_traffic', return_value={}):
+            self.assertEqual(cores.save_traffic(db.settings()), [])
+        self.assertEqual((db.user(a['id'])['used_up'], db.user(a['id'])['used_down']), (101, 202))
+
+    def test_quotas_are_enforced_when_a_traffic_reading_fails(self):
+        db.set_settings(setup_done=True)
+        sched = jobs.Scheduler()
+        with mock.patch.object(jobs, 'collect', side_effect=sqlite3.OperationalError('disk I/O error')),                 mock.patch.object(jobs, 'enforce', return_value=False) as enforce,                 mock.patch.object(sched, 'due', side_effect=lambda name, every: name == 'collect'):
+            sched.tick()
+        enforce.assert_called_once()
+
     def test_indexes_used_by_hot_queries_exist(self):
         have = {r['name'] for r in db.q("SELECT name FROM sqlite_master WHERE type='index'")}
         for name in ('idx_users_invited_by', 'idx_users_remote_id', 'idx_traffic_user_day', 'idx_events_kind_id',

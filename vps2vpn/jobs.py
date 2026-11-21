@@ -752,7 +752,11 @@ class Scheduler:
         changed = False
         if self.due('collect', COLLECT_EVERY):
             # Often, and cheap (one counter read per core): less is lost if a core dies, and quotas cut in sooner.
-            collect()
+            try:
+                collect()
+            except Exception as e:     # what was read is kept and billed with the next reading
+                log('traffic collection failed: %s' % e)
+            # Expiry and quotas are enforced even when this reading failed.
             changed = enforce()
         if self.due('traffic', 60):
             if paths.LIVE and device_limits(s):
