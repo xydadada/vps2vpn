@@ -180,7 +180,7 @@ def handle_sync(s, body, base_url=''):
         if any(u['uuid'].lower() in uuids for u in all_users if not u['remote_id']):
             raise ValueError('remote UUID conflicts with a local account')
         changed = False
-        mine = {u['remote_id']: u for u in db.users() if u['remote_id']}
+        mine = {u['remote_id']: u for u in all_users if u['remote_id']}
         for rid, w in wanted.items():
             u = mine.get(rid)
             if u is None:
@@ -337,7 +337,7 @@ def push_users():
 def _apply_sync_answer(server, ans, got_pin, log=print):
     """Apply a node's sync response to `server` and record traffic deltas in DB."""
     _validate_sync_answer(ans)
-    known = {u['id'] for u in db.users()}
+    known = db.user_ids()
     old_seen = server.get('seen') or {}
     seen = {}
     for k, v in old_seen.items():
@@ -386,9 +386,7 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
         if uid in known:
             seen[rid_key] = (up, down)
     if deltas:
-        with db.transaction():
-            for uid, dup, ddown in deltas:
-                db.add_traffic(uid, dup, ddown)
+        db.add_traffic_many(deltas)
     server.update(info=ans.get('info') or {}, idmap=new_idmap, seen=seen, health=ans.get('health') or {},
                   version=ans.get('version', ''), last_ok=int(time.time()), error='', fail_count=0, pin=got_pin)
 

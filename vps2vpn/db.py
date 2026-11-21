@@ -328,6 +328,32 @@ def users():
     return [dict(r) for r in q('SELECT * FROM users ORDER BY id')]
 
 
+def user_ids():
+    """Set of all user ids (cheaper than users() when only membership is needed)."""
+    return {r[0] for r in q('SELECT id FROM users')}
+
+
+def user_names():
+    """{user id: name} for every user."""
+    return {r[0]: r[1] for r in q('SELECT id, name FROM users')}
+
+
+def users_invited_by(uid):
+    """Accounts `uid` invited directly, by id."""
+    return [dict(r) for r in q('SELECT * FROM users WHERE invited_by=? ORDER BY id', (uid,))]
+
+
+def invite_tree(uid):
+    """Every account below `uid` in the invite chain (children, their children, ...), by id.
+
+    Enough to work out what `uid` shares with invitees without loading every user. UNION (not UNION ALL)
+    stops on a damaged chain that loops back on itself."""
+    return [dict(r) for r in q(
+        'WITH RECURSIVE tree(id) AS (SELECT id FROM users WHERE invited_by=? '
+        'UNION SELECT u.id FROM users u JOIN tree t ON u.invited_by=t.id) '
+        'SELECT * FROM users WHERE id IN (SELECT id FROM tree) ORDER BY id', (uid,))]
+
+
 def user(uid):
     rows = q('SELECT * FROM users WHERE id=?', (uid,))
     return dict(rows[0]) if rows else None
@@ -453,13 +479,22 @@ def delete_user(uid):
 
 
 def add_traffic(uid, up, down, now=None):
+    add_traffic_many([(uid, up, down)], now)
+
+
+def add_traffic_many(deltas, now=None):
+    """Add [(user id, up, down), ...] to the users' usage and today's traffic rows in one transaction."""
     ts = now or time.time()
     day = time.strftime('%Y-%m-%d', time.localtime(ts))
+    deltas = list(deltas)
+    if not deltas:
+        return
     with transaction() as c:
-        c.execute('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
-                  (up, down, int(ts), uid))
-        c.execute('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
-                  'DO UPDATE SET up=up+excluded.up, down=down+excluded.down', (day, uid, up, down))
+        c.executemany('UPDATE users SET used_up=used_up+?, used_down=used_down+?, last_seen=? WHERE id=?',
+                      [(up, down, int(ts), uid) for uid, up, down in deltas])
+        c.executemany('INSERT INTO traffic(day, user_id, up, down) VALUES(?,?,?,?) ON CONFLICT(day, user_id) '
+                      'DO UPDATE SET up=up+excluded.up, down=down+excluded.down',
+                      [(day, uid, up, down) for uid, up, down in deltas])
 
 
 def traffic_days(days=30):

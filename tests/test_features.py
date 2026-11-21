@@ -248,6 +248,105 @@ class Storage(tu.Base):
         self.assertEqual([(x['up'], x['down']) for x in h], [(100, 1000), (1, 2)])
 
 
+class ScaleHelpers(tu.Base):
+    """Helpers that keep the panel fast with hundreds of users must give the same answers as the slow paths."""
+
+    def chain(self):
+        root = mk('root', 100)
+        a = mk('a', 20, invited_by=root['id'], invite_deduct=20)
+        b = mk('b', 10, invited_by=a['id'], invite_deduct=10)
+        c = mk('c', 5, invited_by=b['id'], invite_deduct=5, enabled=0, disabled_reason='manual')
+        d = mk('d', 8, invited_by=root['id'], invite_deduct=8, expire_at=int(time.time()) - 10)
+        e = mk('e', 3, invited_by=d['id'], invite_deduct=3)          # active below an expired one: still counts
+        other = mk('other', 50)
+        mk('stranger', 4, invited_by=other['id'], invite_deduct=4)
+        return root, a, b, c, d, e, other
+
+    def test_invite_tree_is_the_whole_subtree_only(self):
+        root, a, b, c, d, e, other = self.chain()
+        self.assertEqual([u['id'] for u in db.invite_tree(root['id'])], sorted([a['id'], b['id'], c['id'], d['id'], e['id']]))
+        self.assertEqual([u['id'] for u in db.invite_tree(b['id'])], [c['id']])
+        self.assertEqual(db.invite_tree(c['id']), [])
+        self.assertEqual(db.invite_tree(999999), [])
+        self.assertEqual(db.invite_tree(root['id'])[0]['name'], 'a')          # full rows
+        self.assertEqual([u['id'] for u in db.users_invited_by(root['id'])], [a['id'], d['id']])
+
+    def test_invite_tree_stops_on_a_loop(self):
+        x = mk('x', 10)
+        y = mk('y', 10, invited_by=x['id'], invite_deduct=2)
+        db.update_user(x['id'], invited_by=y['id'], invite_deduct=2)          # damaged data: a cycle
+        self.assertEqual(sorted(u['id'] for u in db.invite_tree(x['id'])), sorted([x['id'], y['id']]))
+        self.assertEqual(members.given_away(x['id']), members.given_away(x['id'], db.users()))
+
+    def test_tree_index_and_full_list_agree(self):
+        users_before = self.chain()
+        all_users = db.users()
+        index = members.invitee_index(all_users)
+        now = time.time()
+        for u in all_users:
+            full = members.effective_quota(u, all_users, now)
+            self.assertEqual(members.effective_quota(u, now=now), full, u['name'])
+            self.assertEqual(members.effective_quota(u, now=now, index=index), full, u['name'])
+            self.assertEqual(members.given_away(u['id'], now=now), members.given_away(u['id'], all_users, now))
+        root = users_before[0]
+        self.assertEqual(members.given_away(root['id']), 20 + 3)               # a deducts 20; d expired -> e's 3
+        self.assertEqual(members.effective_quota(db.user(root['id'])), 77)
+
+    def test_ids_and_names(self):
+        a, b = mk('a'), mk('名字')
+        self.assertEqual(db.user_ids(), {a['id'], b['id']})
+        self.assertEqual(db.user_names(), {a['id']: 'a', b['id']: '名字'})
+
+    def test_add_traffic_many_matches_single_adds(self):
+        a, b = mk('a'), mk('b')
+        db.add_traffic_many([(a['id'], 1, 2), (b['id'], 3, 4), (a['id'], 10, 20)], now=time.time())
+        db.add_traffic_many([])
+        self.assertEqual((db.user(a['id'])['used_up'], db.user(a['id'])['used_down']), (11, 22))
+        self.assertEqual([(x['up'], x['down']) for x in db.user_traffic(b['id'])], [(3, 4)])
+        self.assertGreater(db.user(b['id'])['last_seen'], 0)
+
+    def test_save_traffic_writes_known_users_in_one_go(self):
+        a = mk('a')
+        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (5, 6), 424242: (1, 1), a['id'] + 1000: (0, 0)}):
+            self.assertEqual(cores.save_traffic(db.settings()), [(a['id'], 5, 6)])
+        self.assertEqual(db.user(a['id'])['used_down'], 6)
+
+    def test_indexes_used_by_hot_queries_exist(self):
+        have = {r['name'] for r in db.q("SELECT name FROM sqlite_master WHERE type='index'")}
+        for name in ('idx_users_invited_by', 'idx_users_remote_id', 'idx_traffic_user_day', 'idx_events_kind_id',
+                     'idx_invites_inviter_status', 'idx_requests_user_status'):
+            self.assertIn(name, have)
+        plan = ' '.join(str(tuple(r)) for r in db.q(
+            'EXPLAIN QUERY PLAN WITH RECURSIVE tree(id) AS (SELECT id FROM users WHERE invited_by=? '
+            'UNION SELECT u.id FROM users u JOIN tree t ON u.invited_by=t.id) SELECT id FROM tree', (1,)))
+        self.assertIn('idx_users_invited_by', plan)
+
+    def test_acme_names_cached_until_the_file_changes(self):
+        certs._names_cache.clear()
+        if os.path.exists(paths.ACME_CRT):
+            os.remove(paths.ACME_CRT)
+        with mock.patch.object(certs, '_openssl', return_value=b'DNS:a.example') as run:
+            self.assertEqual(certs.acme_names(), [])                          # no file: openssl not started
+            self.assertEqual(run.call_count, 0)
+            os.makedirs(os.path.dirname(paths.ACME_CRT), exist_ok=True)
+            with open(paths.ACME_CRT, 'w') as f:
+                f.write('one')
+            self.assertEqual(certs.acme_names(), ['a.example'])
+            self.assertEqual(certs.acme_names(), ['a.example'])
+            self.assertEqual(run.call_count, 1)
+            run.return_value = b'DNS:b.example, IP Address:203.0.113.9'
+            with open(paths.ACME_CRT, 'w') as f:
+                f.write('second')                                             # renewed (size and time change)
+            self.assertEqual(certs.acme_names(), ['b.example', '203.0.113.9'])
+            self.assertEqual(run.call_count, 2)
+        with mock.patch.object(certs, '_openssl', side_effect=RuntimeError('bad')):
+            with open(paths.ACME_CRT, 'w') as f:
+                f.write('broken file')
+            self.assertEqual(certs.acme_names(), [])
+        os.remove(paths.ACME_CRT)
+        certs._names_cache.clear()
+
+
 class ServerMonth(tu.Base):
     def test_counts_across_reboot_and_period(self):
         s = db.settings()

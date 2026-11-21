@@ -142,12 +142,30 @@ def acme_valid(min_hours=24):
         return False
 
 
+_names_lock = threading.Lock()
+_names_cache = {}
+
+
 def acme_names():
+    """Names in the ACME certificate. The panel asks on every refresh, so the answer is kept until the
+    file changes instead of starting openssl each time."""
+    try:
+        st = os.stat(paths.ACME_CRT)
+    except OSError:
+        return []                 # no certificate (openssl would only fail on the missing file)
+    stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
+    with _names_lock:
+        if _names_cache.get('stamp') == stamp:
+            return list(_names_cache['names'])
     try:
         out = _openssl('x509', '-in', paths.ACME_CRT, '-noout', '-ext', 'subjectAltName').decode()
-        return [_norm_host(n) for n in re.findall(r'(?:DNS:|IP Address:)([^,\s]+)', out)]
+        names = [_norm_host(n) for n in re.findall(r'(?:DNS:|IP Address:)([^,\s]+)', out)]
     except (RuntimeError, FileNotFoundError):
-        return []
+        return []                 # not cached: a half-written file is read again next time
+    with _names_lock:
+        _names_cache.clear()
+        _names_cache.update(stamp=stamp, names=names)
+    return list(names)
 
 
 _trust_lock = threading.Lock()

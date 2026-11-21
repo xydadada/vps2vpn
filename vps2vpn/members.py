@@ -87,22 +87,35 @@ def _given_away(uid, by_inviter, now, seen):
     return total
 
 
-def given_away(uid, users=None, now=None):
-    """GB this user currently shares with accounts they invited."""
-    now = time.time() if now is None else now
-    all_users = users if users is not None else db.users()
+def invitee_index(users):
+    """{inviter id: [invited user rows]} for given_away / effective_quota.
+
+    Build it once when working through many users: each call without it walks the whole list again,
+    which turns a loop over all users into O(n^2). The rows are shared, not copied, so in-place updates
+    to them (enabled, expire_at ...) are seen; a change to `invited_by` needs a new index."""
     by_inviter = {}
-    for u in all_users:
+    for u in users:
         if u.get('invited_by'):
             by_inviter.setdefault(u['invited_by'], []).append(u)
-    return _given_away(uid, by_inviter, now, set())
+    return by_inviter
 
 
-def effective_quota(u, users=None, now=None):
+def given_away(uid, users=None, now=None, index=None):
+    """GB this user currently shares with accounts they invited.
+
+    `index` (from invitee_index) or `users` (all users) may be passed by callers that already have them;
+    otherwise only this user's invite chain is read from the database."""
+    now = time.time() if now is None else now
+    if index is None:
+        index = invitee_index(users if users is not None else db.invite_tree(uid))
+    return _given_away(uid, index, now, set())
+
+
+def effective_quota(u, users=None, now=None, index=None):
     """Quota in GB after what the user shares with invitees (0 = unlimited)."""
     if not u['quota_gb']:
         return 0
-    return max(0.0, u['quota_gb'] - given_away(u['id'], users, now))
+    return max(0.0, u['quota_gb'] - given_away(u['id'], users, now, index))
 
 
 def _live(inv, now):
@@ -148,10 +161,7 @@ def propagate_lifetime(uid, new_expire_at, new_reset_day=None):
         return []
     updated = []
     with db.transaction():
-        by_inviter = {}
-        for u in db.users():
-            if u.get('invited_by'):
-                by_inviter.setdefault(u['invited_by'], []).append(u)
+        by_inviter = invitee_index(db.invite_tree(uid))
         queue = [uid]
         visited = {uid}
         while queue:

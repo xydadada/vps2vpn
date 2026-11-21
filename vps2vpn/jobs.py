@@ -57,6 +57,7 @@ def enforce(now=None):
         changed = False
         users = db.users()
         by_id = {u['id']: u for u in users}
+        invitees = members.invitee_index(users)       # once: per-user rebuilding was O(n^2)
         t_now = now or time.time()
         for _pass in range(2):
             pass_changed = False
@@ -87,7 +88,7 @@ def enforce(now=None):
                     db.update_user(u['id'], used_up=0, used_down=0, last_reset=month)
                     u.update(used_up=0, used_down=0, last_reset=month)
                     log('monthly reset: %s' % u['name'])
-                quota = members.effective_quota(u, users, now)
+                quota = members.effective_quota(u, now=now, index=invitees)
                 reason = over_limit(u, now, quota)
                 if device_due:
                     if reason:
@@ -240,13 +241,14 @@ def tg_expiring(s, now=None, days=7):
     zh = s['language'] != 'en'
     now = now or time.time()
     users = db.users()
+    invitees = members.invitee_index(users)
     soon, low = [], []
     for u in users:
         if u['remote_id'] or not u['enabled']:
             continue
         if u['expire_at'] and now < u['expire_at'] <= now + days * 86400:
             soon.append(u)
-        quota = members.effective_quota(u, users, now)
+        quota = members.effective_quota(u, now=now, index=invitees)
         if quota and u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
             low.append((u, quota))
     lines = []

@@ -20,6 +20,11 @@
 **Docs**
 - README rewritten for owners who share a server with family and friends: step-by-step quick start (ports, first login, 2FA), adding users and invites, which app to use on each platform, upgrade and rollback, several servers, the Telegram bot, and troubleshooting (blocked ports, certificates, traffic, AI check, lost password or 2FA).
 
+**Performance** (measured with 500 accounts and a year of daily traffic)
+- Shared quota is worked out from the account's own invite chain instead of loading every account: a subscription download is 7–19× faster, the member page about 10× faster.
+- The admin panel refresh (`/api/state`), the once-a-minute quota/expiry check and `/expiring` build the invite index once instead of once per account (was O(n²)); the panel refresh no longer starts `openssl` each time to read the certificate names (cached until the file changes).
+- Traffic readings are written in one batched statement, and lookups that only need ids or names no longer load full account rows.
+
 ## 0.2.7
 
 Review PRs #50, #52, #57, #58, #61, #62, #64, #66 and issues #67–#71.

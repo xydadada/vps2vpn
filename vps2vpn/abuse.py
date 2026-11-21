@@ -165,7 +165,7 @@ def check(s=None, log=print):
         if not s.get('abuse_guard', True):
             return {}
         rep = scan(s)
-        names = {u['id']: u['name'] for u in db.users()}
+        names = db.user_names()
         words = {'fanout': ('connects to hundreds of targets on many ports (scanner or relay?)', '短时间连了几百个目标和端口（像扫描或被当跳板）'),
                  'shared': ('used from many addresses at once (link shared?)', '同时有很多个 IP 在用（链接可能被转发了）'),
                  'mail': ('sends lots of mail traffic (spam?)', '大量发邮件端口连接（可能在发垃圾邮件）')}
@@ -185,7 +185,7 @@ def check(s=None, log=print):
 
 
 def latest():
-    names = {u['id']: u['name'] for u in db.users()}
+    names = db.user_names()
     with _last_lock:
         snap = dict(_last)
         accounts = dict(snap['accounts'])

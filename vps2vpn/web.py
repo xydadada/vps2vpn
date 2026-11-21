@@ -1117,6 +1117,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         users = []
         all_users = db.users()
         names = {u['id']: u['name'] for u in all_users}
+        invitees = members.invitee_index(all_users)
         online = cores.online_detail(s)
         for u in all_users:
             sub = '%s/s/%s' % (base, u['sub_token'])
@@ -1125,8 +1126,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                      'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
                                      'sub_fetched_at', 'sub_ua')}
             row['sub_url'] = sub
-            row['quota_eff'] = members.effective_quota(u, all_users)
-            row['shared_gb'] = members.given_away(u['id'], all_users)
+            row['quota_eff'] = members.effective_quota(u, index=invitees)
+            row['shared_gb'] = members.given_away(u['id'], index=invitees)
             row['has_login'] = bool(u['login_hash'])
             row['invited_by_name'] = names.get(u['invited_by'], '')
             row['online'] = (online or {}).get(u['id'])
@@ -1409,7 +1410,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.json(dict({'ok': True}, **(out if isinstance(out, dict) else {})))
 
     def api_invites(self, method, s):
-        names = {u['id']: u['name'] for u in db.users()}
+        names = db.user_names()
         reg = '%s/%s/' % (self.base_url(s), s['member_path'])
         if method != 'POST':
             return self.json({'invites': [members.invite_view(i, names, reg) for i in db.invites()]})
@@ -1425,7 +1426,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.refused(rec)
 
     def api_requests(self, method, s):
-        names = {u['id']: u['name'] for u in db.users()}
+        names = db.user_names()
         return self.json({'requests': [dict(r, name=names.get(r['user_id'], '#%d' % r['user_id'])) for r in db.requests()]})
 
     def api_monitor(self, method, s):
@@ -1643,8 +1644,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sub_url = '%s/s/%s' % (base, u['sub_token'])
         # Installer downloads are only served over TLS (route() requires secure_ok), so never emit http:// here.
         dl_url = 'https://' + sub_url[7:] if sub_url.startswith('http://') else sub_url
-        users = db.users()
-        names = {x['id']: x['name'] for x in users}
+        names = db.user_names()
+        invitees = members.invitee_index(db.invite_tree(u['id']))    # this account's invite chain only
         nxt = 0
         if u['reset_day']:
             t = time.localtime()
@@ -1656,7 +1657,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {
             'name': u['name'], 'enabled': bool(u['enabled']), 'disabled_reason': u['disabled_reason'],
             'used_up': u['used_up'], 'used_down': u['used_down'], 'quota_gb': u['quota_gb'],
-            'quota_eff': members.effective_quota(u, users), 'shared_gb': round(members.given_away(u['id'], users), 2),
+            'quota_eff': members.effective_quota(u, index=invitees),
+            'shared_gb': round(members.given_away(u['id'], index=invitees), 2),
             'capacity': members.capacity(u) if s['member_invites'] else None,
             'expire_at': u['expire_at'], 'reset_day': u['reset_day'], 'next_reset': nxt, 'created_at': u['created_at'],
             'invited_by': names.get(u['invited_by'], ''), 'has_login': bool(u['login_hash']),
@@ -1665,7 +1667,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'requests': db.requests(u['id'])[:10] if s['member_requests'] else [],
             'invites': [members.invite_view(i, names, reg) for i in db.invites(u['id'])][:20] if s['member_invites'] else [],
             'invitees': [{'name': x['name'], 'quota_gb': x['invite_deduct'], 'active': members.deducting(x)}
-                         for x in users if x['invited_by'] == u['id']],
+                         for x in invitees.get(u['id'], ())],
             'online': online, 'servers': 1 + len([x for x in s['servers'] if x.get('info')]),
             'ai': ai_view(aicheck.latest()),
             'client': client_info(s, dl_url),

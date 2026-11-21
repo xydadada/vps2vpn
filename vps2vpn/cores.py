@@ -325,13 +325,11 @@ def _xray_live_update(s, old, new):
 def save_traffic(s=None):
     """Read and reset the cores' counters and add them to the users' usage. Returns the deltas."""
     s = s or db.settings()
-    known = {u['id'] for u in db.users()}
+    known = db.user_ids()
     deltas = [(uid, up, down) for uid, (up, down) in collect_traffic(s).items()
               if uid in known and (up or down)]
     if deltas:
-        with db.transaction():
-            for uid, up, down in deltas:
-                db.add_traffic(uid, up, down)
+        db.add_traffic_many(deltas)
     return deltas
 
 

@@ -35,8 +35,8 @@ def _call(token, method, params=None, timeout=10):
 def _target(s):
     """Settings with the Telegram target as it is NOW. Long jobs hold settings read minutes ago; if the owner
     has since switched Telegram off or to another chat, nothing may go to the old one (backups included)."""
-    s = dict(s or db.settings())
     cur = db.settings()
+    s = dict(s or cur)
     s['tg_token'], s['tg_chat'] = cur.get('tg_token'), cur.get('tg_chat')
     s['tg_verified'] = cur.get('tg_verified', False)
     return s
