@@ -444,6 +444,15 @@ class Ops(Base):
         self.assertEqual(sent, [(token, '111'), (token, '222'),
                                 ('7654321:' + 'b' * 35, '222')])
 
+    def test_notify_dedup_cache_is_bounded_and_never_stores_raw_bot_tokens(self):
+        token = '1234567:' + 'c' * 35
+        db.set_settings(tg_token=token, tg_chat='777', tg_verified=True)
+        with mock.patch.object(notify, '_call', return_value={'ok': True}):
+            for n in range(1003):
+                self.assertTrue(notify.send('note', key='unique-%d' % n))
+        self.assertLessEqual(len(notify._recent), 1000)
+        self.assertFalse(any(token in repr(key) for key in notify._recent))
+
     def test_bot_commands_only_from_the_owner_in_a_private_chat(self):
         ok = notify._owner_private_message
         self.assertTrue(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 5}}, '5'))
