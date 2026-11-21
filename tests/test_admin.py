@@ -472,12 +472,13 @@ class AdminWeb(tu.Base):
         entered, resume = threading.Event(), threading.Event()
         result = []
         original_check = secure.check_password
-        worker = None
 
         def slow_password_check(password, stored):
-            if threading.current_thread() is worker:
+            # Authentication runs on ThreadingHTTPServer's worker, not the
+            # client thread calling self.req(). Pause only its first check.
+            if not entered.is_set():
                 entered.set()
-                if not resume.wait(5):
+                if not resume.wait(10):
                     raise RuntimeError('login race test timed out')
             return original_check(password, stored)
 
