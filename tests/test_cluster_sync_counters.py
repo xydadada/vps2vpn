@@ -19,11 +19,28 @@ class NodeTrafficBoundaries(tu.Base):
                 'pin': '', 'enabled': True, 'seen': {str(uid): [0, 0]}}
 
     def test_oversized_counter_rejected_before_db_write(self):
-        for pair in ([MAX + 1, 0], [0, MAX + 1]):
+        invalid = ([MAX + 1, 0], [0, MAX + 1], [-1, 0], [True, 0],
+                   [0, 1.5], [0], 'bad')
+        for pair in invalid:
             with self.subTest(pair=pair), self.assertRaisesRegex(
-                    cluster.SyncError, 'oversized traffic counters'):
+                    cluster.SyncError, 'invalid traffic counters'):
                 cluster._validate_sync_answer(self._answer({'1': pair}))
         cluster._validate_sync_answer(self._answer({'1': [MAX, MAX]}))
+
+    def test_noncanonical_traffic_ids_cannot_double_bill_or_poison_baselines(self):
+        uid = db.add_user('canonical')
+        server = self._server(uid)
+        valid = str(uid)
+        for bad in ('0' + valid, '+' + valid, ' ' + valid, '0', 'not-a-user'):
+            with self.subTest(key=bad), self.assertRaisesRegex(
+                    cluster.SyncError, 'invalid traffic user ID'):
+                cluster._validate_sync_answer(self._answer({bad: [100, 0]}))
+        server['seen']['0' + valid] = [50, 0]
+        answer = self._answer({valid: [100, 0]})
+        with mock.patch.object(cluster, '_request', return_value=(answer, 'dd' * 32)):
+            self.assertTrue(cluster.sync_one(server))
+        self.assertEqual(db.user(uid)['used_up'], 100)
+        self.assertNotIn('0' + valid, server['seen'])
 
     def test_account_total_never_silently_becomes_sqlite_real(self):
         user = db.add_user('boundary')
