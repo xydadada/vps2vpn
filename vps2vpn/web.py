@@ -1070,9 +1070,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 db.add_event('login', 0, 'fail2fa|%s|%s' % (self.client_ip(), ua))
                 time.sleep(0.5)
                 return self.json({'error': 'wrong 2FA code'}, 403)
+        # PBKDF2 and TOTP checks above use the snapshot from request entry.
+        # Do not mint a session if 2FA, password or username changed meanwhile.
+        # Reuse the DB transaction lock for the comparison and insert.
+        with db.transaction():
+            current = db.settings()
+            stale = any(current[k] != s[k] for k in ('admin_user', 'admin_hash', 'admin_totp'))
+            tok = None if stale else db.new_session()
+        if stale:
+            return self.json({'error': 'login settings changed; retry'}, 409)
         self._clear_fails()
         db.add_event('login', 0, 'ok|%s|%s' % (self.client_ip(), ua))
-        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
+        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(tok)})
 
     def api_security(self, method, s):
         """Login history, open sessions, sign out everywhere else."""
