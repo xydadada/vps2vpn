@@ -16,6 +16,12 @@ GIB = 1 << 30
 
 
 class Totp(unittest.TestCase):
+    def test_invalid_restored_base32_secret_fails_closed(self):
+        for secret in ('INVALID!', 'A', '!!!'):
+            with self.subTest(secret=secret):
+                self.assertFalse(secure.totp_check(secret, '123456', at=1_700_000_000))
+                self.assertFalse(web._totp_consume(secret, '123456'))
+
     def test_rfc6238_vector(self):
         # RFC 6238 appendix B, SHA-1, secret "12345678901234567890"
         import base64
