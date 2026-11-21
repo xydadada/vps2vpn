@@ -303,7 +303,7 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid Reality options')
         tls = info.get('tls')
         if tls is not None and (not isinstance(tls, dict) or
-                                any(not isinstance(tls.get(k), str) for k in ('sni', 'pin', 'pem'))):
+                                any(k in tls and not isinstance(tls[k], str) for k in ('sni', 'pin', 'pem'))):
             raise SyncError('node sync response has invalid TLS metadata')
         if 'public_ipv6' in info and not isinstance(info['public_ipv6'], str):
             raise SyncError('node sync response has invalid IPv6 host')
