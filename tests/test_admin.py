@@ -308,6 +308,7 @@ class AdminWeb(tu.Base):
     def login(self, **extra):
         return self.req('POST', '/adm/api/login', dict({'username': 'admin', 'password': 'adminpassword'}, **extra))
 
+
     def test_batch_bulk_and_export(self):
         self.login()
         st, body, _ = self.req('POST', '/adm/api/users-batch', {'prefix': 'team', 'count': 3, 'quota_gb': 10,
@@ -463,6 +464,65 @@ class AdminWeb(tu.Base):
         self.assertEqual(self.req('POST', '/adm/api/totp', {'off': True, 'password': 'wrong'})[0], 403)
         self.assertEqual(self.req('POST', '/adm/api/totp', {'off': True, 'password': 'adminpassword'})[0], 200)
         self.assertEqual(db.settings()['admin_totp'], '')
+
+
+    def test_parallel_totp_disable_cannot_erase_successful_enrollment(self):
+        self.login()
+        new_secret = secure.totp_secret()
+        off_entered = threading.Event()
+        off_continue = threading.Event()
+        enroll_verified = threading.Event()
+        enroll_done = threading.Event()
+        results = {}
+        original_set = db.set_settings
+        original_check = secure.totp_check
+
+        def slow_disable(**values):
+            if values.get('admin_totp') == '':
+                off_entered.set()
+                if not off_continue.wait(5):
+                    raise RuntimeError('disable interleaving timed out')
+            return original_set(**values)
+
+        def signal_verify(secret, code, *args, **kwargs):
+            if secret == new_secret:
+                enroll_verified.set()
+            return original_check(secret, code, *args, **kwargs)
+
+        def disable():
+            results['off'] = self.req('POST', '/adm/api/totp',
+                                      {'off': True, 'password': 'adminpassword'})
+
+        def enroll():
+            try:
+                results['enroll'] = self.req('POST', '/adm/api/totp',
+                                              {'secret': new_secret, 'code': secure.totp(new_secret)})
+            finally:
+                enroll_done.set()
+
+        # Starting with no factor is intentional: the off endpoint currently
+        # permits a password-confirmed no-op; it must still be serializable.
+        with mock.patch.object(db, 'set_settings', side_effect=slow_disable), \
+             mock.patch.object(secure, 'totp_check', side_effect=signal_verify):
+            off_thread = threading.Thread(target=disable)
+            enroll_thread = threading.Thread(target=enroll)
+            off_thread.start()
+            try:
+                self.assertTrue(off_entered.wait(5), 'disable never reached the DB write')
+                enroll_thread.start()
+                self.assertTrue(enroll_verified.wait(5), 'enrollment did not validate its code')
+                self.assertFalse(enroll_done.wait(0.1),
+                                 'enrollment must wait for in-flight disable to commit')
+            finally:
+                off_continue.set()
+                off_thread.join(5)
+                if enroll_thread.ident is not None:
+                    enroll_thread.join(5)
+        self.assertFalse(off_thread.is_alive())
+        self.assertFalse(enroll_thread.is_alive())
+        self.assertEqual(results['off'][0], 200, results)
+        self.assertEqual(results['enroll'][0], 200, results)
+        self.assertEqual(db.settings()['admin_totp'], new_secret)
 
     def test_sign_out_other_devices(self):
         self.login()
