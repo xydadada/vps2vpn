@@ -86,7 +86,9 @@ debian_archive_sources() {  # -> 0 if an end-of-life Debian was given its archiv
   local id code f="$APT_SOURCES/vps2vpn-debian-archive.list"
   [ -r "$OS_RELEASE" ] || return 1
   # shellcheck source=/dev/null
-  id=$(. "$OS_RELEASE" && echo "${ID:-}"); code=$(. "$OS_RELEASE" && echo "${VERSION_CODENAME:-}")
+  id=$(. "$OS_RELEASE" && echo "${ID:-}")
+  # shellcheck source=/dev/null
+  code=$(. "$OS_RELEASE" && echo "${VERSION_CODENAME:-}")
   [ "$id" = debian ] && [ "$code" = bullseye ] && [ ! -e "$f" ] || return 1
   say "Debian 11 is past its end of life and its updates moved to archive.debian.org; adding it as a package source ($f)"
   printf 'deb [check-valid-until=no] http://archive.debian.org/%s main\n' \
