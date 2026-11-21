@@ -71,7 +71,7 @@ const T = {
     no_servers: '还没有加入其它服务器。', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。那台服务器上的用户会在它下次同步时保留，可在那边删除。',
     client_upd: 'vps2vpn 客户端更新', client_ver: '最新版本号（留空 = 按服务器上的安装包自动判断）', client_url: '下载链接（留空 = 用服务器上的安装包）', client_notes: '更新说明（显示给大家看，可不填）',
     client_tip: '大家的 vps2vpn 客户端会在设置里提示「有新版本」，点一下用浏览器下载。不会自动安装。最省事的做法：把安装包（文件名像 vps2vpn-1.2.3-windows-setup.exe、vps2vpn-1.2.3-android.apk）放进服务器上的下面这个文件夹，什么都不用填。',
-    client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`,
+    client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`, client_unsigned: n => `缺少签名文件：${n}。App 只装带签名的安装包，请把 GitHub 发布页上同名的 .sig 文件一起放进来。`,
     renew: '服务器到期提醒', renew_at: '这台 VPS 哪天到期（续费日）', renew_note: '在哪里续费（例如 AWS Lightsail）',
     renew_tip: '填了以后，到期前 7 天、3 天、1 天和当天用 Telegram 提醒你，总览页也会提示。不填就不提醒。按月付费的话每次续费后改成下个月的日期。',
     renew_left: n => n > 0 ? `服务器还有 ${n} 天到期，记得续费` : n === 0 ? '服务器今天到期，请马上续费' : `服务器已过期 ${-n} 天，请检查是否已续费`,
@@ -175,7 +175,7 @@ const T = {
     no_servers: 'No other servers yet.', last_sync: 'synced', sync_now: 'Sync now', remove: 'Remove', remove_tip: 'Its entries disappear from subscriptions. Accounts on that server stay until removed there.',
     client_upd: 'vps2vpn app updates', client_ver: 'Latest version (empty = from the installers on the server)', client_url: 'Download link (empty = the installers on the server)', client_notes: 'What is new (shown to everyone, optional)',
     client_tip: 'The vps2vpn app shows "new version" in its settings and opens the download in the browser; it never installs by itself. Easiest: put the installers (named like vps2vpn-1.2.3-windows-setup.exe, vps2vpn-1.2.3-android.apk) in the folder below and leave these empty.',
-    client_found: (v, p) => `Installers found on the server: version ${v} (${p}); only people with a valid subscription link can download them.`, client_none: d => `No installers on the server yet. Put them in ${d}.`,
+    client_found: (v, p) => `Installers found on the server: version ${v} (${p}); only people with a valid subscription link can download them.`, client_none: d => `No installers on the server yet. Put them in ${d}.`, client_unsigned: n => `Signature missing: ${n}. The app only installs signed installers; put the matching .sig file from the GitHub release next to it.`,
     renew: 'Renewal reminder', renew_at: 'Date this VPS must be renewed', renew_note: 'Where to renew (e.g. AWS Lightsail)',
     renew_tip: 'You get a Telegram reminder 7, 3 and 1 days before and on the day, and a note on the overview. Leave empty for no reminder.',
     renew_left: n => n > 0 ? `The server must be renewed in ${n} day(s)` : n === 0 ? 'The server must be renewed today' : `The renewal date passed ${-n} day(s) ago`,
@@ -1111,6 +1111,7 @@ function clientPanel(s, inp) {
   return panel(t('client_upd'), null, f || s.client_version ? chip('ok', 'v' + (s.client_version || f.version)) : chip('off', t('off')),
     tip(t('client_tip')), h('div', {class: 'stack'},
       h('div', {class: 'muted', style: 'font-size:12.5px'}, found),
+      f && f.unsigned && f.unsigned.length ? h('div', {class: 'alert warn'}, icon('alert'), t('client_unsigned')(f.unsigned.join(', '))) : null,
       h('div', {class: 'form-grid'}, field(t('client_ver'), inp('client_version')), field(t('client_url'), inp('client_url'))),
       field(t('client_notes'), inp('client_notes'))));
 }

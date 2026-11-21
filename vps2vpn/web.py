@@ -251,7 +251,10 @@ def client_files():
     if not best:
         return None
     v = max(best, key=_ver)
-    return {'version': v, 'files': {platform: entry[1] for platform, entry in best[v].items()}}
+    files = {platform: entry[1] for platform, entry in best[v].items()}
+    # The app refuses an installer without its signature (<installer>.sig from the same GitHub release).
+    unsigned = sorted(n for n in files.values() if not os.path.isfile(os.path.join(paths.CLIENT, n + '.sig')))
+    return {'version': v, 'files': files, 'unsigned': unsigned}
 
 
 def client_info(s, link):
@@ -1660,13 +1663,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.json({'error': 'unknown endpoint'}, 404)
 
     def download(self, name):
-        """Stream an app installer from paths.CLIENT (only names the update check would offer)."""
-        if not _client_asset(name):
+        """Stream an app installer from paths.CLIENT (only names the update check would offer), or its
+        detached update signature `<installer>.sig`, which the app checks before it offers the file."""
+        sig = name.endswith('.sig')
+        if not _client_asset(name[:-4] if sig else name):
             return self.not_found()
         f = os.path.join(paths.CLIENT, name)
         if not os.path.isfile(f):
             return self.not_found()
         size = os.path.getsize(f)
+        if sig and size > 4096:
+            return self.not_found()
         self.send_response(200)
         for k, v in (('Content-Type', 'application/octet-stream'), ('Content-Length', str(size)),
                      ('Content-Disposition', 'attachment; filename="%s"' % name), ('Cache-Control', 'no-store'),

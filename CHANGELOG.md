@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.9
+
+**Client updates**
+- The panel serves the update signature `<installer>.sig` next to each installer in `/var/lib/vps2vpn/client` (at most 4 KB), and the settings page warns about installers that have none. From vps2vpn client 1.0.8 the app keeps an update only when it carries the release key's signature and is newer than the installed version, so a server that was tampered with cannot hand out a different installer. Copy the `.sig` files from the client's GitHub release along with the installers.
+
 ## 0.2.8
 
 **For the owner**

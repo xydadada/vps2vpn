@@ -344,6 +344,19 @@ class OpsWeb(tf.MemberWeb):
         self.assertEqual(self.req('GET', base + 'download/notes.txt')[0], 404)
         self.assertEqual(self.req('GET', base + 'download/..%2Fvps2vpn.db')[0], 404)
         self.assertEqual(self.req('GET', '/s/%s/download/vps2vpn-1.10.0-android.apk' % ('x' * 24))[0], 404)
+        # update signatures: served next to their installer, never for other names, never large
+        self.assertEqual(web.client_files()['unsigned'], ['vps2vpn-1.10.0-android.apk', 'vps2vpn-1.10.0-windows-setup.exe'])
+        self.assertEqual(self.req('GET', base + 'download/vps2vpn-1.10.0-windows-setup.exe.sig')[0], 404)
+        with open(os.path.join(paths.CLIENT, 'vps2vpn-1.10.0-windows-setup.exe.sig'), 'wb') as f:
+            f.write(b'c2lnbmF0dXJl\n')
+        with open(os.path.join(paths.CLIENT, 'vps2vpn-1.10.0-android.apk.sig'), 'w') as f:
+            f.write('x' * 5000)
+        with open(os.path.join(paths.CLIENT, 'notes.txt.sig'), 'w') as f:
+            f.write('x')
+        self.assertEqual(self.req('GET', base + 'download/vps2vpn-1.10.0-windows-setup.exe.sig')[:2], (200, b'c2lnbmF0dXJl\n'))
+        self.assertEqual(self.req('GET', base + 'download/vps2vpn-1.10.0-android.apk.sig')[0], 404)   # too big
+        self.assertEqual(self.req('GET', base + 'download/notes.txt.sig')[0], 404)
+        self.assertEqual(web.client_files()['unsigned'], [])
         self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
         self.assertEqual(self.req('POST', '/adm/api/settings', {'client_version': 'one'})[0], 400)
         self.assertEqual(self.req('POST', '/adm/api/settings', {'client_url': 'javascript:alert(1)'})[0], 400)
