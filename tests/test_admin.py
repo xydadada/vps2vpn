@@ -297,6 +297,16 @@ class AdminWeb(tu.Base):
         st, body, _ = self.req('POST', '/adm/api/users-bulk', {'ids': ids, 'action': 'delete'})
         self.assertIsNone(db.user(ids[0]))
 
+    def test_bulk_rejects_oversized_requests_atomically(self):
+        self.login()
+        uid = db.add_user('bulk-limit', 10)
+        ids = [uid] + list(range(100000, 102000))
+        st, body, _ = self.req('POST', '/adm/api/users-bulk',
+                               {'ids': ids, 'action': 'disable'})
+        self.assertEqual(st, 400, body)
+        self.assertIn('2000', json.loads(body)['error'])
+        self.assertEqual(db.user(uid)['enabled'], 1)
+
     def test_bulk_repeated_ids_are_applied_only_once(self):
         self.login()
         expires = int(time.time()) + 20 * 86400

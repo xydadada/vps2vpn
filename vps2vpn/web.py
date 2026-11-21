@@ -1199,6 +1199,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         raw_ids = d.get('ids', [])
         if not isinstance(raw_ids, list):
             return self.json({'error': 'ids must be an array'}, 400)
+        if len(raw_ids) > 2000:
+            return self.json({'error': 'too many IDs (maximum 2000)'}, 400)
         def user_id(raw):
             # bool and fractional float are accepted by int() but do not
             # identify the account the caller intended.
@@ -1214,8 +1216,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         try:
             # A repeated account must not have its quota or expiry extended
-            # twice. Preserve the order of the first 2000 requested IDs.
-            ids = list(dict.fromkeys(user_id(i) for i in raw_ids[:2000]))
+            # twice. Preserve request order after de-duplication.
+            ids = list(dict.fromkeys(user_id(i) for i in raw_ids))
             value = float(d.get('value') or 0)
         except (TypeError, ValueError):
             return self.json({'error': 'invalid number'}, 400)
