@@ -1134,6 +1134,8 @@ class Shadowrocket(tu.Base):
                 self.assertEqual(conf.splitlines().count('[Proxy Group]'), 1)
                 self.assertEqual(conf.splitlines().count('[Rule]'), 1)
                 self.assertNotIn('Bad = direct', conf)
+                self.assertNotIn(' = tuic, ', conf)
+                self.assertIn(' = vless, ' if field == 'hy2_pass' else ' = hysteria2, ', conf)
 
     def test_joined_node_label_cannot_inject_ini_sections(self):
         user = mk('shadowrocket-member', 20)
