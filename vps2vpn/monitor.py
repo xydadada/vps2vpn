@@ -282,9 +282,15 @@ def summary():
 
 
 def run_in_background(log=print, with_speed=False):
+    """Return whether the monitor job was accepted, not merely requested.
+
+    Reserve before spawning: the scheduler must know when a forced-speed
+    request was skipped and retry it instead of consuming its hourly slot.
+    """
+    if not _run_lock.acquire(blocking=False):
+        return False
+
     def go():
-        if not _run_lock.acquire(blocking=False):     # previous round still running: skip
-            return
         try:
             e = run_once(force_speed=with_speed)
             down = [k for k, v in e['sites'].items() if not v['ok'] and k.endswith('/4')]
@@ -294,7 +300,13 @@ def run_in_background(log=print, with_speed=False):
             log('monitor error: %r' % ex)
         finally:
             _run_lock.release()
-    threading.Thread(target=go, daemon=True, name='monitor').start()
+
+    try:
+        threading.Thread(target=go, daemon=True, name='monitor').start()
+    except Exception:
+        _run_lock.release()
+        raise
+    return True
 
 
 if __name__ == '__main__':
