@@ -738,6 +738,11 @@ class IpWatch:
         return now
 
 
+def send_backup(name, s):
+    with open(name, 'rb') as f:
+        notify.send_file(os.path.basename(name), f.read(), 'daily backup / 每日备份（含密钥，请妥善保存）', s=s)
+
+
 class Scheduler:
     def __init__(self):
         self.last = {}
@@ -745,6 +750,26 @@ class Scheduler:
         self.stop = threading.Event()
         self.ipwatch = IpWatch()
         self._threads = []
+        self._slow = {}
+
+    def in_background(self, name, fn, *args):
+        """Run a slow network job (ACME renewal, a Telegram upload) beside the scheduler, one at a time per
+        name: a server that does not answer must not hold up the 20-second quota and expiry pass (#112).
+        Returns False while the previous one is still running."""
+        t = self._slow.get(name)
+        if t is not None and t.is_alive():
+            return False
+
+        def run():
+            try:
+                fn(*args)
+            except Exception as e:
+                log('%s failed: %s' % (name, e))
+
+        t = threading.Thread(target=run, daemon=True, name=name)
+        self._slow[name] = t
+        t.start()
+        return True
 
     def due(self, name, every):
         now = time.monotonic()
@@ -786,7 +811,7 @@ class Scheduler:
                 if with_speed:
                     self.last.pop('monitor_speed', None)
         if paths.LIVE and self.due('cert', 3600) and time.monotonic() >= self.cert_backoff_until:
-            self.renew_cert(s)
+            self.in_background('cert-renewal', self.renew_cert, s)
         if paths.LIVE and s.get('client_auto_update', True) and self.due('client', 6 * 3600):
             threading.Thread(target=client_sync, args=(s,), daemon=True, name='clientsync').start()
         if self.due('rules', 86400) or (rules.mirror_age() is None and self.due('rules-missing', 600)):
@@ -803,9 +828,7 @@ class Scheduler:
         if self.due('backup', 86400):
             name = backup()
             if s['tg_backup'] and s['tg_token'] and s['tg_chat']:
-                with open(name, 'rb') as f:
-                    notify.send_file(os.path.basename(name), f.read(),
-                                     'daily backup / 每日备份（含密钥，请妥善保存）', s=s)
+                self.in_background('tg-backup', send_backup, name, s)
 
     def renew_cert(self, s):
         """Renew the certificate when due and hand it to the cores."""

@@ -371,11 +371,13 @@ class ScaleHelpers(tu.Base):
         # Reading the cores resets them, so a failed write must not lose those bytes (#96).
         a = mk('a')
         real = db.add_traffic_many
-        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (100, 200)}),                 mock.patch.object(db, 'add_traffic_many', side_effect=sqlite3.OperationalError('database is locked')):
+        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (100, 200)}), \
+                mock.patch.object(db, 'add_traffic_many', side_effect=sqlite3.OperationalError('database is locked')):
             with self.assertRaises(sqlite3.OperationalError):
                 cores.save_traffic(db.settings())
         self.assertEqual(db.user(a['id'])['used_up'], 0)
-        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (1, 2)}),                 mock.patch.object(db, 'add_traffic_many', side_effect=real):
+        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (1, 2)}), \
+                mock.patch.object(db, 'add_traffic_many', side_effect=real):
             self.assertEqual(cores.save_traffic(db.settings()), [(a['id'], 101, 202)])
         with mock.patch.object(cores, 'collect_traffic', return_value={}):
             self.assertEqual(cores.save_traffic(db.settings()), [])
@@ -386,7 +388,8 @@ class ScaleHelpers(tu.Base):
         alice = mk('alice')
         backup = db.export_all()
         real = db.add_traffic_many
-        with mock.patch.object(cores, 'collect_traffic', return_value={alice['id']: (1234, 5678)}),                 mock.patch.object(db, 'add_traffic_many', side_effect=sqlite3.OperationalError('database is locked')):
+        with mock.patch.object(cores, 'collect_traffic', return_value={alice['id']: (1234, 5678)}), \
+                mock.patch.object(db, 'add_traffic_many', side_effect=sqlite3.OperationalError('database is locked')):
             with self.assertRaises(sqlite3.OperationalError):
                 cores.save_traffic(db.settings())
         # A restore that fails keeps them for Alice.
@@ -406,7 +409,8 @@ class ScaleHelpers(tu.Base):
                 db.import_all(backup)
             read.assert_called_once()
         self.assertEqual(cores._unsaved, {})
-        with mock.patch.object(cores, 'collect_traffic', return_value={}),                 mock.patch.object(db, 'add_traffic_many', side_effect=real):
+        with mock.patch.object(cores, 'collect_traffic', return_value={}), \
+                mock.patch.object(db, 'add_traffic_many', side_effect=real):
             self.assertEqual(cores.save_traffic(db.settings()), [])
         bob = db.user(alice['id'])
         self.assertEqual((bob['name'], bob['used_up'], bob['used_down']), ('bob', 0, 0))
@@ -414,9 +418,43 @@ class ScaleHelpers(tu.Base):
     def test_quotas_are_enforced_when_a_traffic_reading_fails(self):
         db.set_settings(setup_done=True)
         sched = jobs.Scheduler()
-        with mock.patch.object(jobs, 'collect', side_effect=sqlite3.OperationalError('disk I/O error')),                 mock.patch.object(jobs, 'enforce', return_value=False) as enforce,                 mock.patch.object(sched, 'due', side_effect=lambda name, every: name == 'collect'):
+        with mock.patch.object(jobs, 'collect', side_effect=sqlite3.OperationalError('disk I/O error')), \
+                mock.patch.object(jobs, 'enforce', return_value=False) as enforce, \
+                mock.patch.object(sched, 'due', side_effect=lambda name, every: name == 'collect'):
             sched.tick()
         enforce.assert_called_once()
+
+    def test_slow_certificate_renewal_and_backup_upload_do_not_hold_up_quotas(self):
+        # #112: ACME and Telegram can take minutes; the 20-second quota and expiry pass must go on.
+        db.set_settings(setup_done=True, tg_backup=True, tg_token='t', tg_chat='1')
+        sched = jobs.Scheduler()
+        release, started = threading.Event(), []
+
+        def blocked(*args, **kwargs):
+            started.append(1)
+            release.wait(10)
+
+        try:
+            with mock.patch.object(paths, 'LIVE', True), \
+                    mock.patch.object(sched, 'renew_cert', side_effect=blocked), \
+                    mock.patch.object(jobs.notify, 'send_file', side_effect=blocked), \
+                    mock.patch.object(jobs, 'backup', return_value=os.path.join(paths.VAR, 'x.json')), \
+                    mock.patch.object(jobs, 'collect'), \
+                    mock.patch.object(jobs, 'enforce', return_value=False) as enforce, \
+                    mock.patch.object(sched, 'due', side_effect=lambda name, every: name in ('collect', 'cert', 'backup')):
+                with open(os.path.join(paths.VAR, 'x.json'), 'wb') as f:
+                    f.write(b'{}')
+                done = threading.Event()
+                threading.Thread(target=lambda: (sched.tick(), sched.tick(), done.set()), daemon=True).start()
+                self.assertTrue(done.wait(5), 'a tick waited for the certificate or the backup upload')
+                self.assertEqual(enforce.call_count, 2)
+                for _ in range(50):
+                    if len(started) == 2:
+                        break
+                    time.sleep(0.05)
+                self.assertEqual(len(started), 2)       # one renewal and one upload, not one per tick
+        finally:
+            release.set()
 
     def test_failed_port_hopping_is_not_listed_in_subscriptions(self):
         # A hop range whose nft redirect is missing sends clients to ports nothing listens on (#97).
@@ -424,7 +462,10 @@ class ScaleHelpers(tu.Base):
         db.set_settings(hy2_enabled=True, hy2_hop=True, public_host='198.51.100.9')
         s = db.settings()
         failed = mock.Mock(returncode=1, stderr='Operation not permitted')
-        with mock.patch.object(paths, 'LIVE', True),                 mock.patch.object(system.shutil, 'which', return_value='/usr/sbin/nft'),                 mock.patch.object(system.subprocess, 'run', return_value=failed),                 mock.patch.object(system, '_persist_hopping') as persist:
+        with mock.patch.object(paths, 'LIVE', True), \
+                mock.patch.object(system.shutil, 'which', return_value='/usr/sbin/nft'), \
+                mock.patch.object(system.subprocess, 'run', return_value=failed), \
+                mock.patch.object(system, '_persist_hopping') as persist:
             self.assertTrue(system.port_hopping(s).startswith('failed'))
             persist.assert_not_called()
         try:
@@ -432,10 +473,14 @@ class ScaleHelpers(tu.Base):
             self.assertEqual(len(hy2), 1)
             self.assertNotIn('hop', hy2[0])
             self.assertIs(cluster.public_info(s)['hy2_hop'], False)
-            with mock.patch.object(paths, 'LIVE', True),                     mock.patch.object(system.shutil, 'which', return_value=None):
+            with mock.patch.object(paths, 'LIVE', True), \
+                mock.patch.object(system.shutil, 'which', return_value=None):
                 self.assertEqual(system.port_hopping(s), 'failed: nft is not installed')
             self.assertFalse(system.hopping_listed(s))
-            with mock.patch.object(paths, 'LIVE', True),                     mock.patch.object(system.shutil, 'which', return_value='/usr/sbin/nft'),                     mock.patch.object(system.subprocess, 'run', return_value=mock.Mock(returncode=0, stderr='')),                     mock.patch.object(system, '_persist_hopping'):
+            with mock.patch.object(paths, 'LIVE', True), \
+                mock.patch.object(system.shutil, 'which', return_value='/usr/sbin/nft'), \
+                mock.patch.object(system.subprocess, 'run', return_value=mock.Mock(returncode=0, stderr='')), \
+                mock.patch.object(system, '_persist_hopping'):
                 self.assertEqual(system.port_hopping(s), 'ok')
             hy2 = [n for n in subscription.nodes(s, db.user(u['id'])) if n['type'] == 'hy2']
             self.assertIn('hop', hy2[0])
