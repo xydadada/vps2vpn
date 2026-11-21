@@ -166,12 +166,35 @@ def server_month(s, health=None, now=None):
     if rec.get('period') != period:
         if rec.get('period'):
             log('server traffic %s: %.1f GB' % (rec['period'], (rec.get('rx', 0) + rec.get('tx', 0)) / (1 << 30)))
-        rec = {'period': period, 'rx': 0, 'tx': 0, 'last_rx': rec.get('last_rx'), 'last_tx': rec.get('last_tx')}
-    for k in ('rx', 'tx'):
-        cur, last = h[k + '_total'], rec.get('last_' + k)
-        if last is not None:
-            rec[k] += cur - last if cur >= last else cur       # counters restart from zero after a reboot
-        rec['last_' + k] = cur
+        rec = {'period': period, 'rx': 0, 'tx': 0, 'last_rx': rec.get('last_rx'), 'last_tx': rec.get('last_tx'),
+               'last_if': rec.get('last_if')}
+    ifaces = h.get('net_ifaces')
+    if isinstance(ifaces, dict):
+        # Per interface: one that goes away (a VPN or container link) must not make the sum drop and look like
+        # a reboot, which would count everything since boot a second time.
+        last_if = rec.get('last_if') if isinstance(rec.get('last_if'), dict) else None
+        if last_if is not None:
+            for name, (rx, tx) in ifaces.items():
+                prev = last_if.get(name)
+                if not prev:
+                    rec['rx'] += rx                              # a new interface: what it carried so far
+                    rec['tx'] += tx
+                    continue
+                for i, k in ((0, 'rx'), (1, 'tx')):
+                    cur, last = (rx, tx)[i], prev[i]
+                    rec[k] += cur - last if cur >= last else cur  # counters restart from zero after a reboot
+        elif rec.get('last_rx') is not None and rec.get('last_tx') is not None:
+            # first look since the per-interface record: continue from the old totals
+            rec['rx'] += max(0, h['rx_total'] - rec['last_rx'])
+            rec['tx'] += max(0, h['tx_total'] - rec['last_tx'])
+        rec['last_if'] = {name: [int(rx), int(tx)] for name, (rx, tx) in ifaces.items()}
+        rec['last_rx'], rec['last_tx'] = h['rx_total'], h['tx_total']
+    else:
+        for k in ('rx', 'tx'):
+            cur, last = h[k + '_total'], rec.get('last_' + k)
+            if last is not None:
+                rec[k] += cur - last if cur >= last else cur       # counters restart from zero after a reboot
+            rec['last_' + k] = cur
     rec['at'] = int(now)
     db.set_settings(server_month=rec)
     cap = s['server_cap_gb'] * (1 << 30)

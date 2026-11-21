@@ -384,6 +384,40 @@ class ServerMonth(tu.Base):
         self.assertEqual(jobs.period_of(time.mktime((2026, 1, 3, 0, 0, 0, 0, 0, -1)), 15), '2025-12-15')
 
 
+    def test_an_interface_going_away_is_not_a_reboot(self):
+        s = db.settings()
+        t0 = time.mktime((2026, 3, 10, 12, 0, 0, 0, 0, -1))
+        h = lambda ifs: {'rx_total': sum(v[0] for v in ifs.values()), 'tx_total': sum(v[1] for v in ifs.values()),
+                         'net_ifaces': ifs}
+        jobs.server_month(s, h({'eth0': [10 << 30, 20 << 30], 'wg0': [5 << 30, 5 << 30]}), t0)
+        rec = jobs.server_month(db.settings(), h({'eth0': [11 << 30, 21 << 30]}), t0 + 60)   # wg0 went down
+        self.assertEqual((rec['rx'], rec['tx']), (1 << 30, 1 << 30))
+        rec = jobs.server_month(db.settings(), h({'eth0': [12 << 30, 22 << 30], 'wg0': [100, 200]}), t0 + 120)
+        self.assertEqual((rec['rx'], rec['tx']), ((2 << 30) + 100, (2 << 30) + 200))
+        rec = jobs.server_month(db.settings(), h({'eth0': [1000, 2000]}), t0 + 180)             # rebooted
+        self.assertEqual((rec['rx'], rec['tx']), ((2 << 30) + 1100, (2 << 30) + 2200))
+
+    def test_upgrade_from_summed_counters_continues(self):
+        s = db.settings()
+        t0 = time.mktime((2026, 3, 10, 12, 0, 0, 0, 0, -1))
+        jobs.server_month(s, {'rx_total': 1000, 'tx_total': 5000}, t0)
+        rec = jobs.server_month(db.settings(), {'rx_total': 1500, 'tx_total': 5500,
+                                                'net_ifaces': {'eth0': [1500, 5500]}}, t0 + 60)
+        self.assertEqual((rec['rx'], rec['tx']), (500, 500))
+
+    def test_only_physical_nics_are_billed(self):
+        dev = ('Inter-|   Receive\n face |bytes\n'
+               '    lo: 900 0 0 0 0 0 0 0 900 0 0 0 0 0 0 0\n'
+               '  eth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n'
+               'docker0: 50 0 0 0 0 0 0 0 60 0 0 0 0 0 0 0\n'
+               'veth1a: 50 0 0 0 0 0 0 0 60 0 0 0 0 0 0 0\n')
+        virtual = lambda n: n != 'eth0'
+        self.assertEqual(system.net_counters(dev, virtual), {'eth0': [100, 200]})
+        # a container sees only virtual links: then those are its traffic
+        self.assertEqual(system.net_counters(dev, lambda n: True),
+                         {'eth0': [100, 200], 'docker0': [50, 60], 'veth1a': [50, 60]})
+
+
 class Abuse(tu.Base):
     def test_flags(self):
         flows = [(1, 'h%d.example' % i, 1000 + i % 40) for i in range(250)] + [(2, 'a.com', 443)] * 300 + \

@@ -366,15 +366,10 @@ def health():
         out['mem_used'] = (mi['MemTotal'] - mi.get('MemAvailable', mi['MemFree'])) * 1024
         with open('/proc/uptime') as f:
             out['uptime'] = int(float(f.read().split()[0]))
-        rx = tx = 0
-        with open('/proc/net/dev') as f:
-            for line in f.readlines()[2:]:
-                name, data = line.split(':', 1)
-                if name.strip() == 'lo':
-                    continue
-                v = data.split()
-                rx += int(v[0])
-                tx += int(v[8])
+        ifaces = net_counters()
+        rx = sum(v[0] for v in ifaces.values())
+        tx = sum(v[1] for v in ifaces.values())
+        out['net_ifaces'] = ifaces
         now = time.time()
         with _net_lock:
             if _last_net:
@@ -395,6 +390,34 @@ def health():
         pass
     out['bbr'] = bbr_active()
     return out
+
+
+def _is_virtual_iface(name):
+    try:
+        return '/virtual/' in os.path.realpath('/sys/class/net/' + name)
+    except (OSError, ValueError):
+        return False
+
+
+def net_counters(text=None, is_virtual=None):
+    """{interface: [rx bytes, tx bytes]} for the traffic the provider bills: the physical NICs. Traffic of
+    docker/veth, WireGuard or tun interfaces also crosses a physical NIC, so counting them too would count it
+    twice. A container or OpenVZ guest has only virtual interfaces; then all of them (but lo) are used."""
+    if text is None:
+        with open('/proc/net/dev') as f:
+            text = f.read()
+    is_virtual = is_virtual or _is_virtual_iface
+    rows = {}
+    for line in text.splitlines()[2:]:
+        if ':' not in line:
+            continue
+        name, data = line.split(':', 1)
+        name, v = name.strip(), data.split()
+        if name == 'lo' or len(v) < 9:
+            continue
+        rows[name] = [int(v[0]), int(v[8])]
+    physical = {k: v for k, v in rows.items() if not is_virtual(k)}
+    return physical or rows
 
 
 def os_info():

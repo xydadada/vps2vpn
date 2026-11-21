@@ -16,6 +16,7 @@
 - Approving a quota request that is still below what the account has used no longer switches it back on (it was switched off again a minute later, and so on).
 - Device count: one phone on a dual-stack network, on the smart line, or rotating IPv6 privacy addresses counts once (IPv6 addresses are grouped by /64), so a device limit of 1 no longer pauses it and the abuse check no longer calls it a shared link.
 - An account that shares part of its quota with invitees shows the quota it is actually cut off at in the apps (`Subscription-Userinfo`), not the full plan; one that shared all of it no longer shows as unlimited there, on its member page, or to an approved top-up that does not cover it.
+- The server's monthly traffic (and its cap alerts) counts the physical network card only, as the provider bills it: Docker, WireGuard or tun links no longer count the same traffic twice, and one of them going away no longer looks like a reboot that adds everything since boot again.
 - The Telegram settings list the `/expiring` command.
 - "Too many devices" events are logged at most once an hour per account, so a warn-only limit no longer pushes every other event out of the log.
 - One address can hold at most 16 of the panel's 128 connection slots, so a single client opening many slow connections cannot lock everyone else out (connections from the machine itself, such as a reverse proxy, are not capped).
