@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+**Restore**
+- A backup whose quota is an integer too large for a float (such as 2^1100) is refused with a clear message instead of an internal error (#95).
+
 ## 0.2.10
 
 **Security**
