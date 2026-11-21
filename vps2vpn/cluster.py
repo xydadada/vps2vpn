@@ -33,6 +33,7 @@ UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 PASS_RE = re.compile(r'^[!-~]{6,128}$')   # printable ASCII, no spaces
 PIN_RE = re.compile(r'^[0-9a-fA-F]{64}$')
 ROLLBACK_CAP = 64 << 20                   # cap counter-drop recovery when idmap didn't change (prevents backup rollback spikes)
+MAX_SQLITE_INT = (1 << 63) - 1           # traffic is persisted in signed SQLite INTEGER columns
 _wake = threading.Event()
 _lock = threading.Lock()
 _node_lock = threading.Lock()
@@ -269,6 +270,12 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid %s' % key)
     if 'health' in ans and not isinstance(ans['health'], dict):
         raise SyncError('node sync response has invalid health')
+    for pair in ans['traffic'].values():
+        # Historically malformed individual rows were skipped. Preserve that
+        # behavior, but never admit an integer SQLite cannot store.
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            if any(type(v) is int and v > MAX_SQLITE_INT for v in pair):
+                raise SyncError('node sync response has oversized traffic counters')
     return ans
 
 
@@ -337,7 +344,11 @@ def push_users():
 def _apply_sync_answer(server, ans, got_pin, log=print):
     """Apply a node's sync response to `server` and record traffic deltas in DB."""
     _validate_sync_answer(ans)
-    known = db.user_ids()
+    # Both totals are read in the caller's transaction. Otherwise a node
+    # whose counters approach SQLite's limit could turn INTEGER into REAL.
+    account_totals = {r['id']: (r['used_up'], r['used_down'])
+                      for r in db.q('SELECT id, used_up, used_down FROM users')}
+    known = set(account_totals)
     old_seen = server.get('seen') or {}
     seen = {}
     for k, v in old_seen.items():
@@ -386,6 +397,21 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
         if uid in known:
             seen[rid_key] = (up, down)
     if deltas:
+        # SQLite silently promotes integer arithmetic to REAL on overflow,
+        # losing exact quota accounting. Check both the account totals and
+        # today's history totals before any row is changed.
+        today = time.strftime('%Y-%m-%d', time.localtime())
+        daily = {r['user_id']: (r['up'], r['down']) for r in
+                 db.q('SELECT user_id, up, down FROM traffic WHERE day=?', (today,))}
+        for uid, dup, ddown in deltas:
+            current = account_totals[uid]
+            historical = daily.get(uid, (0, 0))
+            if any(type(v) is not int or v < 0 or v > MAX_SQLITE_INT
+                   for v in current + historical):
+                raise SyncError('stored traffic counters are not valid integers')
+            if (dup > MAX_SQLITE_INT - current[0] or ddown > MAX_SQLITE_INT - current[1]
+                    or dup > MAX_SQLITE_INT - historical[0] or ddown > MAX_SQLITE_INT - historical[1]):
+                raise SyncError('node traffic would overflow SQLite counters')
         db.add_traffic_many(deltas)
     server.update(info=ans.get('info') or {}, idmap=new_idmap, seen=seen, health=ans.get('health') or {},
                   version=ans.get('version', ''), last_ok=int(time.time()), error='', fail_count=0, pin=got_pin)
@@ -411,8 +437,9 @@ def sync_one(server, s=None, log=print):
     try:
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
                                          'users': push_users()})
-        _apply_sync_answer(server, ans, got_pin, log)
-    except SyncError as e:
+        with db.transaction():
+            _apply_sync_answer(server, ans, got_pin, log)
+    except (SyncError, OverflowError) as e:
         _alert([a for a in [_record_sync_error(server, e)] if a])
         return False
     return True
@@ -458,14 +485,23 @@ def _sync_all(log):
                            and x.get('key') == keys.get(sid)), None)
             if target is None:
                 continue
-            with db.transaction():
-                if err is not None:
-                    alert = _record_sync_error(target, err)
+            try:
+                with db.transaction():
+                    if err is not None:
+                        alert = _record_sync_error(target, err)
+                        if alert:
+                            alerts.append(alert)
+                    else:
+                        _apply_sync_answer(target, ans, got_pin, log)
+                    db.set_settings(servers=cur_servers)
+            except (SyncError, OverflowError) as e:
+                # The failed transaction rolled back all traffic writes.
+                # Mark this node failed and keep processing the next node.
+                with db.transaction():
+                    alert = _record_sync_error(target, e)
                     if alert:
                         alerts.append(alert)
-                else:
-                    _apply_sync_answer(target, ans, got_pin, log)
-                db.set_settings(servers=cur_servers)
+                    db.set_settings(servers=cur_servers)
     _alert(alerts)
     final_servers = db.settings()['servers']
     if json.dumps([(x.get('info'), x.get('idmap')) for x in final_servers], sort_keys=True) != before:
