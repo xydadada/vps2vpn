@@ -12,7 +12,11 @@
 
 **Robustness**
 - Numbers like `1e400` or a 310-digit integer in a request answer 400 instead of 500 in batch creation, invites, member invite revoke, quota requests and the port, server cap and reset-day settings (#72, #74, #86; PRs #75, #79, #87).
-- Several servers: a node answering an error as a JSON array or `null` no longer aborts the whole sync round, and node traffic counters that would not fit SQLite's 64-bit integers are refused (the node is marked failed, nothing is billed, the other nodes still sync) (#76, #77; PRs #80, #83).
+- Several servers: a node answering an error as a JSON array or `null` no longer aborts the whole sync round, and node traffic counters that would not fit SQLite's 64-bit integers are refused (the node is marked failed, nothing is billed, the other nodes still sync) (#76, #77, #90; PRs #80, #83).
+- Several servers: a node reporting the same account under two spellings of its ID (`"1"` and `"01"`) can no longer bill it twice; such an answer is refused like any malformed one. All traffic, the panel's own included, goes through one guarded write that keeps the counters exact whole numbers, and usage of an account deleted mid-count is dropped without losing everyone else's (#88; PR #83).
+
+**Subscriptions**
+- A joined server whose name contains a line break (it comes from the join code) can no longer add stray lines or sections to the Shadowrocket subscription; control characters in names become a space (#92; PR #93).
 
 ## 0.2.9
 
