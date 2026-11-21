@@ -1214,6 +1214,57 @@ class Servers(tu.Base):
             self.assertEqual(node['seen'], {'7': [100, 200]})
             self.assertEqual(node['pin'], 'ab' * 32)
 
+    def test_node_traffic_counters_must_fit_sqlite_integer(self):
+        good = {'ok': True, 'info': {}, 'idmap': {}, 'traffic': {'1': [0, 0]}}
+        cases = (
+            {'1': [1 << 80, 0]},
+            {'1': [-1, 0]},
+            {'1': [0, 1.5]},
+            {'1': [True, 0]},
+            {'1': [0]},
+            {'bad': [0, 0]},
+            {'1': 'oops'},
+        )
+        self.assertIs(cluster._validate_sync_answer(good), good)
+        for payload in cases:
+            with self.subTest(payload=payload):
+                bad = dict(good, traffic=payload)
+                with self.assertRaisesRegex(cluster.SyncError, 'traffic'):
+                    cluster._validate_sync_answer(bad)
+
+    def test_bad_node_traffic_does_not_abort_sibling_sync_or_mutate_usage(self):
+        user = mk('sync-counter-user', 20)
+        rid = str(user['id'])
+
+        def node(server_id, name):
+            return {'id': server_id, 'name': name, 'url': 'https://node.example/' + name,
+                    'key': 'secret', 'pin': 'ab' * 32, 'enabled': True,
+                    'info': {}, 'idmap': {rid: 42}, 'seen': {rid: [0, 0]}, 'fail_count': 0}
+
+        bad = node('abcdef01', 'bad')
+        good = node('abcdef02', 'good')
+        db.set_settings(servers=[bad, good])
+        calls = []
+
+        def response(server, payload, timeout=15):
+            calls.append(server['name'])
+            counters = [1 << 80, 0] if server['name'] == 'bad' else [5, 10]
+            return {'ok': True, 'info': {}, 'idmap': {rid: 42},
+                    'traffic': {rid: counters}}, 'ab' * 32
+
+        with mock.patch.object(cluster, '_request', side_effect=response):
+            cluster.sync_all(log=lambda message: None)
+
+        self.assertEqual(calls, ['bad', 'good'])
+        self.assertEqual((db.user(user['id'])['used_up'], db.user(user['id'])['used_down']), (5, 10))
+        states = {s['name']: s for s in db.settings()['servers']}
+        self.assertEqual(states['bad']['fail_count'], 1)
+        self.assertEqual(states['bad']['seen'], {rid: [0, 0]})
+        self.assertEqual(states['bad']['idmap'], {rid: 42})
+        self.assertEqual(states['good']['fail_count'], 0)
+        self.assertEqual(states['good']['seen'][rid], [5, 10])
+
+
     def test_http_200_missing_success_marker_is_a_sync_error(self):
         conn = mock.Mock()
         conn.sock.getpeercert.return_value = b'fixture cert'
