@@ -756,6 +756,13 @@ def import_all(data):
         raise ValueError('panel_path and member_path must differ')
     for i, u in enumerate(data['users'], 1):
         _check_import_user(u, i)
+    if 'invites' in data and not isinstance(data['invites'], list):
+        raise ValueError('backup invites must be a list')
+    for i, invite in enumerate(data.get('invites', []), 1):
+        used_by = invite.get('used_by', '') if isinstance(invite, dict) else None
+        if not isinstance(used_by, str) or not re.fullmatch(
+                r'(?:[1-9][0-9]{0,18}(?:,[1-9][0-9]{0,18})*)?', used_by):
+            raise ValueError('invite %d: invalid usage history' % i)
     # A backup can be old, copied from another install, or edited: it is never
     # evidence that this bot/chat was verified on the restored installation.
     keep['tg_verified'] = False
