@@ -547,7 +547,7 @@ class Installer(unittest.TestCase):
             self.assertIn('-o Dpkg::Options::=--force-confold', c)
         self.assertIn(' update ', calls[0] + ' ')
         self.assertIn(' install -y ', calls[1])
-        self.assertTrue(calls[1].endswith(' findutils passwd'), calls[1])    # minimal images lack find / useradd
+        self.assertTrue(calls[1].endswith(' findutils passwd kmod procps iproute2'), calls[1])  # minimal images
 
     def test_end_of_life_debian_11_falls_back_to_archive_debian_org(self):
         # bullseye's security updates left deb.debian.org: installing anything updated there fails with 404
@@ -618,6 +618,19 @@ class Installer(unittest.TestCase):
         self.assertIn('exec $PY -m vps2vpn', sh)                       # /usr/local/bin/vps2vpn
         self.assertNotRegex(sh, r'(?m)^[^#\n]*(?<![.\w])python3 -[cm] ')  # every call goes through $PY
 
+    def test_units_use_newer_hardening_only_where_systemd_knows_it(self):
+        # EL8 has systemd 239: ProtectClock (245) / ProtectKernelLogs (244) would be logged as unknown lvalues
+        for version, want in (('239 (239-78.el8)', ''), ('252 (252.39-1~deb12u2)', 'ProtectClock=yes\nProtectKernelLogs=yes')):
+            self.stub('systemctl', 'echo "systemd %s"; echo "+PAM +AUDIT"\n' % version)
+            rc, out = self.sh('printf "[%s]" "$(systemd_new_hardening)"')
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(out, '[%s]' % want)
+        self.stub('systemctl', 'exit 1\n')
+        rc, out = self.sh('printf "[%s]" "$(systemd_new_hardening)"')
+        self.assertEqual((rc, out), (0, '[]'))
+        with open(INSTALL_SH, encoding='utf-8') as f:
+            self.assertEqual(f.read().count('\n$NEW_HARDENING\n'), 4)       # all four units
+
     def test_ipv6_only_download_failure_says_why(self):
         routes = os.path.join(self.tmp, 'route')
         with open(routes, 'w') as f:
@@ -638,6 +651,41 @@ class Installer(unittest.TestCase):
         rc, out = self.sh('snapshot_before_upgrade; echo "SNAP=[$SNAPSHOT]"')
         self.assertEqual(rc, 0, out)
         self.assertIn('SNAP=[]', out)
+
+
+class MissingSystemTools(unittest.TestCase):
+    """Minimal images (containers, some VPS templates) lack modprobe, sysctl or ss: `vps2vpn init` used to
+    crash with FileNotFoundError at modprobe, so the install failed after everything was downloaded."""
+
+    def setUp(self):
+        from vps2vpn import paths, system
+        self.paths, self.system = paths, system
+        self._live = paths.LIVE
+        paths.LIVE = True
+
+    def tearDown(self):
+        self.paths.LIVE = self._live
+
+    def test_a_missing_tool_is_a_failed_command(self):
+        r = self.system.run(['vps2vpn-no-such-tool', '-x'])
+        self.assertEqual(r.returncode, 127)
+        self.assertIn('vps2vpn-no-such-tool', r.stderr)
+        with self.assertRaises(RuntimeError):
+            self.system.run(['vps2vpn-no-such-tool'], check=True)
+
+    def test_tune_network_survives_without_modprobe_and_sysctl(self):
+        tmp = tempfile.mkdtemp()
+        old = self.paths.SYSCTL_FILE, self.paths.MODULES_FILE, self.system.run
+        self.paths.SYSCTL_FILE = os.path.join(tmp, 'sysctl.conf')
+        self.paths.MODULES_FILE = os.path.join(tmp, 'modules.conf')
+        real = self.system.run
+        self.system.run = lambda cmd, **kw: real(['vps2vpn-no-such-' + cmd[0]] + cmd[1:], **kw)
+        try:
+            self.assertTrue(self.system.tune_network(True).startswith('partial: '))
+            self.assertTrue(os.path.exists(self.paths.SYSCTL_FILE))       # applied at the next boot
+        finally:
+            self.paths.SYSCTL_FILE, self.paths.MODULES_FILE, self.system.run = old
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 class ReleaseWorkflow(unittest.TestCase):

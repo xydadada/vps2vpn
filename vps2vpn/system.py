@@ -17,7 +17,10 @@ from . import paths
 def run(cmd, check=False, timeout=60):
     if not paths.LIVE:
         return subprocess.CompletedProcess(cmd, 0, '', '')
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except OSError as e:        # not installed (minimal images lack modprobe, sysctl, ss...): a failed command
+        r = subprocess.CompletedProcess(cmd, 127, '', '%s: %s' % (cmd[0], e.strerror or e))
     if check and r.returncode != 0:
         raise RuntimeError('%s failed: %s' % (' '.join(cmd), (r.stderr or r.stdout)[-300:]))
     return r

@@ -85,6 +85,7 @@ debian_archive_sources() {  # -> 0 if an end-of-life Debian was given its archiv
   # installing any package with a security update fails with 404 from the usual mirrors.
   local id code f="$APT_SOURCES/vps2vpn-debian-archive.list"
   [ -r "$OS_RELEASE" ] || return 1
+  # shellcheck source=/dev/null
   id=$(. "$OS_RELEASE" && echo "${ID:-}"); code=$(. "$OS_RELEASE" && echo "${VERSION_CODENAME:-}")
   [ "$id" = debian ] && [ "$code" = bullseye ] && [ ! -e "$f" ] || return 1
   say "Debian 11 is past its end of life and its updates moved to archive.debian.org; adding it as a package source ($f)"
@@ -96,12 +97,22 @@ debian_archive_sources() {  # -> 0 if an end-of-life Debian was given its archiv
 install_packages() {
   local pkgs=(python3 openssl tar unzip nftables ca-certificates)
   command -v curl >/dev/null 2>&1 || pkgs+=(curl)     # RHEL ships curl-minimal, which conflicts with "curl"
-  command -v find >/dev/null 2>&1 || pkgs+=(findutils)            # minimal RHEL-family images lack it
-  if ! command -v useradd >/dev/null 2>&1; then
-    if command -v apt-get >/dev/null; then pkgs+=(passwd)
-    elif command -v dnf >/dev/null || command -v yum >/dev/null; then pkgs+=(shadow-utils)
-    else pkgs+=(shadow); fi
-  fi
+  # tools a minimal image may lack (the panel runs modprobe/sysctl for BBR, ss for port owners)
+  local tool deb rpm suse arch col
+  if command -v apt-get >/dev/null; then col=2
+  elif command -v dnf >/dev/null || command -v yum >/dev/null; then col=3
+  elif command -v zypper >/dev/null; then col=4
+  else col=5; fi
+  while read -r tool deb rpm suse arch; do
+    command -v "$tool" >/dev/null 2>&1 && continue
+    case "$col" in 2) pkgs+=("$deb") ;; 3) pkgs+=("$rpm") ;; 4) pkgs+=("$suse") ;; *) pkgs+=("$arch") ;; esac
+  done <<'EOF'
+find findutils findutils findutils findutils
+useradd passwd shadow-utils shadow shadow
+modprobe kmod kmod kmod kmod
+sysctl procps procps-ng procps procps-ng
+ss iproute2 iproute iproute2 iproute2
+EOF
   say "installing system packages"
   local failed="could not install the system packages (${pkgs[*]}); the package manager's message is above"
   if command -v apt-get >/dev/null; then
@@ -116,8 +127,7 @@ install_packages() {
   elif command -v yum >/dev/null; then yum install -y -q "${pkgs[@]}" >/dev/null || die "$failed"
   elif command -v zypper >/dev/null; then zypper -nq install "${pkgs[@]}" >/dev/null || die "$failed"
   elif command -v pacman >/dev/null; then
-    local pac=(python openssl tar unzip nftables ca-certificates)
-    command -v curl >/dev/null 2>&1 || pac+=(curl)
+    local pac=(python "${pkgs[@]:1}")       # Arch calls python3 "python"
     pacman -Sy --noconfirm --needed "${pac[@]}" >/dev/null || die "$failed"
   else die "unknown package manager; install: ${pkgs[*]}"; fi
   if ! pick_python; then
@@ -373,7 +383,14 @@ EOF
   selinux_label bin_t /usr/local/bin/vps2vpn
 }
 
+systemd_new_hardening() {  # -> unit lines only systemd 245+ knows (EL8 has 239 and would log them as unknown)
+  local v
+  v=$(systemctl --version 2>/dev/null | awk 'NR == 1 {print $2 + 0}') || v=0
+  if [ "${v:-0}" -ge 245 ]; then printf 'ProtectClock=yes\nProtectKernelLogs=yes'; fi
+}
+
 install_units() {
+  local NEW_HARDENING; NEW_HARDENING=$(systemd_new_hardening)
   id vps2vpn >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin vps2vpn 2>/dev/null \
     || useradd -r -M -s /sbin/nologin vps2vpn
   mkdir -p "$ETC" "$VAR"
@@ -394,8 +411,7 @@ TimeoutStopSec=15
 LimitNOFILE=65536
 PrivateTmp=yes
 ProtectHome=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 RestrictRealtime=yes
 LockPersonality=yes
 SystemCallArchitectures=native
@@ -427,8 +443,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
@@ -466,8 +481,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
@@ -504,8 +518,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
