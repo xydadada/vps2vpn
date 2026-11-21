@@ -269,6 +269,16 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid %s' % key)
     if 'health' in ans and not isinstance(ans['health'], dict):
         raise SyncError('node sync response has invalid health')
+    # Traffic is persisted as SQLite signed 64-bit INTEGER counters. A single
+    # oversized JSON integer otherwise reaches sqlite3 binding as a delta and
+    # raises OverflowError, aborting the entire sync round for *all* nodes.
+    for rid, counters in ans['traffic'].items():
+        if (not isinstance(rid, str) or not rid.isascii() or not rid.isdecimal() or
+                not 1 <= len(rid) <= 19 or not 0 < int(rid) < (1 << 63)):
+            raise SyncError('node sync response has invalid traffic user ID')
+        if (not isinstance(counters, (list, tuple)) or len(counters) != 2 or
+                any(type(n) is not int or not 0 <= n < (1 << 63) for n in counters)):
+            raise SyncError('node sync response has invalid traffic counters')
     return ans
 
 
