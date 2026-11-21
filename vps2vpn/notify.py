@@ -42,18 +42,21 @@ def send(text, key=None, every=6 * 3600, s=None):
     if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True):
         return False
     now = time.monotonic()            # wall-clock jumps (NTP, manual set) must not mute or unmute alerts
-    if key:
+    # A fresh verified owner binding must receive its first warning even when
+    # the previous owner was sent an alert with the same key minutes ago.
+    recent_key = (s['tg_token'], str(s['tg_chat']), key) if key else None
+    if recent_key is not None:
         with _recent_lock:
-            prev = _recent.get(key)
+            prev = _recent.get(recent_key)
             if prev is not None and now - prev[0] < every:
                 return False
     msg = ('[%s] %s' % (s['node_name'], text))[:MAX_TEXT]
     try:
         _call(s['tg_token'], 'sendMessage', {'chat_id': s['tg_chat'], 'text': msg,
                                              'disable_web_page_preview': 'true'})
-        if key:
+        if recent_key is not None:
             with _recent_lock:
-                _recent[key] = (now, every)
+                _recent[recent_key] = (now, every)
                 if len(_recent) > 1000:
                     for k in [k for k, v in _recent.items() if now - v[0] >= max(v[1], 86400)]:
                         _recent.pop(k, None)
