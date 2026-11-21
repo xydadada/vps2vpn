@@ -1031,9 +1031,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'bad secret'}, 400)
         if not secure.totp_check(sec, d.get('code')):
             return self.json({'error': 'wrong 2FA code'}, 400)
+        # An authenticated session is not sufficient to replace an already
+        # enrolled second factor. The normal UI first requires the password
+        # to disable the old authenticator before enrolling a new one.
+        # Check and write atomically: simultaneous enrollments must not win
+        # against each other using stale request-level settings.
         with _totp_lock:
-            _totp_last_step.pop(sec, None)
-        db.set_settings(admin_totp=sec)
+            active = bool(db.settings()['admin_totp'])
+            if not active:
+                _totp_last_step.pop(sec, None)
+                db.set_settings(admin_totp=sec)
+        if active:
+            return self.json({'error': 'disable existing 2FA before enrolling again'}, 409)
         return self.json({'ok': True})
 
     def api_sys_history(self, method, s):
