@@ -61,8 +61,10 @@ class NodeSyncHttpErrors(tu.Base):
                'seen': {rid: [9, 10]}, 'fail_count': 0}
         bad_info = (
             dict(info, public_host=[]),
-            dict(info, public_host='node.example\n[Proxy]'),
             dict(info, public_host='node example'),
+            dict(info, public_host='node.example\n[Proxy]'),
+            dict(info, reality_target='bad.example,unexpected'),
+            dict(info, tls=dict(info['tls'], sni='bad\rserver')),
             dict(info, hy2_enabled=True, hy2_port='443'),
             dict(info, hy2_hop_range=[]),
             dict(info, reality_enabled=True, reality_public_key=None),

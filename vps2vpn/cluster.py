@@ -312,6 +312,16 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid TLS metadata')
         if 'public_ipv6' in info and not isinstance(info['public_ipv6'], str):
             raise SyncError('node sync response has invalid IPv6 host')
+        # Shadowrocket's INI fields cannot carry separators or line breaks.
+        # TLS PEM is deliberately excluded: a valid PEM certificate is multiline.
+        for key in ('public_host', 'public_ipv6', 'reality_target', 'reality_public_key', 'reality_short_id'):
+            value = info.get(key)
+            if isinstance(value, str) and re.search(r'[\x00-\x1f\x7f\u0085\u2028\u2029,=]', value):
+                raise SyncError('node sync response has unsafe ' + key)
+        if tls:
+            for key in ('sni', 'pin'):
+                if key in tls and re.search(r'[\x00-\x1f\x7f\u0085\u2028\u2029,=]', tls[key]):
+                    raise SyncError('node sync response has unsafe TLS ' + key)
         score = info.get('ai_score', -1)
         if type(score) is not int or not -1 <= score <= 4:
             raise SyncError('node sync response has invalid AI score')
