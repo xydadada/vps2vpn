@@ -505,6 +505,12 @@ def add_traffic_many(deltas, now=None):
            for _, up, down in deltas):
         raise ValueError('invalid traffic delta')
     with transaction() as c:
+        # A user may have been deleted while core counters were being read.
+        # Ignore their stale deltas rather than losing other users' usage.
+        deltas = [(uid, up, down) for uid, up, down in deltas
+                  if c.execute('SELECT 1 FROM users WHERE id=?', (uid,)).fetchone()]
+        if not deltas:
+            return
         # SQLite promotes overflowing INTEGER addition to REAL. The bounded
         # UPDATE/UPSERT and row counts keep every batch exact and atomic.
         updated = c.executemany(
