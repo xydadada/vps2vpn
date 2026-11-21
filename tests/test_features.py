@@ -364,6 +364,8 @@ class HistoryCache(tu.Base):
             [1000, 15, 40, -3, 13],
             [1000, 150, 40, 12, 13],
             [1000, float('nan'), 40, 12, 13],
+            [1000, 15, 40, 1 << 5000, 13],
+            [1 << 5000, 15, 40, 12, 13],
         ]
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(invalid + [valid], f)
