@@ -181,7 +181,7 @@ def propagate_lifetime(uid, new_expire_at, new_reset_day=None):
 def _num(v, low, high, label, integer=False):
     try:
         n = int(v) if integer else float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise Refused('%s must be a number' % label)
     if integer and isinstance(v, float) and v != int(v):
         raise Refused('%s must be a whole number' % label)
