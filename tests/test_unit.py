@@ -265,7 +265,15 @@ class Users(Base):
         self.assertEqual(db.users()[0]['enabled'], 1)
 
 
+_ADMIN_HASH = secure.hash_password('adminpassword')
+
+
 class RestoreRouteSafety(Base):
+    def setUp(self):
+        super().setUp()
+        # A configured install always has a password: a backup without one is refused (#109).
+        db.set_settings(admin_hash=_ADMIN_HASH)
+
     def test_invalid_backup_paths_are_rejected_before_any_database_writes(self):
         db.set_settings(setup_done=True)
         uid = db.add_user('restored-user', 5)
@@ -342,6 +350,55 @@ class RestoreRouteSafety(Base):
         del legacy['invites'][0]['used_by']
         db.import_all(legacy)
         self.assertEqual(db.invites()[0]['used_by'], '')
+
+    def _refused_restore(self, damage):
+        before = db.export_all()
+        damaged = json.loads(json.dumps(before))
+        damage(damaged)
+        with self.assertRaises(ValueError):
+            db.import_all(damaged)
+        self.assertEqual(db.export_all(), before)
+
+    def test_restore_keeps_a_way_to_sign_in(self):
+        # #109: a backup the admin could not sign in with is refused before anything is replaced.
+        db.set_settings(setup_done=True, panel_path='pp')
+        for key, value in (('admin_hash', 42), ('admin_hash', ''), ('admin_hash', 'pbkdf2_sha256$0$aa$bb'),
+                           ('admin_hash', 'md5$1$2$3'), ('admin_user', ''), ('admin_user', 'a' + chr(10) + 'b'),
+                           ('admin_user', 7), ('admin_totp', 'not base32!'), ('admin_totp', None)):
+            with self.subTest(key=key, value=value):
+                self._refused_restore(lambda d: d['settings'].__setitem__(key, value))
+        good = db.export_all()
+        db.import_all(good)
+        self.assertTrue(secure.check_password('adminpassword', db.settings()['admin_hash']))
+
+    def test_restore_refuses_request_rows_the_panel_cannot_read(self):
+        # #107: they broke the admin request list and approval after the restore.
+        uid = db.add_user('asker', quota_gb=1)
+        db.add_request(uid, 5, 'more please')
+        for key, value in (('user_id', 'not-an-id'), ('user_id', None), ('user_id', True), ('add_gb', 'lots'),
+                           ('add_gb', float('nan')), ('add_gb', -1), ('created_at', 'yesterday'), ('status', 3)):
+            with self.subTest(key=key, value=value):
+                self._refused_restore(lambda d: d['requests'][0].__setitem__(key, value))
+        self._refused_restore(lambda d: d.__setitem__('requests', {}))
+        self._refused_restore(lambda d: d['requests'].append('x'))
+        db.import_all(db.export_all())
+        self.assertEqual(len(db.export_all()['requests']), 1)
+
+    def test_restore_refuses_server_metadata_subscriptions_cannot_use(self):
+        # #111: a joined server whose saved info is incomplete broke every subscription of its users.
+        uid = db.add_user('member', quota_gb=1)
+        good = {'id': 'deadbeef', 'name': 'Edge', 'url': 'https://node.example/panel', 'key': 'x', 'enabled': True,
+                'info': {}, 'idmap': {}}
+        db.set_settings(servers=[good])
+        for server in (dict(good, info={'hy2_enabled': True}, idmap={str(uid): 1}),
+                       dict(good, idmap={'01': 1}), dict(good, url='http://node.example'),
+                       dict(good, name=''), 'x', dict(good, enabled='yes')):
+            with self.subTest(server=server):
+                self._refused_restore(lambda d: d['settings'].__setitem__('servers', [server]))
+        self._refused_restore(lambda d: d['settings'].__setitem__('servers', [good, good]))
+        self._refused_restore(lambda d: d['settings'].__setitem__('servers', {}))
+        db.import_all(db.export_all())
+        self.assertEqual(db.settings()['servers'][0]['id'], 'deadbeef')
 
     def test_legacy_backup_without_member_path_still_imports(self):
         db.set_settings(setup_done=True)
@@ -538,7 +595,7 @@ class Ops(Base):
 
     def test_restoring_a_backup_always_revokes_telegram_pairing(self):
         db.set_settings(tg_token='123456:' + 'A' * 35, tg_chat='42',
-                        tg_verified=True, tg_bot=True, setup_done=True)
+                        tg_verified=True, tg_bot=True, setup_done=True, admin_hash=_ADMIN_HASH)
         backup = db.export_all()
         self.assertTrue(backup['settings']['tg_verified'])
         db.import_all(backup)

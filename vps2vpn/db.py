@@ -704,6 +704,77 @@ _IMPORT_TEXT = ('name', 'uuid', 'hy2_pass', 'sub_token', 'disabled_reason', 'not
 _SQLITE_MAX = (1 << 63) - 1
 
 
+def _usable_password_hash(h):
+    """A hash secure.check_password can verify a password against (an unusable one locks the owner out)."""
+    parts = h.split('$') if isinstance(h, str) else []
+    if len(parts) != 4 or parts[0] != 'pbkdf2_sha256' or not re.fullmatch(r'[1-9][0-9]{0,9}', parts[1]):
+        return False
+    if not 1 <= int(parts[1]) <= secure.MAX_PBKDF2_ROUNDS:
+        return False
+    try:
+        salt, digest = secure.b64url_decode(parts[2]), secure.b64url_decode(parts[3])
+    except ValueError:
+        return False
+    return len(salt) >= 8 and len(digest) == 32 and all(re.fullmatch(r'[A-Za-z0-9_-]+', x) for x in parts[2:])
+
+
+def _check_import_sign_in(keep):
+    """The admin must still be able to sign in after the restore (#109)."""
+    user = keep.get('admin_user', DEFAULTS['admin_user'])
+    if not isinstance(user, str) or not 1 <= len(user) <= 32 or re.search(r'[\x00-\x1f\x7f]', user):
+        raise ValueError('invalid admin_user in backup')
+    h = keep.get('admin_hash', DEFAULTS['admin_hash'])
+    configured = keep.get('setup_done', DEFAULTS['setup_done'])
+    if not isinstance(h, str) or ((h or configured) and not _usable_password_hash(h)):
+        raise ValueError('invalid admin_hash in backup')
+    totp = keep.get('admin_totp', DEFAULTS['admin_totp'])
+    if not isinstance(totp, str) or (totp and not re.fullmatch(r'[A-Z2-7]{16,64}', totp)):
+        raise ValueError('invalid admin_totp in backup')
+
+
+def _check_import_request(r, i):
+    """Rows the admin list formats and approval adds to a quota (#107)."""
+    if not isinstance(r, dict):
+        raise ValueError('request %d: not an object' % i)
+    for k in ('id', 'user_id'):
+        if k in r and (type(r[k]) is not int or not 0 < r[k] <= MAX_SQLITE_INT):
+            raise ValueError('request %d: invalid %s' % (i, k))
+    if type(r.get('user_id')) is not int:
+        raise ValueError('request %d: invalid user_id' % i)
+    gb = r.get('add_gb')
+    if type(gb) not in (int, float) or not 0 <= gb <= 1e9 or not math.isfinite(gb):
+        raise ValueError('request %d: invalid add_gb' % i)
+    for k in ('created_at', 'decided_at'):
+        if k in r and (type(r[k]) is not int or not 0 <= r[k] <= MAX_SQLITE_INT):
+            raise ValueError('request %d: invalid %s' % (i, k))
+    if type(r.get('created_at')) is not int:
+        raise ValueError('request %d: invalid created_at' % i)
+    for k in ('reason', 'status', 'answer'):
+        if k in r and not isinstance(r[k], str):
+            raise ValueError('request %d: invalid %s' % (i, k))
+
+
+def _check_import_servers(servers):
+    """Joined servers as subscriptions read them: the same checks a sync makes before saving (#111)."""
+    from . import cluster              # cluster imports db
+    if not isinstance(servers, list):
+        raise ValueError('backup servers must be a list')
+    ids = set()
+    for i, x in enumerate(servers, 1):
+        if (not isinstance(x, dict) or not isinstance(x.get('id'), str) or not x['id'] or x['id'] in ids
+                or not isinstance(x.get('name'), str) or not x['name'] or not isinstance(x.get('url'), str)
+                or not x['url'].startswith('https://')):
+            raise ValueError('server %d: invalid entry' % i)
+        ids.add(x['id'])
+        if 'enabled' in x and type(x['enabled']) is not bool:
+            raise ValueError('server %d: invalid enabled' % i)
+        info, idmap = x.get('info') or {}, x.get('idmap') or {}
+        try:
+            cluster._validate_sync_answer({'ok': True, 'info': info, 'idmap': idmap, 'traffic': {}})
+        except cluster.SyncError as e:
+            raise ValueError('server %d: %s' % (i, e))
+
+
 def _check_import_user(u, i):
     """A backup's user row, before anything is deleted. SQLite would store "abc" in an INTEGER column as text,
     and that account's subscription would then fail on every request."""
@@ -756,6 +827,13 @@ def import_all(data):
         raise ValueError('panel_path and member_path must differ')
     for i, u in enumerate(data['users'], 1):
         _check_import_user(u, i)
+    _check_import_sign_in(keep)
+    if 'servers' in keep:
+        _check_import_servers(keep['servers'])
+    if 'requests' in data and not isinstance(data['requests'], list):
+        raise ValueError('backup requests must be a list')
+    for i, r in enumerate(data.get('requests', []), 1):
+        _check_import_request(r, i)
     if 'invites' in data and not isinstance(data['invites'], list):
         raise ValueError('backup invites must be a list')
     for i, invite in enumerate(data.get('invites', []), 1):
