@@ -311,9 +311,15 @@ def _request(server, body, timeout=15):
             r = conn.getresponse()
             data = r.read(8 << 20)
             if r.status != 200:
+                # A proxy or a broken node can return valid JSON that is not an
+                # object ([], null, "error"). It must still become SyncError:
+                # callers catch only that type to keep other nodes syncing.
                 try:
-                    why = json.loads(data).get('error') or ''
+                    response_body = json.loads(data)
                 except ValueError:
+                    response_body = None
+                why = response_body.get('error') if isinstance(response_body, dict) else None
+                if not isinstance(why, str) or not why:
                     why = data[:120].decode('utf-8', 'replace')
                 raise SyncError('node answered %d: %s' % (r.status, why[:200]))
             return _validate_sync_answer(json.loads(data)), got
