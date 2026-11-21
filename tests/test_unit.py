@@ -679,6 +679,47 @@ class Web(Base):
         self.assertIn(b'number', body)
         self.assertEqual(db.invites(), before)
 
+    def test_admin_and_member_json_number_overflows_return_400_without_writes(self):
+        db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
+        status, body, _ = self.req('POST', self.pp + '/api/login',
+                                   {'username': 'admin', 'password': 'rightpassword'})
+        self.assertEqual(status, 200, body)
+        uid = db.add_user('numeric-member', 20)
+        token = db.user(uid)['sub_token']
+        before_users, before_invites = db.users(), db.invites()
+        before_settings = db.settings()
+
+        def post_exact_json(path, json_text):
+            # Preserve exponent notation (1e400 is legal JSON) rather than
+            # json.dumps(float('inf')), which would emit nonstandard Infinity.
+            conn = http.client.HTTPSConnection('127.0.0.1', self.port,
+                                                context=ssl._create_unverified_context(), timeout=10)
+            try:
+                conn.request('POST', path, json_text, {
+                    'Content-Type': 'application/json', 'X-V2V': '1', 'Cookie': self.cookie,
+                })
+                response = conn.getresponse()
+                return response.status, response.read()
+            finally:
+                conn.close()
+
+        huge = '1' + '0' * 309
+        cases = (
+            (self.pp + '/api/users-batch', '{"prefix":"batch","count":1e400}'),
+            (self.pp + '/api/invites', '{"kind":"admin","quota_gb":1,"valid_days":7,"inviter":1e400}'),
+            (self.pp + '/api/settings', '{"reality_port":1e400}'),
+            (self.pp + '/api/settings', '{"server_reset_day":1e400}'),
+            (self.pp + '/api/settings', '{"server_cap_gb":' + huge + '}'),
+            ('/s/' + token + '/api/invite-revoke', '{"id":1e400}'),
+        )
+        for path, payload in cases:
+            with self.subTest(path=path, payload=payload[:70]):
+                code, text = post_exact_json(path, payload)
+                self.assertEqual(code, 400, text)
+                self.assertEqual(db.users(), before_users)
+                self.assertEqual(db.invites(), before_invites)
+                self.assertEqual(db.settings(), before_settings)
+
     def test_user_and_node_enabled_endpoints_reject_ambiguous_values(self):
         db.set_settings(setup_done=True, admin_hash=secure.hash_password('rightpassword'))
         status, _, _ = self.req('POST', self.pp + '/api/login',
