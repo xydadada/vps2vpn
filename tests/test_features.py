@@ -2040,6 +2040,26 @@ class SubscriptionUXWeb(tu.Base):
     def _b64(self, v):
         return base64.b64decode(v.split(':', 1)[1]).decode('utf-8')
 
+    def test_plain_http_subscription_redirects_when_https_is_trusted(self):
+        # Real HTTP + real server. Only the trusted-certificate decision is
+        # mocked: an existing HTTP link must not return a live proxy secret.
+        u = mk('tls-migration', 1)
+        link = '/s/%s?format=clash' % u['sub_token']
+        with mock.patch.object(paths, 'DEV', False):
+            with mock.patch.object(certs, 'trusted', return_value=True):
+                status, body, response = self.req('GET', link, tls=False)
+                self.assertEqual(status, 307, body)
+                self.assertEqual(body, b'')
+                self.assertEqual(response.getheader('Cache-Control'), 'no-store')
+                self.assertEqual(response.getheader('Location'),
+                                 'https://127.0.0.1:%d%s' % (self.port, link))
+            # A preexisting self-signed deployment must keep functioning
+            # until users explicitly migrate their HTTP subscription URLs.
+            with mock.patch.object(certs, 'trusted', return_value=False):
+                status, body, _ = self.req('GET', link, tls=False)
+                self.assertEqual(status, 200, body)
+                self.assertIn(b'proxies:', body)
+
     def test_unknown_app_gets_links_browser_gets_page(self):
         u = mk('web-user', 10)
         path = '/s/%s' % u['sub_token']
