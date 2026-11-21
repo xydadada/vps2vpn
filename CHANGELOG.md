@@ -10,6 +10,13 @@
 - A working account that ends within 7 days or has used 90% of its quota (after what it shares with invitees) gets an `Announce` line in its app saying so (Happ, Hiddify, Streisand… show it), the same heads-up as on the member page.
 - How often apps refresh the subscription (`Profile-Update-Interval`) is a setting now: 1–168 hours, default 12 as before.
 
+**Security** (audit 2026-11-21)
+- Sign-in lockout: logging in to a member account you own no longer resets the failure count, so it can no longer be used to keep guessing the admin password, another member's password or invite codes. Admin and member sign-ins are counted separately (members' typos never lock the admin out), and parallel guesses are counted as they start, so a burst of simultaneous requests gets 8 tries, not one per request thread.
+- Changing the admin or a member password now checks the current one against the same lockout (a stolen session or a leaked subscription link could guess it without limit); an admin password over 128 characters, which sign-in refuses, can no longer be set.
+- Turning admin 2FA on or off, and changing a member password, end every session including a stolen copy of the current cookie; the browser that made the change gets a new one.
+- Request errors in the log no longer contain subscription tokens or the secret panel and member-centre paths.
+- The member page's Content-Security-Policy also restricts `base-uri`, `form-action` and `object-src`.
+
 ## 0.2.7
 
 Review PRs #50, #52, #57, #58, #61, #62, #64, #66 and issues #67–#71.

@@ -619,6 +619,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def route(self, method):
         self._raw = None                 # request body not read yet (one handler serves a keep-alive connection)
         self._s = None
+        self._rl_slot = None             # sign-in attempt reserved by rate_limited()
+        try:
+            return self._route(method)
+        finally:
+            self._release_attempt()
+
+    def _route(self, method):
         try:
             url = urllib.parse.urlsplit(self.path)
             path = url.path
@@ -668,12 +675,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         except Exception as e:   # never leak a traceback to the network
             import traceback
-            jobs.log('http error %s %s: %r %s' % (method, self.path.split('?')[0][-40:], e,
+            jobs.log('http error %s %s: %r %s' % (method, self._log_path(), e,
                                                  traceback.format_exc(limit=-2).replace(chr(10), ' | ')[-300:]))
             try:
                 self.json({'error': 'internal error'}, 500)
             except OSError:
                 pass
+
+    def _log_path(self):
+        """The request path for the journal, without the secrets it carries: a subscription token is the
+        account's credentials, and the panel and member-centre paths are meant to stay unguessable."""
+        path = self.path.split('?')[0]
+        path = re.sub(r'^/s/[^/]*', '/s/<token>', path)
+        s = self._s or {}
+        for key, label in (('panel_path', '/<panel>'), ('member_path', '/<member>')):
+            prefix = '/' + str(s.get(key) or '')
+            if len(prefix) > 1 and (path == prefix or path.startswith(prefix + '/')):
+                path = label + path[len(prefix):]
+                break
+        return path[-60:]
 
     def secure_ok(self):
         """HTTPS, or plain HTTP from this machine in development mode."""
@@ -881,33 +901,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return 'v2v=%s; Path=/%s/; Max-Age=%d; HttpOnly; Secure; SameSite=Strict' % (
             tok, db.settings()['panel_path'], max_age)
 
-    def rate_limited(self):
-        now = time.monotonic()
-        key = _rate_key(self.client_ip())
-        with _fails_lock:
-            hits = [t for t in _fails.get(key, ()) if now - t < 600]
-            if hits:
-                _fails[key] = hits
-            else:
-                _fails.pop(key, None)
-            if len(_fails) > _FAIL_CAP:
-                for k in list(_fails):
-                    kept = [t for t in _fails[k] if now - t < 600]
-                    if kept:
-                        _fails[k] = kept
-                    else:
-                        _fails.pop(k, None)
-                while len(_fails) > _FAIL_CAP:
-                    _fails.pop(next(iter(_fails)))
-            return len(hits) >= 8
+    def rate_limited(self, scope='admin'):
+        """Check the failure budget of this address and, when there is room, reserve one attempt in it.
 
-    def _record_fail(self):
+        The reservation is taken under the lock, so parallel guesses cannot all pass the check before the
+        first one is counted. It becomes a failure with _record_fail(); otherwise route() hands it back.
+        Admin and member sign-ins count separately: a member's typos never lock the admin out, and
+        signing in to an account the attacker owns never refills the budget for guessing someone else's."""
         now = time.monotonic()
-        key = _rate_key(self.client_ip())
+        key = (scope, _rate_key(self.client_ip()))
         with _fails_lock:
             hits = [t for t in _fails.get(key, ()) if now - t < 600]
+            if len(hits) >= 8:
+                _fails[key] = hits
+                return True
             hits.append(now)
             _fails[key] = hits
+            self._rl_slot = (key, now)
             if len(_fails) > _FAIL_CAP:
                 for k in list(_fails):
                     kept = [t for t in _fails[k] if now - t < 600]
@@ -917,10 +927,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         _fails.pop(k, None)
                 while len(_fails) > _FAIL_CAP:
                     _fails.pop(next(iter(_fails)))
+            return False
+
+    def _record_fail(self):
+        """The reserved attempt failed: it stays counted for 10 minutes."""
+        self._rl_slot = None
+
+    def _release_attempt(self):
+        """The reserved attempt was not a wrong guess (or the request ended without a verdict)."""
+        slot, self._rl_slot = getattr(self, '_rl_slot', None), None
+        if slot:
+            key, stamp = slot
+            with _fails_lock:
+                hits = _fails.get(key)
+                if hits and stamp in hits:
+                    hits.remove(stamp)
+                    if not hits:
+                        _fails.pop(key, None)
 
     def _clear_fails(self):
+        """The admin signed in: the admin budget of this address starts over. (Member sign-ins only hand back
+        their own attempt: a member account proves nothing about any other password.)"""
+        slot, self._rl_slot = getattr(self, '_rl_slot', None), None
         with _fails_lock:
-            _fails.pop(_rate_key(self.client_ip()), None)
+            _fails.pop(slot[0] if slot else ('admin', _rate_key(self.client_ip())), None)
 
     # --- setup wizard ----------------------------------------------------------------
     def api_setup_info(self, s):
@@ -1039,7 +1069,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with _totp_lock:
                 _totp_last_step.pop(s['admin_totp'], None)
             db.set_settings(admin_totp='')
-            return self.json({'ok': True})
+            return self._new_admin_session()
         sec = str(d.get('secret', '')).strip().upper()
         if not re.fullmatch(r'[A-Z2-7]{16,64}', sec):
             return self.json({'error': 'bad secret'}, 400)
@@ -1057,7 +1087,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 db.set_settings(admin_totp=sec)
         if active:
             return self.json({'error': 'disable existing 2FA before enrolling again'}, 409)
-        return self.json({'ok': True})
+        return self._new_admin_session()
+
+    def _new_admin_session(self):
+        """After a change to how the admin signs in: every session ends (a stolen copy of this one too) and
+        this browser goes on with a new one."""
+        db.end_all_sessions()
+        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
 
     def api_sys_history(self, method, s):
         return self.json({'points': jobs.HISTORY.points[-1440:]})
@@ -1454,6 +1490,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send(200, page, 'text/html; charset=utf-8', {
             'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY',
             'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                                       "object-src 'none'; base-uri 'self'; form-action 'self'; "
                                        "frame-ancestors 'none'"})
 
     def member_cookie(self, tok, max_age=8 * 3600):
@@ -1483,7 +1520,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                               'notice': s['member_notice'] if u is not None else '',
                               'member_url': '%s/%s/' % (self.base_url(s), s['member_path']) if s['member_enabled'] else ''})
         if not by_link and method == 'POST' and api in ('login', 'register'):
-            if self.rate_limited():
+            if self.rate_limited('member'):
                 return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
             d = self.body_json()
             if api == 'login':
@@ -1505,7 +1542,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 notify.send('new account %s (invite code) / 新用户 %s 通过邀请码注册' % (db.user(uid)['name'], db.user(uid)['name']),
                             key='reg-%d' % uid)
                 apply_async()
-            self._clear_fails()
+            self._release_attempt()
             return self.json({'ok': True}, headers={'Set-Cookie': self.member_cookie(db.new_member_session(uid))})
         if u is None:
             return self.json({'error': 'login required'}, 401)
@@ -1523,12 +1560,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'unknown endpoint'}, 404)
         d = self.body_json()
         if api == 'password':
-            if u['login_hash'] and not secure.check_password(str(d.get('old', '')), u['login_hash']):
-                return self.json({'error': 'current password is wrong'}, 403)
+            if u['login_hash']:
+                # The link or a session must not become an unlimited guesser of the login password.
+                if self.rate_limited('member'):
+                    return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
+                if not secure.check_password(str(d.get('old', '')), u['login_hash']):
+                    self._record_fail()
+                    return self.json({'error': 'current password is wrong'}, 403)
+            fresh = {}
+
             def set_pw():
                 db.update_user(u['id'], login_hash=secure.hash_password(members.check_password(d.get('new'))))
-                db.end_other_member_sessions(u['id'], self.cookie('v2vm'))
-            return self.refused(set_pw)
+                # Every session ends, this one included: a stolen copy of this very cookie must stop working.
+                # The member who changed it from the member centre goes on with a new session.
+                db.end_member_session(None, u['id'])
+                if not by_link:
+                    fresh['Set-Cookie'] = self.member_cookie(db.new_member_session(u['id']))
+            try:
+                set_pw()
+            except members.Refused as e:
+                return self.json({'error': str(e)}, 400)
+            return self.json({'ok': True}, headers=fresh or None)
         if api == 'request' and s['member_requests']:
             def ask():
                 members.request_more(u['id'], d.get('add_gb'), d.get('reason', ''))
@@ -1621,11 +1673,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def api_password(self, method, s):
         d = self.body_json()
-        if not secure.check_password(str(d.get('old', '')), s['admin_hash']):
+        if self.rate_limited():          # a session must not become an unlimited guesser of the password
+            return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
+        old = str(d.get('old', ''))
+        if len(old) > 128 or not secure.check_password(old, s['admin_hash']):
+            self._record_fail()
             return self.json({'error': 'current password is wrong'}, 403)
         new = str(d.get('new', ''))
         if len(new) < 8:
             return self.json({'error': 'password must be at least 8 characters'}, 400)
+        if len(new) > 128:               # sign-in refuses longer passwords: it would lock the admin out
+            return self.json({'error': 'password: 8 to 128 characters'}, 400)
         db.set_settings(admin_hash=secure.hash_password(new), admin_user=str(d.get('username') or s['admin_user'])[:32])
         db.end_all_sessions()
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})

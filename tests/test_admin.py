@@ -443,5 +443,153 @@ class AdminWeb(tu.Base):
         self.assertEqual(self.cookie, mine)
 
 
+class AuthHardening(tu.Base):
+    """Security audit 2026-11: lockout bypasses, session rotation, secrets in logs, headers."""
+
+    def setUp(self):
+        super().setUp()
+        db.set_settings(public_host='127.0.0.1', setup_done=True, member_path='mem', panel_path='adm',
+                        admin_hash=secure.hash_password('adminpassword'))
+        certs.ensure_self_signed('127.0.0.1')
+        self.httpd = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
+        self.port = self.httpd.server_address[1]
+        db.set_settings(panel_port=self.port)
+        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self._thread.start()
+        self.cookie = ''
+        web._fails.clear()
+        self._apply = web.apply_async
+        web.apply_async = lambda force=False: None
+
+    tearDown = AdminWeb.tearDown
+    req = tu.Web.req
+    login = AdminWeb.login
+
+    def _member(self, name, password):
+        uid = db.add_user(name, 0)
+        db.update_user(uid, login_hash=secure.hash_password(password))
+        return uid
+
+    def test_own_member_login_does_not_reset_the_admin_or_member_lockout(self):
+        self._member('mallory', 'mallorypassword')
+        self._member('victim', 'victimpassword')
+        for _ in range(7):
+            self.assertEqual(self.login(password='guess')[0], 403)
+        # a successful login to an account the attacker owns must not wipe the count
+        self.assertEqual(self.req('POST', '/mem/api/login', {'name': 'mallory', 'password': 'mallorypassword'})[0], 200)
+        self.cookie = ''
+        self.assertEqual(self.login(password='guess')[0], 403)
+        self.assertEqual(self.login()[0], 429)
+        web._fails.clear()
+        for _ in range(7):
+            self.assertEqual(self.req('POST', '/mem/api/login', {'name': 'victim', 'password': 'guess'})[0], 403)
+        self.assertEqual(self.req('POST', '/mem/api/login', {'name': 'mallory', 'password': 'mallorypassword'})[0], 200)
+        self.cookie = ''
+        self.assertEqual(self.req('POST', '/mem/api/login', {'name': 'victim', 'password': 'guess'})[0], 403)
+        self.assertEqual(self.req('POST', '/mem/api/login', {'name': 'victim', 'password': 'victimpassword'})[0], 429)
+
+    def test_member_failures_do_not_lock_out_the_admin(self):
+        for _ in range(8):
+            self.req('POST', '/mem/api/login', {'name': 'nobody', 'password': 'guess'})
+        self.assertEqual(self.login()[0], 200)
+
+    def test_parallel_guesses_cannot_exceed_the_limit(self):
+        codes = []
+        lock = threading.Lock()
+
+        def guess():
+            st = self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'guess'})[0]
+            with lock:
+                codes.append(st)
+        threads = [threading.Thread(target=guess) for _ in range(24)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        self.assertEqual(len(codes), 24)
+        self.assertLessEqual(codes.count(403), 8, codes)
+        self.assertEqual(codes.count(403) + codes.count(429), 24, codes)
+
+    def test_admin_password_change_is_rate_limited_and_bounded(self):
+        self.login()
+        for _ in range(8):
+            self.assertEqual(self.req('POST', '/adm/api/password', {'old': 'guess', 'new': 'newpassword'})[0], 403)
+        self.assertEqual(self.req('POST', '/adm/api/password', {'old': 'adminpassword', 'new': 'newpassword'})[0], 429)
+        self.assertTrue(secure.check_password('adminpassword', db.settings()['admin_hash']))
+        web._fails.clear()
+        # login refuses passwords over 128 characters, so one must not be settable here
+        st, _, _ = self.req('POST', '/adm/api/password', {'old': 'adminpassword', 'new': 'x' * 129})
+        self.assertEqual(st, 400)
+        self.assertTrue(secure.check_password('adminpassword', db.settings()['admin_hash']))
+
+    def test_member_password_change_is_rate_limited(self):
+        uid = self._member('zed', 'zedpassword1')
+        link = '/s/%s/api/password' % db.user(uid)['sub_token']
+        for _ in range(8):
+            self.assertEqual(self.req('POST', link, {'old': 'guess', 'new': 'otherpassword'})[0], 403)
+        self.assertEqual(self.req('POST', link, {'old': 'zedpassword1', 'new': 'otherpassword'})[0], 429)
+        self.assertTrue(secure.check_password('zedpassword1', db.user(uid)['login_hash']))
+
+    def test_member_password_change_ends_a_stolen_copy_of_the_session(self):
+        self._member('yan', 'yanpassword1')
+        self.assertEqual(self.req('POST', '/mem/api/login', {'name': 'yan', 'password': 'yanpassword1'})[0], 200)
+        stolen = self.cookie
+        st, body, _ = self.req('POST', '/mem/api/password', {'old': 'yanpassword1', 'new': 'yanpassword2'})
+        self.assertEqual(st, 200, body)
+        self.assertNotEqual(self.cookie, stolen)
+        self.assertEqual(self.req('GET', '/mem/api/me')[0], 200)
+        self.cookie = stolen
+        self.assertEqual(self.req('GET', '/mem/api/me')[0], 401)
+
+    def test_2fa_changes_end_every_other_session(self):
+        self.login()
+        other = db.new_session()
+        stolen = self.cookie
+        sec = secure.totp_secret()
+        st, body, _ = self.req('POST', '/adm/api/totp', {'secret': sec, 'code': secure.totp(sec)})
+        self.assertEqual(st, 200, body)
+        self.assertNotEqual(self.cookie, stolen)
+        self.assertFalse(db.session_ok(other))
+        self.assertFalse(db.session_ok(stolen.split('=', 1)[1]))
+        self.assertEqual(self.req('GET', '/adm/api/state')[0], 200)
+        other, stolen = db.new_session(), self.cookie
+        st, body, _ = self.req('POST', '/adm/api/totp', {'off': True, 'password': 'adminpassword'})
+        self.assertEqual(st, 200, body)
+        self.assertFalse(db.session_ok(other))
+        self.assertFalse(db.session_ok(stolen.split('=', 1)[1]))
+        self.assertEqual(self.req('GET', '/adm/api/state')[0], 200)
+
+    def test_request_errors_do_not_log_link_tokens_or_secret_paths(self):
+        db.set_settings(panel_path='Pq7secretpanel', member_path='Mx9secretmember')
+        uid = db.add_user('logged', 0)
+        token = db.user(uid)['sub_token']
+        self._member('mlog', 'mlogpassword')
+        jobs.LOG.clear()
+        with mock.patch.object(web.Handler, 'member_view', side_effect=RuntimeError('boom')), \
+                mock.patch.object(web.Handler, 'api_state', side_effect=RuntimeError('boom')):
+            self.assertEqual(self.req('GET', '/s/%s/api/me' % token)[0], 500)
+            self.assertEqual(self.req('POST', '/Pq7secretpanel/api/login',
+                                      {'username': 'admin', 'password': 'adminpassword'})[0], 200)
+            self.assertEqual(self.req('GET', '/Pq7secretpanel/api/state')[0], 500)
+            self.cookie = ''
+            self.assertEqual(self.req('POST', '/Mx9secretmember/api/login',
+                                      {'name': 'mlog', 'password': 'mlogpassword'})[0], 200)
+            self.assertEqual(self.req('GET', '/Mx9secretmember/api/me')[0], 500)
+        text = '\n'.join(jobs.LOG)
+        self.assertEqual(text.count('http error'), 3, text)
+        for secret in (token, token[:12], 'Pq7secretpanel', 'Mx9secretmember'):
+            self.assertNotIn(secret, text)
+
+    def test_member_page_csp_restricts_base_and_forms(self):
+        uid = db.add_user('csp', 0)
+        for path in ('/mem/', '/s/%s/' % db.user(uid)['sub_token']):
+            st, _, resp = self.req('GET', path, headers={'Accept': 'text/html'})
+            self.assertEqual(st, 200)
+            csp = resp.getheader('Content-Security-Policy')
+            self.assertIn("base-uri 'self'", csp)
+            self.assertIn("form-action 'self'", csp)
+            self.assertIn("object-src 'none'", csp)
+
+
 if __name__ == '__main__':
     unittest.main()
