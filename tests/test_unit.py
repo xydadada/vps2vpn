@@ -426,6 +426,24 @@ class Ops(Base):
         finally:
             notify._call = orig
 
+    def test_notify_dedup_is_scoped_to_the_current_verified_chat(self):
+        sent = []
+        token = '1234567:' + 'a' * 35
+        with mock.patch.object(notify, '_call', side_effect=lambda bot, method, params:
+                               sent.append((bot, params['chat_id'])) or {'ok': True}):
+            db.set_settings(tg_token=token, tg_chat='111', tg_verified=True)
+            self.assertTrue(notify.send('service down', key='service-down', every=21600))
+            self.assertFalse(notify.send('service down', key='service-down', every=21600))
+
+            db.set_settings(tg_chat='222', tg_verified=True)
+            self.assertTrue(notify.send('service down', key='service-down', every=21600))
+            self.assertFalse(notify.send('service down', key='service-down', every=21600))
+
+            db.set_settings(tg_token='7654321:' + 'b' * 35, tg_verified=True)
+            self.assertTrue(notify.send('service down', key='service-down', every=21600))
+        self.assertEqual(sent, [(token, '111'), (token, '222'),
+                                ('7654321:' + 'b' * 35, '222')])
+
     def test_bot_commands_only_from_the_owner_in_a_private_chat(self):
         ok = notify._owner_private_message
         self.assertTrue(ok({'chat': {'id': 5, 'type': 'private'}, 'from': {'id': 5}}, '5'))
