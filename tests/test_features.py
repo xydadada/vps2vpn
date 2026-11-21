@@ -1035,7 +1035,7 @@ class Shadowrocket(tu.Base):
         user = mk('shadowrocket-member', 20)
         db.set_settings(hy2_obfs='')
         info = cluster.public_info(db.settings())
-        dangerous = 'Edge\\r\\n[Proxy]\\nEvil'.replace('\\r', '\r').replace('\\n', '\n')
+        dangerous = 'Edge\r\n[Proxy]\nEvil'
         node = {'id': 'abcd1234', 'name': dangerous, 'enabled': True,
                 'info': info, 'idmap': {str(user['id']): 42}}
         db.set_settings(servers=[node])
@@ -1047,7 +1047,7 @@ class Shadowrocket(tu.Base):
         remote_line = next(line for line in conf.splitlines() if 'Edge [Proxy] Evil Hysteria2' in line)
         self.assertIn(' = hysteria2, ', remote_line)
         self.assertEqual(subscription._sr_label('上海 Tokyo, A=B'), '上海 Tokyo  A-B')
-        self.assertEqual(len(subscription._sr_label('x\\u2028y'.replace('\\u2028', '\u2028')).splitlines()), 1)
+        self.assertEqual(len(subscription._sr_label('x\u2028y').splitlines()), 1)
 
     def test_rule_conversion(self):
         out = rules.to_shadowrocket(b'+.google.com\nexample.org\n# c\nregexp:^x\n', 'geosite').decode().splitlines()
