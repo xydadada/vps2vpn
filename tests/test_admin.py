@@ -297,6 +297,18 @@ class AdminWeb(tu.Base):
         st, body, _ = self.req('POST', '/adm/api/users-bulk', {'ids': ids, 'action': 'delete'})
         self.assertIsNone(db.user(ids[0]))
 
+    def test_bulk_expire_extension_respects_max_epoch_atomically(self):
+        self.login()
+        first_expiry = int(time.time()) + 15 * 86400
+        first = db.add_user('expiry-ok-first', 1, expire_at=first_expiry)
+        boundary = db.add_user('expiry-at-max', 1, expire_at=web.MAX_ACCOUNT_EXPIRE_AT)
+        status, body, _ = self.req('POST', '/adm/api/users-bulk',
+                                   {'ids': [first, boundary], 'action': 'extend', 'value': 1})
+        self.assertEqual(status, 400, body)
+        self.assertIn('expire_at', json.loads(body)['error'])
+        self.assertEqual(db.user(first)['expire_at'], first_expiry)
+        self.assertEqual(db.user(boundary)['expire_at'], web.MAX_ACCOUNT_EXPIRE_AT)
+
     def test_bulk_repeated_ids_are_applied_only_once(self):
         self.login()
         expires = int(time.time()) + 20 * 86400
