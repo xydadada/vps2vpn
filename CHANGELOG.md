@@ -17,6 +17,9 @@
 - Request errors in the log no longer contain subscription tokens or the secret panel and member-centre paths.
 - The member page's Content-Security-Policy also restricts `base-uri`, `form-action` and `object-src`.
 
+**Docs**
+- README rewritten for owners who share a server with family and friends: step-by-step quick start (ports, first login, 2FA), adding users and invites, which app to use on each platform, upgrade and rollback, several servers, the Telegram bot, and troubleshooting (blocked ports, certificates, traffic, AI check, lost password or 2FA).
+
 ## 0.2.7
 
 Review PRs #50, #52, #57, #58, #61, #62, #64, #66 and issues #67–#71.
