@@ -621,6 +621,48 @@ class AuthHardening(tu.Base):
         self.assertEqual(self.req('POST', link, {'old': 'zedpassword1', 'new': 'otherpassword'})[0], 429)
         self.assertTrue(secure.check_password('zedpassword1', db.user(uid)['login_hash']))
 
+    def test_pending_member_login_cannot_reauthorize_an_old_password(self):
+        uid = self._member('member-race', 'oldmemberpassword')
+        self.assertEqual(self.req('POST', '/mem/api/login',
+                                  {'name': 'member-race', 'password': 'oldmemberpassword'})[0], 200)
+        entered, resume = threading.Event(), threading.Event()
+        result = []
+        original_check = secure.check_password
+
+        def slow_check(password, stored):
+            # The login is checked by the HTTPS server worker, not the
+            # client thread that calls self.req(). Pause its first check.
+            if password == 'oldmemberpassword' and not entered.is_set():
+                entered.set()
+                if not resume.wait(10):
+                    raise RuntimeError('member login race timed out')
+            return original_check(password, stored)
+
+        def old_login():
+            result.append(self.req('POST', '/mem/api/login',
+                                   {'name': 'member-race', 'password': 'oldmemberpassword'}))
+
+        worker = threading.Thread(target=old_login, daemon=True)
+        with mock.patch.object(secure, 'check_password', side_effect=slow_check):
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5), 'login never reached password verification')
+                status, body, _ = self.req('POST', '/mem/api/password',
+                                           {'old': 'oldmemberpassword', 'new': 'newmemberpassword'})
+                self.assertEqual(status, 200, body)
+            finally:
+                resume.set()
+                worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], 409, result[0][1])
+        self.assertEqual(db.member_session(self.cookie.split('=', 1)[1]), uid)
+        self.cookie = ''
+        self.assertEqual(self.req('POST', '/mem/api/login',
+                                  {'name': 'member-race', 'password': 'oldmemberpassword'})[0], 403)
+        self.assertEqual(self.req('POST', '/mem/api/login',
+                                  {'name': 'member-race', 'password': 'newmemberpassword'})[0], 200)
+
     def test_member_password_change_ends_a_stolen_copy_of_the_session(self):
         self._member('yan', 'yanpassword1')
         self.assertEqual(self.req('POST', '/mem/api/login', {'name': 'yan', 'password': 'yanpassword1'})[0], 200)
