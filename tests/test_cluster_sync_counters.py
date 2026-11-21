@@ -84,6 +84,13 @@ class NodeTrafficBoundaries(tu.Base):
             db.add_traffic_many([(uid, half, 0), (uid, half, 0)])
         self.assertEqual(db.user(uid)['used_up'], 0)
 
+    def test_deleted_account_delta_does_not_discard_a_live_account(self):
+        a, gone = db.add_user('live'), db.add_user('deleted')
+        db.delete_user(gone)
+        db.add_traffic_many([(a, 8, 9), (gone, 10, 11)])
+        self.assertEqual((db.user(a)['used_up'], db.user(a)['used_down']), (8, 9))
+        self.assertEqual(db.q('SELECT * FROM traffic WHERE user_id=?', (gone,)), [])
+
     def test_bad_node_counters_do_not_starve_the_next_healthy_node(self):
         user = db.add_user('shared')
         one = self._server(user)
