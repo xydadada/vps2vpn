@@ -705,6 +705,26 @@ class Web(Base):
                 self.assertIn(b'enabled', body)
                 self.assertIs(db.settings()['servers'][0]['enabled'], True)
 
+    def test_plain_http_subscription_is_redirected_when_https_is_trusted(self):
+        db.set_settings(setup_done=True, public_host='203.0.113.9')
+        uid = db.add_user('http-sub')
+        u = db.user(uid)
+        path = '/s/%s?format=clash' % u['sub_token']
+        with mock.patch.object(web.certs, 'trusted', return_value=True):
+            st, body, r = self.req('GET', path, tls=False, headers={'User-Agent': 'clash-verge/2.0'})
+            self.assertEqual(st, 308)
+            self.assertEqual(r.getheader('Location'), 'https://203.0.113.9:%d%s' % (db.settings()['panel_port'], path))
+            self.assertNotIn(u['uuid'].encode(), body)
+            self.assertNotIn(u['hy2_pass'].encode(), body)
+        # a self-signed panel keeps plain HTTP: most apps cannot use its HTTPS
+        with mock.patch.object(web.certs, 'trusted', return_value=False):
+            st, body, _ = self.req('GET', path, tls=False, headers={'User-Agent': 'clash-verge/2.0'})
+            self.assertEqual(st, 200)
+            self.assertIn(u['uuid'].encode(), body)
+        st, body, _ = self.req('GET', path, headers={'User-Agent': 'clash-verge/2.0'})    # over TLS: served
+        self.assertEqual(st, 200)
+        self.assertIn(u['uuid'].encode(), body)
+
     def test_full_flow(self):
         st, body, _ = self.req('GET', '/')
         self.assertEqual(st, 404)

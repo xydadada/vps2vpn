@@ -744,6 +744,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not u or not s['setup_done']:
             return self.not_found()
         base = self.base_url(s)
+        if base.startswith('https://') and not self.is_tls:
+            # A trusted certificate exists, so every app can use HTTPS: never send the account's proxy
+            # credentials in clear text. Old http:// links keep working through the redirect (apps follow it).
+            # Only a self-signed panel still serves plain HTTP, which most apps need there.
+            return self.send(308, '', headers={'Location': self._https_location(s), 'Cache-Control': 'no-store'})
         sub_url = '%s/s/%s' % (base, token)
         if qr_svg:
             target = self.query.get('t', 'sub')
