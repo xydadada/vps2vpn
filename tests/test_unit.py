@@ -314,6 +314,41 @@ class RestoreRouteSafety(Base):
             db.import_all(damaged)
         self.assertEqual(db.export_all(), before)
 
+    def test_invalid_invite_history_is_rejected_without_replacing_records(self):
+        from vps2vpn import members
+        uid = db.add_user('invite-owner')
+        invite_id = db.add_invite(code='TEST-RESTORE', kind='admin',
+                                  valid_until=int(time.time()) + 3600,
+                                  used_by=str(uid), uses=1, max_uses=2)
+        before = db.export_all()
+        self.assertEqual(members.invite_view(db.invite(invite_id), db.user_names())['used_by'],
+                         ['invite-owner'])
+        for used_by in ('not-an-id', '-1', '0', '1,broken', '1,' + '9' * 5000,
+                        123, None, ['1']):
+            with self.subTest(used_by=used_by):
+                damaged = json.loads(json.dumps(before))
+                damaged['invites'][0]['used_by'] = used_by
+                with self.assertRaisesRegex(ValueError, 'invalid used_by'):
+                    db.import_all(damaged)
+                self.assertEqual(db.export_all(), before)
+
+        for table in ('invites', 'requests'):
+            for broken in (None, {}, 'bad', [None], [123]):
+                with self.subTest(table=table, broken=broken):
+                    damaged = json.loads(json.dumps(before))
+                    damaged[table] = broken
+                    with self.assertRaises(ValueError):
+                        db.import_all(damaged)
+                    self.assertEqual(db.export_all(), before)
+
+        # Old backups did not always include this column: SQLite's default
+        # empty string keeps the invite listing readable.
+        legacy = json.loads(json.dumps(before))
+        legacy['invites'][0].pop('used_by')
+        db.import_all(legacy)
+        self.assertEqual(db.invite(invite_id)['used_by'], '')
+        self.assertEqual(members.invite_view(db.invite(invite_id), db.user_names())['used_by'], [])
+
     def test_legacy_backup_without_member_path_still_imports(self):
         db.set_settings(setup_done=True)
         original = db.export_all()
