@@ -504,6 +504,15 @@ class RuleMirrorDownloads(tu.Base):
 
 
 class MonitorSpeed(unittest.TestCase):
+    def test_background_runner_forwards_speed_refresh_to_sampler(self):
+        for force in (False, True):
+            with self.subTest(force_speed=force):
+                with mock.patch.object(monitor, 'run_once', return_value={'sites': {}}) as sampler, \
+                     mock.patch.object(monitor.threading, 'Thread') as worker:
+                    worker.return_value.start.side_effect = lambda: worker.call_args.kwargs['target']()
+                    monitor.run_in_background(log=lambda _: None, with_speed=force)
+                sampler.assert_called_once_with(force_speed=force)
+
     def measure(self, packet):
         class FakeSocket:
             def __init__(self, response):
