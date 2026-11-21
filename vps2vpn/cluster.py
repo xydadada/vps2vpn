@@ -307,6 +307,7 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid Reality options')
         tls = info.get('tls')
         if tls is not None and (not isinstance(tls, dict) or
+                                set(tls) - {'sni', 'pin', 'pem'} or
                                 any(k in tls and not isinstance(tls[k], str) for k in ('sni', 'pin', 'pem')) or
                                 (tls and (info['hy2_enabled'] or info.get('tuic_enabled')) and
                                  not isinstance(tls.get('sni'), str))):

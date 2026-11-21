@@ -70,6 +70,8 @@ class NodeSyncHttpErrors(tu.Base):
             dict(info, reality_enabled=True, reality_public_key=None),
             dict(info, tls=['invalid']),
             dict(info, tls={'pin': 'ab' * 32}),
+            dict(info, tls=dict(info['tls'], password='changed')),
+            dict(info, tls=dict(info['tls'], server='other.example')),
             dict(info, ai_score='invalid'),
             dict(info, ipv6_nodes=True, public_ipv6=[]),
         )
