@@ -489,7 +489,10 @@ def _sr_pin(fp):
 
 
 def _sr_label(text):
-    return str(text).replace(',', ' ').replace('=', '-')
+    # Text names can come from a joined node's join code. Unlike JSON/YAML,
+    # Shadowrocket's INI-like syntax treats raw newlines as new records.
+    safe = re.sub(r'[\x00-\x1f\x7f\u0085\u2028\u2029]+', ' ', str(text))
+    return safe.replace(',', ' ').replace('=', '-').strip()
 
 
 def _sr_name(n):
