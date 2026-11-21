@@ -309,6 +309,19 @@ class AdminWeb(tu.Base):
         return self.req('POST', '/adm/api/login', dict({'username': 'admin', 'password': 'adminpassword'}, **extra))
 
 
+    def test_restore_rejects_bad_invite_history_over_https(self):
+        self.login()
+        uid = db.add_user('restore-http-member', quota_gb=3)
+        db.add_invite(code='restore-http-code', kind='admin', valid_until=int(time.time()) + 86400,
+                      used_by=str(uid), uses=1, status='used')
+        before = db.export_all()
+        damaged = json.loads(json.dumps(before))
+        damaged['invites'][0]['used_by'] = 'not-an-id'
+        status, body, _ = self.req('POST', '/adm/api/restore', damaged)
+        self.assertEqual(status, 400, body)
+        self.assertEqual(db.export_all(), before)
+        self.assertEqual(self.req('GET', '/adm/api/invites')[0], 200)
+
     def test_batch_bulk_and_export(self):
         self.login()
         st, body, _ = self.req('POST', '/adm/api/users-batch', {'prefix': 'team', 'count': 3, 'quota_gb': 10,
