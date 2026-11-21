@@ -1216,7 +1216,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         try:
             # A repeated account must not have its quota or expiry extended
-            # twice. Preserve the order of the first 2000 requested IDs.
+            # twice. Preserve request order after de-duplication.
             ids = list(dict.fromkeys(user_id(i) for i in raw_ids))
             value = float(d.get('value') or 0)
         except (TypeError, ValueError):
