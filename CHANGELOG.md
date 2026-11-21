@@ -1,9 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.2.12
+
+**Sign-in**
+- A sign-in, password change or 2FA disable that was still checking an old password when another request changed the password or 2FA no longer gets through: it is refused (409) instead of starting a session with credentials that no longer count, or putting back a password that was just replaced (#102, #110, #114).
 
 **Restore**
+- A backup the panel could not use is refused before anything is replaced: an unusable admin password hash, user name or 2FA secret (which would lock you out), request rows without numeric amounts, invite usage that is not a list of account numbers, or joined servers whose saved details fail the checks a sync makes (#101, #107, #109, #111).
+- Shadowrocket subscriptions keep a restored account name, password or UUID with line breaks on one line instead of letting it add sections (#113).
 - Traffic that was read from the cores but could not be saved yet is no longer billed after a restore to whoever the backup gives the same account number: the restore resets the cores' counters under the old accounts and drops what was pending. A restore that fails keeps it for the old account.
+
+**Several servers**
+- A joined server's TLS details may only carry the name, pin and certificate: other fields could replace a member's proxy password or host (#108). A joined server whose name is only line breaks or spaces is named "server" (#100).
+
+**Client updates**
+- When an earlier fetch got only some platforms' installers of the newest client (one had a bad signature, say), the missing ones are fetched on the next round instead of never (#117).
+
+**Background jobs**
+- A slow certificate renewal or Telegram backup upload no longer holds up the 20-second traffic, quota and expiry pass (#112).
 
 ## 0.2.11
 
