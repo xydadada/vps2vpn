@@ -2557,6 +2557,22 @@ class ClientSync(unittest.TestCase):
         with mock.patch.object(paths, 'CLIENT', self.dir):
             self.assertEqual(set(web.client_files()['files']), {'windows', 'android'})
 
+    def test_partial_network_failure_keeps_first_platform_managed(self):
+        android = 'vps2vpn-1.0.9-android-arm64.apk'
+        windows = 'vps2vpn-1.0.9-windows-amd64-setup.exe'
+        self._release('1.0.9', {android: b'android', windows: b'windows'})
+        url = 'https://dl.example/' + windows
+        payload = self.web.pop(url)
+        with self.assertRaises(OSError):
+            self._sync()
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, android)))
+        self.assertEqual(clientsync._manifest(self.dir), [android])
+        self.web[url] = payload
+        with mock.patch.object(clientsync, '_download', wraps=clientsync._download) as download:
+            self.assertEqual(self._sync(), '1.0.9')
+            self.assertEqual(download.call_count, 1)
+        self.assertEqual(set(clientsync._manifest(self.dir)), {android, windows})
+
     def test_a_bad_signature_or_a_prerelease_is_not_published(self):
         self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'setup'})
         self.web['https://dl.example/vps2vpn-1.0.9-windows-amd64-setup.exe'] = b'tampered'
