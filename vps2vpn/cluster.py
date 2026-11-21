@@ -269,12 +269,15 @@ def _validate_sync_answer(ans):
             raise SyncError('node sync response has invalid %s' % key)
     if 'health' in ans and not isinstance(ans['health'], dict):
         raise SyncError('node sync response has invalid health')
-    for pair in ans['traffic'].values():
-        # Historically malformed individual rows were skipped. Preserve that
-        # behavior, but never admit an integer SQLite cannot store.
-        if isinstance(pair, (list, tuple)) and len(pair) == 2:
-            if any(type(v) is int and v > db.MAX_SQLITE_INT for v in pair):
-                raise SyncError('node sync response has oversized traffic counters')
+    for rid, pair in ans['traffic'].items():
+        # Reject aliases ("01", "+1") before they can bill the same user twice.
+        if (not isinstance(rid, str) or not 1 <= len(rid) <= 19 or
+                not rid.isascii() or not rid.isdecimal() or rid[0] == '0' or
+                int(rid) > db.MAX_SQLITE_INT):
+            raise SyncError('node sync response has invalid traffic user ID')
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2 or
+                any(type(v) is not int or not 0 <= v <= db.MAX_SQLITE_INT for v in pair)):
+            raise SyncError('node sync response has invalid traffic counters')
     return ans
 
 
@@ -348,8 +351,9 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
     seen = {}
     for k, v in old_seen.items():
         try:
-            if int(k) in known and isinstance(v, (list, tuple)) and len(v) == 2:
-                seen[str(k)] = (int(v[0]), int(v[1]))
+            uid = int(k)
+            if str(uid) == k and uid in known and isinstance(v, (list, tuple)) and len(v) == 2:
+                seen[k] = (int(v[0]), int(v[1]))
         except (TypeError, ValueError):
             continue
     old_idmap = server.get('idmap') or {}
