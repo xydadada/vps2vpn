@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.7
+
+Review PRs #50, #52, #57, #58, #61, #62, #64, #66 and issues #67–#71.
+
+**Security**
+- A logged-in session can no longer replace an enrolled admin 2FA authenticator; turning 2FA off (which needs the password) comes first.
+- Telegram: a malformed `getUpdates` record no longer kills the command thread, an absurd `update_id` cannot poison the polling cursor, and a rejected offset is reset instead of retried forever.
+
+**Correctness**
+- Bulk actions over 2000 IDs are refused with 400 instead of silently applying to the first 2000; an out-of-range number answers 400 instead of 500.
+- Account expiry is bounded (up to 9999-12-31) before it reaches the database, and a bulk extend checks every account before changing any.
+- Alert deduplication is per recipient: rebinding to a new chat no longer swallows the first warning, and two identical alerts at the same moment are sent once.
+- The hourly forced speed check really runs, and is retried on the next tick when the monitor is busy.
+- A `history.json` that is valid JSON but not a list no longer stops the scheduler from starting.
+- Cold Shadowrocket rule requests no longer pile up behind one slow upstream fetch (which could exhaust the panel's request threads); they get the file or an immediate 503.
+
 ## 0.2.6
 
 **Fewer disconnects**
