@@ -26,6 +26,7 @@ ETC=/etc/vps2vpn
 VAR=/var/lib/vps2vpn
 SNAPS="$VAR/upgrade-snapshots"     # database + code saved before each upgrade (root only, last 3 kept)
 SNAPSHOT=""                         # the one made by this run
+PY=python3                          # the Python 3.8+ the panel runs on (pick_python)
 
 c_ok=$'\e[32m'; c_bad=$'\e[31m'; c_dim=$'\e[2m'; c_b=$'\e[1m'; c_0=$'\e[0m'
 say()  { echo "${c_b}==>${c_0} $*"; }
@@ -66,27 +67,105 @@ detect_arch() {
   esac
 }
 
+APT_OPTS=(-o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+
+python_ok() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; }
+
+pick_python() {  # -> PY = absolute path of a Python 3.8+ (the distro's python3 first)
+  local c p
+  for c in python3 python3.13 python3.12 python3.11 python3.10 python3.9 python3.8; do
+    p=$(command -v "$c" 2>/dev/null) || continue
+    if python_ok "$p"; then PY="$p"; return 0; fi
+  done
+  return 1
+}
+
+debian_archive_sources() {  # -> 0 if an end-of-life Debian was given its archive.debian.org sources
+  # Debian 11 left LTS in 2026: its security updates now live only on archive.debian.org, so
+  # installing any package with a security update fails with 404 from the usual mirrors.
+  local id code f="$APT_SOURCES/vps2vpn-debian-archive.list"
+  [ -r "$OS_RELEASE" ] || return 1
+  # shellcheck source=/dev/null
+  id=$(. "$OS_RELEASE" && echo "${ID:-}")
+  # shellcheck source=/dev/null
+  code=$(. "$OS_RELEASE" && echo "${VERSION_CODENAME:-}")
+  [ "$id" = debian ] && [ "$code" = bullseye ] && [ ! -e "$f" ] || return 1
+  say "Debian 11 is past its end of life and its updates moved to archive.debian.org; adding it as a package source ($f)"
+  printf 'deb [check-valid-until=no] http://archive.debian.org/%s main\n' \
+    "debian $code" "debian $code-updates" "debian-security $code-security" > "$f" || return 1
+  apt-get "${APT_OPTS[@]}" update -qq || true
+}
+
 install_packages() {
   local pkgs=(python3 openssl tar unzip nftables ca-certificates)
   command -v curl >/dev/null 2>&1 || pkgs+=(curl)     # RHEL ships curl-minimal, which conflicts with "curl"
+  # tools a minimal image may lack (the panel runs modprobe/sysctl for BBR, ss for port owners)
+  local tool deb rpm suse arch col
+  if command -v apt-get >/dev/null; then col=2
+  elif command -v dnf >/dev/null || command -v yum >/dev/null; then col=3
+  elif command -v zypper >/dev/null; then col=4
+  else col=5; fi
+  while read -r tool deb rpm suse arch; do
+    command -v "$tool" >/dev/null 2>&1 && continue
+    case "$col" in 2) pkgs+=("$deb") ;; 3) pkgs+=("$rpm") ;; 4) pkgs+=("$suse") ;; *) pkgs+=("$arch") ;; esac
+  done <<'EOF'
+find findutils findutils findutils findutils
+useradd passwd shadow-utils shadow shadow
+modprobe kmod kmod kmod kmod
+sysctl procps procps-ng procps procps-ng
+ss iproute2 iproute iproute2 iproute2
+EOF
   say "installing system packages"
+  local failed="could not install the system packages (${pkgs[*]}); the package manager's message is above"
   if command -v apt-get >/dev/null; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq || true
-    apt-get install -y -qq "${pkgs[@]}" >/dev/null
-  elif command -v dnf >/dev/null; then dnf install -y -q "${pkgs[@]}" >/dev/null
-  elif command -v yum >/dev/null; then yum install -y -q "${pkgs[@]}" >/dev/null
-  elif command -v zypper >/dev/null; then zypper -nq install "${pkgs[@]}" >/dev/null
+    # a fresh VPS often runs unattended-upgrades on first boot: wait for its dpkg lock instead of failing,
+    # keep locally changed config files without asking, and never stop at needrestart's service dialog
+    export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l
+    apt-get "${APT_OPTS[@]}" update -qq || true
+    apt-get "${APT_OPTS[@]}" install -y -qq "${pkgs[@]}" >/dev/null \
+      || { debian_archive_sources && apt-get "${APT_OPTS[@]}" install -y -qq "${pkgs[@]}" >/dev/null; } \
+      || die "$failed"
+  elif command -v dnf >/dev/null; then dnf install -y -q "${pkgs[@]}" >/dev/null || die "$failed"
+  elif command -v yum >/dev/null; then yum install -y -q "${pkgs[@]}" >/dev/null || die "$failed"
+  elif command -v zypper >/dev/null; then zypper -nq install "${pkgs[@]}" >/dev/null || die "$failed"
   elif command -v pacman >/dev/null; then
-    local pac=(python openssl tar unzip nftables ca-certificates)
-    command -v curl >/dev/null 2>&1 || pac+=(curl)
-    pacman -Sy --noconfirm --needed "${pac[@]}" >/dev/null
+    local pac=(python "${pkgs[@]:1}")       # Arch calls python3 "python"
+    pacman -Sy --noconfirm --needed "${pac[@]}" >/dev/null || die "$failed"
   else die "unknown package manager; install: ${pkgs[*]}"; fi
-  python3 -c 'import sys; assert sys.version_info >= (3, 8)' || die "python 3.8 or newer is required"
+  if ! pick_python; then
+    # RHEL/Rocky/Alma 8 and openSUSE Leap 15 ship Python 3.6 as python3: add a newer one next to it
+    say "$(python3 --version 2>&1 || echo 'no python3') is too old; installing a newer Python next to it"
+    local p
+    for p in python3.12 python3.11 python39 python311 python312; do
+      if command -v dnf >/dev/null; then dnf install -y -q "$p" >/dev/null 2>&1 || continue
+      elif command -v yum >/dev/null; then yum install -y -q "$p" >/dev/null 2>&1 || continue
+      elif command -v zypper >/dev/null; then zypper -nq install "$p" >/dev/null 2>&1 || continue
+      else break; fi
+      pick_python && break
+    done
+    pick_python || die "python 3.8 or newer is required (found: $(python3 --version 2>&1 || echo none))"
+  fi
+  say "using $("$PY" --version 2>&1) ($PY)"
+}
+
+ROUTE4=/proc/net/route
+LOCK=/run/vps2vpn-install.lock
+OS_RELEASE=/etc/os-release
+APT_SOURCES=/etc/apt/sources.list.d
+no_ipv4() {  # -> 0 if this machine has no IPv4 default route (an IPv6-only VPS)
+  [ -r "$ROUTE4" ] || return 1
+  ! awk 'NR > 1 && $2 == "00000000" {f = 1} END {exit !f}' "$ROUTE4"
 }
 
 fetch() {  # url dest
-  curl -fL --retry 3 --connect-timeout 15 -sS -o "$2" "$1" || die "download failed: $1"
+  curl -fL --retry 3 --connect-timeout 15 -sS -o "$2" "$1" && return 0
+  if no_ipv4; then
+    die "download failed: $1
+  This server has no IPv4, and GitHub cannot be reached over IPv6 alone. Give it IPv4 for outgoing
+  connections first (NAT64/DNS64 from your provider or a public NAT64 resolver, or Cloudflare WARP),
+  then run the installer again. / 这台服务器只有 IPv6，访问不了 GitHub：先配好 NAT64/DNS64 或 WARP 再装。"
+  fi
+  die "download failed: $1"
 }
 
 try_fetch() {  # url dest -> non-zero instead of dying (a file that may not exist, e.g. a release asset)
@@ -102,14 +181,14 @@ pkg_version() {  # path/to/vps2vpn/__init__.py -> its VERSION, or nothing
 }
 
 version_lt() {  # a b -> 0 if version a is older than b
-  python3 -c 'import re, sys
+  "$PY" -c 'import re, sys
 v = lambda s: tuple(int(x) for x in re.findall(r"[0-9]+", s))
 sys.exit(0 if v(sys.argv[1]) < v(sys.argv[2]) else 1)' "$1" "$2"
 }
 
 latest_release_tag() {  # -> tag of the newest published release, or nothing if GitHub's API cannot be reached
   curl -fsS --connect-timeout 10 --max-time 20 -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | python3 -c 'import json, re, sys
+    "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | "$PY" -c 'import json, re, sys
 t = json.load(sys.stdin).get("tag_name") or ""
 print(t if re.match(r"^v[0-9][0-9A-Za-z._-]*$", t) else "")' 2>/dev/null || true
 }
@@ -169,7 +248,7 @@ snapshot_before_upgrade() {  # -> SNAPSHOT=dir holding a consistent copy of the 
   chmod 0700 "$SNAPS" "$dir"
   if [ -f "$db" ]; then
     # SQLite's online backup: consistent even while the panel is writing (a plain copy of a WAL database is not)
-    if ! (umask 077 && python3 -c 'import sqlite3, sys
+    if ! (umask 077 && "$PY" -c 'import sqlite3, sys
 src = sqlite3.connect(sys.argv[1], timeout=30)
 dst = sqlite3.connect(sys.argv[2])
 src.backup(dst)
@@ -207,7 +286,7 @@ if [ -f "\$S/app.tar.gz" ]; then
   if [ -d "$LIB/app/vps2vpn" ]; then mv "$LIB/app/vps2vpn" "$LIB/app/vps2vpn.old"; fi
   mv "\$T/vps2vpn" "$LIB/app/vps2vpn"
 fi
-PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force >/dev/null 2>&1 || true
+PYTHONPATH="$LIB/app" $PY -m vps2vpn apply --force >/dev/null 2>&1 || true
 systemctl start vps2vpn
 echo "vps2vpn is back to the snapshot of $stamp UTC (version ${old:-unknown})."
 EOF
@@ -286,7 +365,7 @@ install_app() {
     fetch_panel_code "$tmp"
   fi
   [ -f "$tmp/vps2vpn/__init__.py" ] || die "panel code not found in the download"
-  python3 -m compileall -q "$tmp/vps2vpn" >/dev/null || die "panel code does not compile with $(python3 --version)"
+  "$PY" -m compileall -q "$tmp/vps2vpn" >/dev/null || die "panel code does not compile with $("$PY" --version 2>&1)"
   snapshot_before_upgrade
   mkdir -p "$LIB/app"
   rm -rf "$LIB/app/vps2vpn.new"
@@ -300,13 +379,20 @@ install_app() {
   rm -rf "$tmp"
   cat > /usr/local/bin/vps2vpn <<EOF
 #!/bin/sh
-PYTHONPATH=$LIB/app exec python3 -m vps2vpn "\$@"
+PYTHONPATH=$LIB/app exec $PY -m vps2vpn "\$@"
 EOF
   chmod 0755 /usr/local/bin/vps2vpn
   selinux_label bin_t /usr/local/bin/vps2vpn
 }
 
+systemd_new_hardening() {  # -> unit lines only systemd 245+ knows (EL8 has 239 and would log them as unknown)
+  local v
+  v=$(systemctl --version 2>/dev/null | awk 'NR == 1 {print $2 + 0}') || v=0
+  if [ "${v:-0}" -ge 245 ]; then printf 'ProtectClock=yes\nProtectKernelLogs=yes'; fi
+}
+
 install_units() {
+  local NEW_HARDENING; NEW_HARDENING=$(systemd_new_hardening)
   id vps2vpn >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin vps2vpn 2>/dev/null \
     || useradd -r -M -s /sbin/nologin vps2vpn
   mkdir -p "$ETC" "$VAR"
@@ -320,15 +406,14 @@ Wants=network-online.target
 
 [Service]
 Environment=PYTHONPATH=$LIB/app PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/env python3 -m vps2vpn serve
+ExecStart=$PY -m vps2vpn serve
 Restart=always
 RestartSec=3
 TimeoutStopSec=15
 LimitNOFILE=65536
 PrivateTmp=yes
 ProtectHome=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 RestrictRealtime=yes
 LockPersonality=yes
 SystemCallArchitectures=native
@@ -360,8 +445,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
@@ -399,8 +483,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
@@ -437,8 +520,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectClock=yes
-ProtectKernelLogs=yes
+$NEW_HARDENING
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
@@ -458,11 +540,11 @@ EOF
 show_result() {
   local json url ports setup_done cloud how
   json="$1"
-  url=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
-  ports=$(printf '%s' "$json" | python3 -c 'import json,sys; print("  ".join("%s/%s" % (p, t) for t, p in json.load(sys.stdin)["ports"]))')
-  setup_done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
-  cloud=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud") or "")')
-  how=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("cloud_firewall") or "")')
+  url=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["url"])')
+  ports=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print("  ".join("%s/%s" % (p, t) for t, p in json.load(sys.stdin)["ports"]))')
+  setup_done=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)')
+  cloud=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("cloud") or "")')
+  how=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("cloud_firewall") or "")')
   echo
   if [ "${V2V_AUTO:-}" = 1 ]; then
     # One-click deployer: hand it the result in one machine-readable line (it holds the new admin
@@ -498,7 +580,7 @@ show_result() {
     echo "  ${c_dim}打不开的话，去云服务商控制台的防火墙/安全组放行这些端口：${c_0}"
     echo "  $ports"
   fi
-  printf '%s' "$json" | python3 -c 'import json,sys
+  printf '%s' "$json" | "$PY" -c 'import json,sys
 for w in json.load(sys.stdin).get("warnings", []): print("  ! " + w)'
   echo
 }
@@ -542,7 +624,7 @@ do_install() {
   need_root; detect_arch; install_packages; prepare_system; install_cores; install_app; install_units
   local json setup_done
   local auto=""; [ "${V2V_AUTO:-}" = 1 ] && auto="--auto"
-  if ! json=$(PYTHONPATH="$LIB/app" python3 -m vps2vpn init --acme $auto | tail -1) || [ -z "$json" ]; then
+  if ! json=$(PYTHONPATH="$LIB/app" "$PY" -m vps2vpn init --acme $auto | tail -1) || [ -z "$json" ]; then
     if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade failed during init: put the previous version back
       rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
       systemctl restart vps2vpn 2>/dev/null || true
@@ -552,9 +634,9 @@ do_install() {
   fi
   systemctl enable vps2vpn >/dev/null 2>&1
   systemctl restart vps2vpn
-  setup_done=$(printf '%s' "$json" | python3 -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)' 2>/dev/null || echo 0)
+  setup_done=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)' 2>/dev/null || echo 0)
   if [ "$setup_done" = 1 ]; then          # configured (upgrade or --auto): write configs for the new version
-    PYTHONPATH="$LIB/app" python3 -m vps2vpn apply --force >/dev/null 2>&1 || true
+    PYTHONPATH="$LIB/app" "$PY" -m vps2vpn apply --force >/dev/null 2>&1 || true
   fi
   sleep 1
   if ! systemctl is-active --quiet vps2vpn; then
@@ -589,7 +671,8 @@ do_uninstall() {
 one_at_a_time() {   # a retried or double-clicked deploy must not run two installs over each other
   [ "$(id -u)" = 0 ] || return 0
   command -v flock >/dev/null 2>&1 || return 0
-  exec 9>/run/vps2vpn-install.lock 2>/dev/null || return 0
+  # braces: a bare "exec 9>f 2>/dev/null" would send the rest of the installer's errors to /dev/null too
+  { exec 9>"$LOCK"; } 2>/dev/null || return 0
   if ! flock -n 9; then
     say "another vps2vpn install is running; waiting for it (up to 10 minutes)"
     flock -w 600 9 || die "another vps2vpn install is still running"
@@ -604,7 +687,7 @@ case "${1:-install}" in
 esac
 case "${1:-install}" in
   install|update|upgrade) do_install ;;
-  info) PYTHONPATH="$LIB/app" python3 -m vps2vpn info ;;
+  info) pick_python || true; PYTHONPATH="$LIB/app" "$PY" -m vps2vpn info ;;
   uninstall) do_uninstall "${2:-}" ;;
   *) echo "usage: bash install.sh [install|info|uninstall [--purge]]"; exit 1 ;;
 esac
