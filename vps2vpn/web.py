@@ -1113,11 +1113,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Disable and enrollment must have one serialization point. A
             # concurrent enrollment must not report success only to have this
             # request overwrite its newly enrolled secret after releasing the lock.
-            with _totp_lock:
-                active_secret = db.settings()['admin_totp']
-                _totp_last_step.pop(active_secret, None)
-                db.set_settings(admin_totp='')
-            return self._new_admin_session()
+            with _totp_lock, db.transaction():
+                current = db.settings()
+                stale = (any(current[k] != s[k] for k in ('admin_user', 'admin_hash', 'admin_totp')) or
+                         not db.session_ok(self.cookie('v2v')))
+                if not stale:
+                    _totp_last_step.pop(current['admin_totp'], None)
+                    db.set_settings(admin_totp='')
+                    db.end_all_sessions()
+                    tok = db.new_session()
+            if stale:
+                return self.json({'error': 'admin credentials changed; retry'}, 409)
+            return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(tok)})
         sec = str(d.get('secret', '')).strip().upper()
         if not re.fullmatch(r'[A-Z2-7]{16,64}', sec):
             return self.json({'error': 'bad secret'}, 400)
@@ -1740,9 +1747,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'password must be at least 8 characters'}, 400)
         if len(new) > 128:               # sign-in refuses longer passwords: it would lock the admin out
             return self.json({'error': 'password: 8 to 128 characters'}, 400)
-        db.set_settings(admin_hash=secure.hash_password(new), admin_user=str(d.get('username') or s['admin_user'])[:32])
-        db.end_all_sessions()
-        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
+        hashed = secure.hash_password(new)  # PBKDF2 stays outside the database lock.
+        with db.transaction():
+            current = db.settings()
+            stale = (any(current[k] != s[k] for k in ('admin_user', 'admin_hash', 'admin_totp')) or
+                     not db.session_ok(self.cookie('v2v')))
+            if not stale:
+                db.set_settings(admin_hash=hashed, admin_user=str(d.get('username') or s['admin_user'])[:32])
+                db.end_all_sessions()
+                tok = db.new_session()
+        if stale:
+            return self.json({'error': 'admin credentials changed; retry'}, 409)
+        return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(tok)})
 
     def api_check_targets(self, method, s):
         best, res = system.best_target()
