@@ -172,7 +172,7 @@ def update_hours(s):
     """Profile-Update-Interval in hours, from the `sub_update_hours` setting (1-168, anything else: 12)."""
     try:
         v = int(s.get('sub_update_hours') or UPDATE_HOURS_DEFAULT)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return UPDATE_HOURS_DEFAULT
     return v if 1 <= v <= 168 else UPDATE_HOURS_DEFAULT
 

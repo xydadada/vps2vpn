@@ -344,7 +344,7 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
         try:
             if int(k) in known and isinstance(v, (list, tuple)) and len(v) == 2:
                 seen[str(k)] = (int(v[0]), int(v[1]))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
     old_idmap = server.get('idmap') or {}
     new_idmap = ans.get('idmap') or {}
@@ -352,7 +352,7 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
     for rid, pair in (ans.get('traffic') or {}).items():
         try:
             uid = int(rid)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if not isinstance(pair, (list, tuple)) or len(pair) != 2:
             continue
