@@ -102,7 +102,7 @@ const T = {
     logins: '最近登录', login_ok: '登录成功', login_fail: '密码错误', login_fail2fa: '验证码错误', sessions: '已登录的设备', logout_others: '退出其它所有设备', no_logins: '还没有记录。',
     routing_custom: '自定义分流', routing_tip: '每行一个域名，自动包含子域名（写 example.com 就包括 www.example.com）。优先级：屏蔽 > 直连 > 走代理，都排在内置规则之前。保存后，App 下次更新订阅时生效。',
     c_direct: '直连（不走代理）', c_proxy: '走代理', c_block: '屏蔽（拒绝连接）', ip_limit_pause: '设备超过上限时暂停 10 分钟（关掉则只提醒）',
-    tg_bot: '接受机器人命令', tg_backup: '每天把备份发到 Telegram', tg_cmds: '在 Telegram 里给机器人发：/status 服务器状态 · /users 每人用量 · /user 名字 · /doctor 体检 · /ai AI 可用性 · /backup 立即要一份备份。只回复你自己的聊天。',
+    tg_bot: '接受机器人命令', tg_backup: '每天把备份发到 Telegram', tg_cmds: '在 Telegram 里给机器人发：/status 服务器状态 · /users 每人用量 · /user 名字 · /doctor 体检 · /ai AI 可用性 · /expiring 快到期或流量快用完的人 · /backup 立即要一份备份。只回复你自己的聊天。',
     sys24: '服务器负载', sys24_sub: 'CPU、内存 · 24 小时', net24: '服务器网络', net24_sub: '24 小时 · 每分钟一个点', cpu: 'CPU', no_hist: '每分钟记录一次，稍后再来看。', dev_events: '设备超限记录'
   },
   en: {
@@ -206,7 +206,7 @@ const T = {
     logins: 'Recent sign-ins', login_ok: 'signed in', login_fail: 'wrong password', login_fail2fa: 'wrong code', sessions: 'Signed-in devices', logout_others: 'Sign out all other devices', no_logins: 'Nothing recorded yet.',
     routing_custom: 'Custom routing', routing_tip: 'One domain per line; subdomains are included (example.com covers www.example.com). Block wins over direct, direct over proxy, and all of them come before the built-in rules. Apps pick changes up on their next subscription update.',
     c_direct: 'Direct (no proxy)', c_proxy: 'Through the proxy', c_block: 'Block', ip_limit_pause: 'Pause for 10 minutes when over the device limit (off = warn only)',
-    tg_bot: 'Answer bot commands', tg_backup: 'Send the daily backup to Telegram', tg_cmds: 'Send your bot: /status server status · /users usage per person · /user NAME · /doctor health check · /ai AI availability · /backup a backup now. Only your own chat is answered.',
+    tg_bot: 'Answer bot commands', tg_backup: 'Send the daily backup to Telegram', tg_cmds: 'Send your bot: /status server status · /users usage per person · /user NAME · /doctor health check · /ai AI availability · /expiring who ends or runs out soon · /backup a backup now. Only your own chat is answered.',
     sys24: 'Server load', sys24_sub: 'CPU, memory · 24 hours', net24: 'Server network', net24_sub: '24 hours · one point a minute', cpu: 'CPU', no_hist: 'Recorded once a minute; check back soon.', dev_events: 'Device limit events'
   }
 };

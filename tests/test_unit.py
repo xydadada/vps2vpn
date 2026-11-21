@@ -169,9 +169,40 @@ class Base(unittest.TestCase):
         monitor._hist = None
         abuse._last = {'at': 0, 'accounts': {}, 'coverage': []}
         notify._recent.clear()
+        jobs._device_events.clear()
         db.ensure_secrets()
         db.set_settings(public_host='203.0.113.7', panel_port=54321)
         certs.ensure_self_signed('203.0.113.7')
+
+
+class UsageHeader(unittest.TestCase):
+    def test_total_is_where_the_account_is_cut_off(self):
+        u = {'quota_gb': 50, 'used_up': 1, 'used_down': 2, 'expire_at': 0}
+        self.assertIn('total=%d;' % (50 << 30), subscription.userinfo_header(u))
+        self.assertIn('total=%d;' % (40 << 30), subscription.userinfo_header(u, 40))     # shares 10 GB
+        self.assertIn('total=1;', subscription.userinfo_header(u, 0.0))                  # shared it all: not unlimited
+        self.assertIn('total=0;', subscription.userinfo_header(dict(u, quota_gb=0), 0))   # unlimited plan
+
+
+class PerClientConnections(unittest.TestCase):
+    def test_one_address_cannot_take_every_worker(self):
+        srv = web.Server.__new__(web.Server)
+        srv._per_client, srv._per_client_lock = {}, threading.Lock()
+        a, b = ('198.51.100.7', 1), ('198.51.100.8', 1)
+        v6 = [('2001:db8:1:2::%x' % i, 1) for i in range(1, 30)]
+        self.assertTrue(all(srv._client_slot(a, True) for _ in range(web.Server.PER_CLIENT)))
+        self.assertFalse(srv._client_slot(a, True))                    # 17th from the same address
+        self.assertTrue(srv._client_slot(b, True))                     # someone else still gets in
+        taken = [srv._client_slot(addr, True) for addr in v6]          # one /64, many addresses
+        self.assertEqual(taken.count(True), web.Server.PER_CLIENT)
+        srv._client_slot(a, False)
+        self.assertTrue(srv._client_slot(a, True))                     # a slot frees when a request ends
+        for _ in range(web.Server.PER_CLIENT):
+            srv._client_slot(a, False)
+        self.assertNotIn('198.51.100.7', srv._per_client)             # no entry left behind
+        # a reverse proxy on the same machine brings everyone from loopback; it is not capped
+        self.assertTrue(all(srv._client_slot(('127.0.0.1', 1), True) for _ in range(web.Server.PER_CLIENT * 2)))
+        self.assertTrue(all(srv._client_slot(('::ffff:127.0.0.1', 1), True) for _ in range(web.Server.PER_CLIENT * 2)))
 
 
 class Settings(Base):

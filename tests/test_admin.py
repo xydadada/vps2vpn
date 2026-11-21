@@ -68,6 +68,12 @@ class Limits(tu.Base):
         self.assertFalse(jobs.device_limits(db.settings(), {uid: {'ips': ['1.1.1.1', '2.2.2.2'], 'devices': 2}}))
         self.assertTrue(db.user(uid)['enabled'])
         self.assertEqual(len(db.events('devices')), 1)
+        now = time.time()
+        for minute in range(1, 30):                                   # still over the limit every check
+            jobs.device_limits(db.settings(), {uid: {'ips': ['1.1.1.1', '2.2.2.2'], 'devices': 2}}, now + 60 * minute)
+        self.assertEqual(len(db.events('devices')), 1)
+        jobs.device_limits(db.settings(), {uid: {'ips': ['1.1.1.1', '2.2.2.2'], 'devices': 2}}, now + 3700)
+        self.assertEqual(len(db.events('devices')), 2)
 
 
 class Routing(tu.Base):

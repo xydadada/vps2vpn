@@ -278,6 +278,11 @@ def register(code, name, password, now=None):
             raise Refused("the inviter's quota has run short; the code is void")
         fields.update(invited_by=inviter['id'], invite_deduct=inv['quota_gb'])
         expire_at = inviter['expire_at']
+        if not expire_at and inviter.get('expire_after_days'):
+            # The inviter's "N days from first use" has not started. Without this the invitee would have no
+            # end at all while the inviter never connects; it gets the same N days from its own first use,
+            # and the inviter's date replaces it once the inviter's clock starts (propagate_lifetime).
+            fields['expire_after_days'] = inviter['expire_after_days']
     else:
         expire_at = int(now + inv['expire_days'] * 86400) if inv['expire_days'] else 0
     note = 'invite %s' % inv['code'] + (' · ' + inv['note'] if inv['note'] else '')
@@ -334,5 +339,10 @@ def decide(rid, approve, add_gb=None, answer=''):
         if u['quota_gb']:                         # unlimited stays unlimited
             db.update_user(u['id'], quota_gb=u['quota_gb'] + gb)
         if u['disabled_reason'] == 'quota':
-            db.update_user(u['id'], enabled=1, disabled_reason='')
+            # Switch it back on only if the new quota really covers what was used; otherwise the next
+            # enforce pass would pause it again and tell the owner a second time.
+            fresh = db.user(u['id'])
+            quota = effective_quota(fresh, None, time.time())
+            if not fresh['quota_gb'] or fresh['used_up'] + fresh['used_down'] < quota * (1 << 30):
+                db.update_user(u['id'], enabled=1, disabled_reason='')
         db.decide_request(rid, 'approved', answer, gb)

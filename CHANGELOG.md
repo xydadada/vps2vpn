@@ -10,6 +10,16 @@
 - A working account that ends within 7 days or has used 90% of its quota (after what it shares with invitees) gets an `Announce` line in its app saying so (Happ, Hiddify, Streisand… show it), the same heads-up as on the member page.
 - How often apps refresh the subscription (`Profile-Update-Interval`) is a setting now: 1–168 hours, default 12 as before.
 
+**Correctness**
+- The 80% quota reminder follows the account's own billing period (its reset day), not the calendar month, and a manual traffic reset or a quota change arms it again.
+- An invitee of an "N days from first use" account that has not started yet gets the same countdown instead of never expiring.
+- Approving a quota request that is still below what the account has used no longer switches it back on (it was switched off again a minute later, and so on).
+- Device count: one phone on a dual-stack network, on the smart line, or rotating IPv6 privacy addresses counts once (IPv6 addresses are grouped by /64), so a device limit of 1 no longer pauses it and the abuse check no longer calls it a shared link.
+- An account that shares part of its quota with invitees shows the quota it is actually cut off at in the apps (`Subscription-Userinfo`), not the full plan; one that shared all of it no longer shows as unlimited there, on its member page, or to an approved top-up that does not cover it.
+- The Telegram settings list the `/expiring` command.
+- "Too many devices" events are logged at most once an hour per account, so a warn-only limit no longer pushes every other event out of the log.
+- One address can hold at most 16 of the panel's 128 connection slots, so a single client opening many slow connections cannot lock everyone else out (connections from the machine itself, such as a reverse proxy, are not capped).
+
 **Security** (audit 2026-11-21)
 - Sign-in lockout: logging in to a member account you own no longer resets the failure count, so it can no longer be used to keep guessing the admin password, another member's password or invite codes. Admin and member sign-ins are counted separately (members' typos never lock the admin out), and parallel guesses are counted as they start, so a burst of simultaneous requests gets 8 tries, not one per request thread.
 - Changing the admin or a member password now checks the current one against the same lockout (a stolen session or a leaked subscription link could guess it without limit); an admin password over 128 characters, which sign-in refuses, can no longer be set.

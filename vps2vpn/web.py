@@ -349,9 +349,15 @@ class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
 
+    PER_CLIENT = 16          # open connections one address (an IPv6 /64) may hold at once
+
     def __init__(self, addr, handler, tls):
         self.tls = tls
         self._sem = threading.BoundedSemaphore(128)
+        # Without a per-address share, one client opening 128 idle connections (each may wait 20 s for its
+        # request) takes every worker and locks everyone else out of the panel and the subscriptions.
+        self._per_client = {}
+        self._per_client_lock = threading.Lock()
         if ':' in addr[0]:
             self.address_family = socket.AF_INET6
         super().__init__(addr, handler)
@@ -364,14 +370,43 @@ class Server(http.server.ThreadingHTTPServer):
                 pass
         super().server_bind()
 
+    def _client_slot(self, client_address, take):
+        host = client_address[0] if client_address else ''
+        try:
+            ip = ipaddress.ip_address(host.split('%', 1)[0])
+            loopback = ip.is_loopback or (ip.version == 6 and ip.ipv4_mapped is not None and ip.ipv4_mapped.is_loopback)
+        except ValueError:
+            loopback = False
+        if loopback:
+            # A reverse proxy on this machine (Caddy, nginx) brings every visitor from 127.0.0.1; a per-address
+            # share would then cap the whole panel at PER_CLIENT. The global 128 still applies.
+            return True
+        key = _rate_key(host)
+        with self._per_client_lock:
+            n = self._per_client.get(key, 0)
+            if take:
+                if n >= self.PER_CLIENT:
+                    return False
+                self._per_client[key] = n + 1
+            elif n <= 1:
+                self._per_client.pop(key, None)
+            else:
+                self._per_client[key] = n - 1
+        return True
+
     def process_request(self, request, client_address):
+        if not self._client_slot(client_address, True):
+            self.shutdown_request(request)
+            return
         if not self._sem.acquire(blocking=False):
+            self._client_slot(client_address, False)
             self.shutdown_request(request)
             return
         try:
             super().process_request(request, client_address)
         except BaseException:
             self._sem.release()
+            self._client_slot(client_address, False)
             raise
 
     def process_request_thread(self, request, client_address):
@@ -379,6 +414,7 @@ class Server(http.server.ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self._sem.release()
+            self._client_slot(client_address, False)
 
     def finish_request(self, request, client_address):
         request.settimeout(20)
@@ -1308,6 +1344,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 db.update_user(uid, enabled=0, disabled_reason='manual')
             elif action == 'reset':
                 db.update_user(uid, used_up=0, used_down=0)
+                jobs.forget_quota_alerts(uid)
                 if u['disabled_reason'] == 'quota':
                     db.update_user(uid, enabled=1, disabled_reason='')
             elif action == 'rotate':
@@ -1361,6 +1398,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             db.rotate_user(uid)
         elif action == 'reset':
             db.update_user(uid, used_up=0, used_down=0)
+            jobs.forget_quota_alerts(uid)
             if u['disabled_reason'] == 'quota':
                 db.update_user(uid, enabled=1, disabled_reason='')
         elif action == 'login':

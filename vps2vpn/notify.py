@@ -109,6 +109,17 @@ def send(text, key=None, every=6 * 3600, s=None):
                 _pending.discard(recent_key)
 
 
+def forget(prefix):
+    """Drop the record of alerts whose key starts with `prefix` (any recipient), so they may be sent again."""
+    with _recent_lock:
+        for k in [k for k in _recent if k[2].startswith(prefix)]:
+            _recent.pop(k, None)
+    try:
+        db.forget_alerts(prefix)
+    except Exception:
+        pass
+
+
 def _owner_private_message(message, chat_id):
     """A command counts only from the owner's private chat, sent by the owner. A group's chat id names the
     group, not its admin: without the sender check any member could ask for /backup."""

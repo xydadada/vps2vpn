@@ -200,6 +200,28 @@ class Invites(tu.Base):
         with self.assertRaises(members.Refused):
             members.decide(rid, True)
 
+    def test_too_small_approval_does_not_switch_back_on(self):
+        u = mk('erin', 10, enabled=0, disabled_reason='quota', used_down=14 * GIB)
+        rid = members.request_more(u['id'], 2, '')
+        members.decide(rid, True)                                          # 12 GB < 14 GB used
+        u = db.user(u['id'])
+        self.assertEqual((u['quota_gb'], u['enabled'], u['disabled_reason']), (12, 0, 'quota'))
+        rid = members.request_more(u['id'], 5, '')
+        members.decide(rid, True)                                          # 17 GB covers it
+        self.assertEqual(db.user(u['id'])['enabled'], 1)
+
+    def test_invitee_of_an_unstarted_account_gets_its_own_countdown(self):
+        a = mk('fay', 20, expire_after_days=30)                            # clock not started
+        rec = members.create_invite('member', 2, 7, inviter=a['id'], by_member=True)
+        b = members.register(rec['code'], 'gus', 'password123')
+        self.assertEqual((db.user(b)['expire_at'], db.user(b)['expire_after_days']), (0, 30))
+        db.update_user(b, used_down=GIB)                                   # the invitee connects first
+        jobs.enforce()
+        self.assertAlmostEqual(db.user(b)['expire_at'], time.time() + 30 * 86400, delta=60)
+        db.update_user(a['id'], used_down=GIB)                             # later the inviter starts too
+        jobs.enforce()
+        self.assertEqual(db.user(b)['expire_at'], db.user(a['id'])['expire_at'])
+
     def test_delete_inviter_cleans_up(self):
         a = mk('a', 20)
         rec = members.create_invite('member', 2, 7, max_uses=3, inviter=a['id'])
@@ -371,6 +393,9 @@ class Abuse(tu.Base):
         self.assertEqual(rep[2]['flags'], [])                  # many streams to one site is normal
         self.assertEqual(rep[3]['flags'], ['mail'])
         self.assertEqual(rep[4]['flags'], ['shared'])
+        # one phone rotating IPv6 privacy addresses (the cores count it as one device) is not a shared link
+        v6 = ['2001:db8:5:6::%x' % i for i in range(1, 12)]
+        self.assertEqual(abuse.aggregate([], {5: {'ips': v6, 'devices': cores.device_estimate(v6)}})[5]['flags'], [])
         self.assertEqual(abuse.split_addr('[2001:db8::1]:443'), ('2001:db8::1', 443))
         self.assertIsNone(abuse.split_addr('nonsense'))
 
@@ -922,9 +947,21 @@ class CoreOnlineTelemetry(tu.Base):
         self.assertEqual(report[7]['devices'], 2)
         self.assertEqual(report[7]['conns'], 3)
         self.assertEqual(report[8]['ips'], ['1.2.3.4'])
-        self.assertEqual(report[8]['devices'], 2)
+        self.assertEqual(report[8]['devices'], 1)        # one Hysteria client and one TUIC address: one phone
         self.assertEqual(report[9]['ips'], [])
         self.assertNotIn(0, report)
+
+    def test_device_estimate_counts_one_phone_once(self):
+        est = cores.device_estimate
+        self.assertEqual(est([]), 0)
+        self.assertEqual(est(['1.2.3.4'], 1), 1)                       # smart line: TUIC + Hysteria
+        self.assertEqual(est(['1.2.3.4', '2001:db8:1:2::10'], 1), 1)   # dual stack
+        self.assertEqual(est(['2001:db8:1:2::10', '2001:db8:1:2:a:b:c:d', '[2001:db8:1:2::11]']), 1)
+        self.assertEqual(est(['::ffff:1.2.3.4', '1.2.3.4']), 1)        # IPv4-mapped is the same address
+        self.assertEqual(est(['1.2.3.4', '5.6.7.8', '2001:db8:1:2::1']), 2)
+        self.assertEqual(est(['2001:db8:1:2::1', '2001:db8:9:9::1']), 2)
+        self.assertEqual(est(['1.2.3.4'], 3), 3)                       # Hysteria alone can prove more
+        self.assertEqual(est(['not-an-ip', 'fe80::1%eth0']), 1)
 
     def test_online_detail_keeps_valid_protocol_when_other_snapshot_is_invalid(self):
         settings = dict(db.settings(), reality_enabled=False, hy2_enabled=True, tuic_enabled=True)

@@ -138,7 +138,7 @@ function renderLogin(code) {
 /* ---------- the dashboard ---------- */
 async function renderHome() {
   try { M.me = await api('me'); } catch (e) { if (e.message !== 'login') document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
-  const me = M.me, used = me.used_up + me.used_down, q = (me.quota_eff || 0) * GB;
+  const me = M.me, used = me.used_up + me.used_down, q = me.quota_gb ? Math.max(1, (me.quota_eff || 0) * GB) : 0;   // a capped plan that shared everything is not unlimited
   const reason = {quota: 'r_quota', expired: 'r_expired', manual: 'r_manual', remote: 'r_remote', devices: 'r_devices'}[me.disabled_reason] || 'r_manual';
   const logoutBtn = M.hello.mode === 'login' ? (() => {
     const b = h('button', {class: 'btn ghost'}, icon('out'), t('logout'));

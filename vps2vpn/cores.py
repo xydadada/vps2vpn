@@ -2,6 +2,7 @@
 traffic and who is online."""
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -694,9 +695,32 @@ def _online_detail(s):
             pass
     if not known:
         return None
-    # devices: distinct client addresses (Xray, TUIC) plus Hysteria clients
     return {uid: {'protocols': sorted(d['protocols']), 'ips': sorted(d['ips']), 'conns': d['conns'],
-                  'devices': len(d['ips']) + d['hy2']} for uid, d in out.items()}
+                  'devices': device_estimate(d['ips'], d['hy2'])} for uid, d in out.items()}
+
+
+def device_estimate(ips, hy2_clients=0):
+    """How many devices an account has online, never more than it can prove.
+
+    One phone shows up several times: the app's smart line keeps Reality, Hysteria 2 and TUIC open at once,
+    a dual-stack phone uses both the IPv4 and the IPv6 lines, and IPv6 privacy addresses rotate inside one
+    /64. Adding these up paused people with a limit of 1 for using a single phone. So the estimate is the
+    largest of: distinct IPv4 addresses, distinct IPv6 /64 networks, Hysteria clients (Hysteria reports a
+    count, not addresses). Two devices on different families or protocols can be undercounted; a single
+    device is never counted twice."""
+    v4, v6 = set(), set()
+    for raw in ips:
+        try:
+            ip = ipaddress.ip_address(str(raw).strip('[]').split('%')[0])
+        except ValueError:
+            continue
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if ip.version == 4:
+            v4.add(ip)
+        else:
+            v6.add(ipaddress.ip_network((ip, 64), strict=False))
+    return max(len(v4), len(v6), int(hy2_clients or 0))
 
 
 def online_count(s=None):

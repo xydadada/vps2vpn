@@ -272,6 +272,14 @@ def alert_sent_at(key):
     return rows[0]['at'] if rows else None
 
 
+def forget_alerts(prefix):
+    """Stored keys are '<bot>:<chat>:<key>'; forget every recipient's record of keys starting with prefix."""
+    with transaction() as c:
+        for row in c.execute('SELECT key FROM alerts_sent').fetchall():
+            if row['key'].split(':', 2)[-1].startswith(prefix):
+                c.execute('DELETE FROM alerts_sent WHERE key=?', (row['key'],))
+
+
 def mark_alert_sent(key, at=None):
     at = int(at if at is not None else time.time())
     with transaction() as c:

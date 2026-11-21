@@ -56,7 +56,9 @@ def aggregate(flows, online=None):
     for uid, a in acc.items():
         info = (online or {}).get(uid, {})
         ips = len(info.get('ips', []))
-        devices = max(ips, int(info.get('devices', 0) or 0))
+        # The cores' estimate already folds IPv6 privacy addresses of one /64 and both stacks of one phone into
+        # one device; the raw address count would flag a single phone as a shared link.
+        devices = int(info['devices'] or 0) if 'devices' in info else ips
         flags = []
         if len(a['targets']) >= FANOUT_TARGETS and len(a['ports']) >= FANOUT_PORTS and a['streams'] >= FANOUT_STREAMS:
             flags.append('fanout')

@@ -38,6 +38,39 @@ class Renewal(tu.Base):
         self.assertEqual(jobs.renew_reminder(dict(s, vps_renew_at='bad'), now + day), None)
 
 
+class QuotaWarningPeriods(tu.Base):
+    def test_one_warning_per_billing_period_not_per_calendar_month(self):
+        GB = 1 << 30
+        t = lambda m, d: time.mktime((2026, m, d, 12, 0, 0, 0, 0, -1))
+        u = tf.mk('ann', 10, reset_day=15, used_down=9 * GB)
+        # 20 Nov and 1 Dec are the same period (15 Nov - 14 Dec); 20 Dec is the next one.
+        self.assertEqual(jobs.quota_alert_key(u, 10, t(11, 20)), jobs.quota_alert_key(u, 10, t(12, 1)))
+        self.assertNotEqual(jobs.quota_alert_key(u, 10, t(12, 1)), jobs.quota_alert_key(u, 10, t(12, 20)))
+        # a raised quota warns again; an account that never resets has one period
+        self.assertNotEqual(jobs.quota_alert_key(u, 10, t(11, 20)), jobs.quota_alert_key(u, 20, t(11, 20)))
+        once = tf.mk('bob', 10, used_down=9 * GB)
+        self.assertEqual(jobs.quota_alert_key(once, 10, t(11, 20)), jobs.quota_alert_key(once, 10, t(12, 20)))
+
+    def test_manual_reset_rearms_the_warning(self):
+        GB = 1 << 30
+        db.set_settings(tg_token='1:x', tg_chat='42', tg_verified=True)
+        uid = tf.mk('cat', 10, used_down=9 * GB)['id']
+        sent = []
+        real = notify._call
+        notify._call = lambda token, method, params=None, timeout=10: sent.append(params['text']) or {'ok': True}
+        try:
+            jobs.enforce()
+            jobs.enforce()
+            self.assertEqual(len([m for m in sent if '80%' in m]), 1)
+            jobs.forget_quota_alerts(uid)                              # what the admin's "reset traffic" does
+            with notify._recent_lock:
+                notify._recent.clear()                                 # and a restart on top of it
+            jobs.enforce()
+            self.assertEqual(len([m for m in sent if '80%' in m]), 2)
+        finally:
+            notify._call = real
+
+
 class AccountExpiry(tu.Base):
     def setUp(self):
         super().setUp()

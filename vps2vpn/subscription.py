@@ -103,8 +103,14 @@ def ai_servers(ns, per):
     return sorted((label for label, _ in per), key=lambda label: -score.get(label, -1))
 
 
-def userinfo_header(u):
-    total = int(u['quota_gb'] * (1 << 30)) if u['quota_gb'] else 0
+def userinfo_header(u, quota_gb=None):
+    """`quota_gb`: the effective quota (after what the account shares with invitees), where it is cut off.
+    total=0 means unlimited to the apps, so a capped account that shared everything says 1 byte, not 0."""
+    if not u['quota_gb']:
+        total = 0
+    else:
+        quota = u['quota_gb'] if quota_gb is None else quota_gb
+        total = max(1, int(quota * (1 << 30)))
     return 'upload=%d; download=%d; total=%d; expire=%d' % (u['used_up'], u['used_down'], total, u['expire_at'] or 0)
 
 
@@ -615,7 +621,7 @@ def render(fmt, s, u, base_url, quota_gb=None):
     with invitees), used for the low-data heads-up; defaults to its own quota."""
     title = s['node_name'] or 'vps2vpn'
     qname = urllib.parse.quote(title, safe='')
-    headers = {'Subscription-Userinfo': userinfo_header(u), 'Profile-Update-Interval': str(update_hours(s)),
+    headers = {'Subscription-Userinfo': userinfo_header(u, quota_gb), 'Profile-Update-Interval': str(update_hours(s)),
                'Content-Disposition': "attachment; filename*=UTF-8''%s" % qname,
                'Profile-Title': header_b64(title),
                # the person's own page (usage, requests); a browser opening the subscription link gets it

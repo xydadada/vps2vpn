@@ -51,6 +51,20 @@ def monthly_reset(u, now=None):
     return bool(u['reset_day']) and t.tm_mday >= u['reset_day'] and u['last_reset'] != month, month
 
 
+def quota_alert_key(u, quota, now):
+    """One 80% warning per billing period and quota. The period follows the account's own reset day (an
+    account without one has a single period), so a reset on the 15th re-arms it and the 1st of a month does
+    not; raising the quota re-arms it too. A manual traffic reset forgets it (see forget_quota_alerts)."""
+    period = period_of(now, u['reset_day']) if u['reset_day'] else 'total'
+    return 'q80-%d-%s-%g' % (u['id'], period, quota)
+
+
+def forget_quota_alerts(uid):
+    """After a manual traffic reset the account may warn and pause again in the same period."""
+    notify.forget('q80-%d-' % uid)
+    notify.forget('off-%d-quota' % uid)
+
+
 def enforce(now=None):
     """Turn users off/on according to quota, expiry and reset day. Returns True if cores need new configs."""
     with _enforce_lock:
@@ -104,7 +118,7 @@ def enforce(now=None):
                 if u['quota_gb'] and u['enabled'] and not reason and \
                         u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
                     notify.send('%s has used 80%% of %g GB / %s 已用掉 80%% 流量' % (u['name'], quota, u['name']),
-                                key='q80-%d-%s' % (u['id'], month), every=40 * 86400)
+                                key=quota_alert_key(u, quota, t_now), every=40 * 86400)
                 if u['enabled'] and reason:
                     db.update_user(u['id'], enabled=0, disabled_reason=reason)
                     u.update(enabled=0, disabled_reason=reason)
@@ -249,7 +263,7 @@ def tg_expiring(s, now=None, days=7):
         if u['expire_at'] and now < u['expire_at'] <= now + days * 86400:
             soon.append(u)
         quota = members.effective_quota(u, now=now, index=invitees)
-        if quota and u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
+        if u['quota_gb'] and u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
             low.append((u, quota))
     lines = []
     if soon:
@@ -258,7 +272,7 @@ def tg_expiring(s, now=None, days=7):
             lines.append('⏳ %s  %s' % (u['name'], time.strftime('%Y-%m-%d %H:%M', time.localtime(u['expire_at']))))
     if low:
         lines.append('流量快用完（≥80%）：' if zh else 'Almost out of data (80% or more):')
-        for u, quota in sorted(low, key=lambda x: -(x[0]['used_up'] + x[0]['used_down']) / x[1]):
+        for u, quota in sorted(low, key=lambda x: -(x[0]['used_up'] + x[0]['used_down']) / max(x[1], 1e-9)):
             used = (u['used_up'] + u['used_down']) / (1 << 30)
             lines.append('📉 %s  %.2f / %g GB' % (u['name'], used, quota))
     if not lines:
@@ -433,6 +447,8 @@ def watchdog(s):
 
 
 DEVICE_PAUSE = 600
+DEVICE_EVENT_EVERY = 3600
+_device_events = {}       # user id -> when its last "too many devices" event was recorded
 
 
 def device_limits(s, online=None, now=None):
@@ -449,8 +465,12 @@ def device_limits(s, online=None, now=None):
         n = d.get('devices', len(d.get('ips', [])))
         if n <= u['max_ips']:
             continue
-        db.add_event('devices', u['id'], '%s: %d devices online, limit %d (%s)' % (
-            u['name'], n, u['max_ips'], ', '.join(d.get('ips', [])[:8])))
+        # With warnings only, an account stays over its limit check after check; one event an hour is
+        # enough, and the event log keeps only the latest 1000 rows (registrations and requests included).
+        if s['ip_limit_pause'] or now - _device_events.get(u['id'], 0) >= DEVICE_EVENT_EVERY:
+            _device_events[u['id']] = now
+            db.add_event('devices', u['id'], '%s: %d devices online, limit %d (%s)' % (
+                u['name'], n, u['max_ips'], ', '.join(d.get('ips', [])[:8])))
         if s['ip_limit_pause']:
             db.update_user(u['id'], enabled=0, disabled_reason='devices', paused_until=int(now + DEVICE_PAUSE))
             log('paused %s for 10 minutes: %d devices, limit %d' % (u['name'], n, u['max_ips']))
