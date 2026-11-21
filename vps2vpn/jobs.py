@@ -3,6 +3,7 @@ service watchdog, IP-change follow-up, daily backups, server monthly traffic, si
 multi-server sync and alerts."""
 import ipaddress
 import json
+import math
 import os
 import random
 import shutil
@@ -398,6 +399,24 @@ class History:
 
     KEEP = 1440
 
+    @staticmethod
+    def _valid_point(point):
+        # Length alone is not a schema: malformed values in history.json can
+        # otherwise reach the browser's CPU/memory/network plots.
+        if not isinstance(point, list) or len(point) != 5 or type(point[0]) is not int:
+            return False
+        if point[0] < 0:
+            return False
+        for index in range(1, 5):
+            value = point[index]
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                return False
+            if value is not None and index in (1, 2) and not 0 <= value <= 100:
+                return False
+            if value is not None and index in (3, 4) and value < 0:
+                return False
+        return True
+
     def __init__(self, path=None, load=True):
         self.path = path or os.path.join(paths.VAR, 'history.json')
         self._lock = threading.Lock()
@@ -408,7 +427,7 @@ class History:
                     saved = json.load(f)
                 if not isinstance(saved, list):
                     raise ValueError('history cache must be a list')
-                self.points = [p for p in saved if isinstance(p, list) and len(p) == 5][-self.KEEP:]
+                self.points = [p for p in saved if self._valid_point(p)][-self.KEEP:]
             except (OSError, ValueError):
                 pass
 
