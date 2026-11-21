@@ -1715,6 +1715,11 @@ def _dummy_hash():
     return _DUMMY[0]
 
 
+# Latest supported account expiry is 9999-12-31 23:59:59 UTC.
+# Keep values representable in SQLite and in client calendar/date APIs.
+MAX_ACCOUNT_EXPIRE_AT = 253402300799
+
+
 def user_fields(d):
     out = {}
     try:
@@ -1724,7 +1729,10 @@ def user_fields(d):
                 return 'invalid number'
             out['quota_gb'] = max(0.0, q)
         if 'expire_at' in d:
-            out['expire_at'] = max(0, int(d['expire_at'] or 0))
+            expiry = int(d['expire_at'] or 0)
+            if expiry > MAX_ACCOUNT_EXPIRE_AT:
+                return 'expire_at is out of supported range'
+            out['expire_at'] = max(0, expiry)
         if 'reset_day' in d:
             out['reset_day'] = int(d['reset_day'] or 0)
             if not 0 <= out['reset_day'] <= 28:
@@ -1751,7 +1759,7 @@ def user_fields(d):
             out['note'] = str(d['note'])[:200]
         if 'name' in d and str(d['name']).strip():
             out['name'] = str(d['name']).strip()[:32]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 'invalid number'
     return out
 
