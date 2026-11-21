@@ -210,13 +210,17 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
             return None
         newest = max(wanted.values())
         held = held_version(folder)
-        if held is not None and held >= newest:
+        if held is not None and held > newest:
+            return None
+        # One platform's installer at newest does not mean its siblings arrived.
+        missing = {name for name, v in wanted.items() if v == newest and
+                   (not os.path.isfile(os.path.join(folder, name)) or
+                    not os.path.isfile(os.path.join(folder, name + '.sig')))}
+        if not missing:
             return None
         os.makedirs(folder, exist_ok=True)
         published = []
-        for name, v in sorted(wanted.items()):
-            if v != newest:
-                continue
+        for name in sorted(missing):
             sig = _get(assets[name + '.sig'], MAX_SIG).decode('ascii', 'replace')
             tmp, sha, size = _download(assets[name], folder, name)
             if not signature_ok(name, sha, size, sig):

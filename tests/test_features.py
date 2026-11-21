@@ -2536,6 +2536,27 @@ class ClientSync(unittest.TestCase):
         self.assertEqual(found['files'], {'windows': 'vps2vpn-1.0.9-windows-amd64-setup.exe'})
         self.assertEqual(found['unsigned'], [])
 
+    def test_partial_release_retries_only_the_missing_platform(self):
+        windows = 'vps2vpn-1.0.9-windows-amd64-setup.exe'
+        android = 'vps2vpn-1.0.9-android-arm64.apk'
+        self._release('1.0.9', {windows: b'windows package', android: b'android package'})
+        sig_url = 'https://dl.example/' + android + '.sig'
+        valid_sig = self.web[sig_url]
+        self.web[sig_url] = b'bad-signature'
+        self.assertEqual(self._sync(), '1.0.9')
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, windows)))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, android)))
+        self.web[sig_url] = valid_sig
+        with mock.patch.object(clientsync, '_download', wraps=clientsync._download) as download:
+            self.assertEqual(self._sync(), '1.0.9')
+            self.assertEqual(download.call_count, 1)
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, android)))
+        self.assertEqual(set(clientsync._manifest(self.dir)), {windows, android})
+        with mock.patch.object(clientsync, '_download', side_effect=AssertionError('already complete')):
+            self.assertIsNone(self._sync())
+        with mock.patch.object(paths, 'CLIENT', self.dir):
+            self.assertEqual(set(web.client_files()['files']), {'windows', 'android'})
+
     def test_a_bad_signature_or_a_prerelease_is_not_published(self):
         self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'setup'})
         self.web['https://dl.example/vps2vpn-1.0.9-windows-amd64-setup.exe'] = b'tampered'
