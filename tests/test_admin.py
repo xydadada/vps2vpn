@@ -365,6 +365,15 @@ class AdminWeb(tu.Base):
         state = json.loads(self.req('GET', '/adm/api/state')[1])
         self.assertTrue(state['settings']['totp_on'])
         self.assertNotIn('admin_totp', state['settings'])
+        # A stolen-but-valid session must not replace the enrolled factor:
+        # the attacker can generate a valid code for its own proposed secret.
+        replacement_secret = secure.totp_secret()
+        self.assertNotEqual(replacement_secret, sec)
+        st, body, _ = self.req('POST', '/adm/api/totp',
+                               {'secret': replacement_secret,
+                                'code': secure.totp(replacement_secret)})
+        self.assertEqual(st, 409, body)
+        self.assertEqual(db.settings()['admin_totp'], sec)
         self.cookie = ''
         st, body, _ = self.login()
         self.assertEqual((st, json.loads(body)['error']), (403, 'totp_required'))
