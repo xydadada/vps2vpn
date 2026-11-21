@@ -233,6 +233,8 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
             os.replace(tmp, os.path.join(folder, name))
             os.replace(os.path.join(folder, name + '.sig.tmp'), os.path.join(folder, name + '.sig'))
             published.append(name)
+            # A later sibling may fail: keep this verified asset managed on retry.
+            _save_manifest(folder, _manifest(folder) + [name])
         if not published:
             return None
         # Remove only what an earlier sync brought in and this one superseded.
