@@ -692,4 +692,7 @@ def import_links(sub_url, name):
         'singbox': 'sing-box://import-remote-profile?url=%s#%s' % (urllib.parse.quote(sub_url + '?format=singbox', safe=''), qn),
         'hiddify': 'hiddify://import/%s#%s' % (urllib.parse.quote(sub_url + '?format=singbox', safe=''), qn),
         'v2rayng': 'v2rayng://install-sub?url=%s&name=%s' % (q, qn),
+        # iPhone apps besides Shadowrocket: Stash reads the Clash config, Karing picks its format by User-Agent
+        'stash': 'stash://install-config?url=%s&name=%s' % (urllib.parse.quote(sub_url + '?format=clash', safe=''), qn),
+        'karing': 'karing://install-config?url=%s&name=%s' % (q, qn),
     }

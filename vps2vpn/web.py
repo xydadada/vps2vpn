@@ -1676,7 +1676,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 try:
                     uid = members.register(d.get('code', ''), d.get('name', ''), d.get('password', ''))
                 except members.Refused as e:
-                    self._record_fail()
+                    # Only a wrong or used-up code is a guess; a taken name or a short password is a typo.
+                    if isinstance(e, members.CodeRefused):
+                        self._record_fail()
+                    else:
+                        self._release_attempt()
                     return self.json({'error': str(e)}, 400)
                 jobs.log('new account from an invite code: %s' % db.user(uid)['name'])
                 notify.send('new account %s (invite code) / 新用户 %s 通过邀请码注册' % (db.user(uid)['name'], db.user(uid)['name']),
@@ -1710,12 +1714,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         d = self.body_json()
         if api == 'password':
             if u['login_hash']:
-                # The link or a session must not become an unlimited guesser of the login password.
+                # A session must not become an unlimited guesser of the login password. The subscription link
+                # is the key itself (it can rotate the link too), so it sets a new password without the old one;
+                # the attempt budget still applies to it.
                 if self.rate_limited('member'):
                     return self.json({'error': 'too many attempts, wait 10 minutes'}, 429)
-                if not secure.check_password(str(d.get('old', '')), u['login_hash']):
+                if by_link:
+                    self._record_fail()          # each change counts (8 per 10 minutes): no free stream of hashes
+                elif not secure.check_password(str(d.get('old', '')), u['login_hash']):
                     self._record_fail()
                     return self.json({'error': 'current password is wrong'}, 403)
+                else:
+                    self._release_attempt()
             fresh = {}
 
             def set_pw():
@@ -1829,6 +1839,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'quota_eff': members.effective_quota(u, index=invitees),
             'shared_gb': round(members.given_away(u['id'], index=invitees), 2),
             'capacity': members.capacity(u) if s['member_invites'] else None,
+            'reserved_gb': round(members.reserved(u['id']), 2) if u['quota_gb'] else 0,   # promised to unused codes
             'expire_at': u['expire_at'], 'reset_day': u['reset_day'], 'next_reset': nxt, 'created_at': u['created_at'],
             'invited_by': names.get(u['invited_by'], ''), 'has_login': bool(u['login_hash']),
             'sub_url': sub_url, 'import': subscription.import_links(sub_url, s['node_name'] or 'vps2vpn'),
@@ -2235,7 +2246,7 @@ LANDING = {
         'disabled': '此订阅已停用（流量用完、已到期或被管理员关闭）', 'step1': '第 1 步：装一个 App',
         'step2': '第 2 步：一键导入', 'copy': '复制订阅链接', 'copied': '已复制', 'scan': '手机扫码导入',
         'apps': [('Windows / macOS', 'Clash Verge Rev 或 FlClash（免费）'), ('Android', 'FlClash 或 Hiddify（免费）'),
-                 ('iPhone / iPad', 'Shadowrocket（小火箭，付费）、Stash 或 Karing（免费）')],
+                 ('iPhone / iPad', 'Shadowrocket（小火箭）或 Stash（都要付费），免费的用 Karing')],
         'tip': '导入后打开 App 里的“系统代理”或“VPN/TUN 模式”开关即可。订阅会自动更新，不用重复导入。',
     },
     'en': {
@@ -2244,7 +2255,7 @@ LANDING = {
         'step1': 'Step 1: install an app', 'step2': 'Step 2: import with one tap', 'copy': 'Copy link',
         'copied': 'Copied', 'scan': 'Scan with your phone',
         'apps': [('Windows / macOS', 'Clash Verge Rev or FlClash (free)'), ('Android', 'FlClash or Hiddify (free)'),
-                 ('iPhone / iPad', 'Shadowrocket (paid), Stash or Karing (free)')],
+                 ('iPhone / iPad', 'Shadowrocket or Stash (both paid), or Karing (free)')],
         'tip': 'After importing, switch on "System proxy" or "VPN/TUN mode" in the app. The subscription updates itself.',
     },
 }
@@ -2254,11 +2265,14 @@ def landing_page(s, u, sub_url):
     t = LANDING.get(s['language'], LANDING['zh'])
     e = html.escape
     used = u['used_up'] + u['used_down']
-    quota = fmt_bytes(u['quota_gb'] * (1 << 30)) if u['quota_gb'] else t['unlimited']
-    pct = min(100, int(used * 100 / (u['quota_gb'] * (1 << 30)))) if u['quota_gb'] else 0
+    # what this account may really use: plus top-ups, minus what it shared with invitees (as on the member page)
+    q_bytes = max(1, members.effective_quota(u) * (1 << 30)) if u['quota_gb'] else 0
+    quota = fmt_bytes(q_bytes) if q_bytes else t['unlimited']
+    pct = min(100, int(used * 100 / q_bytes)) if q_bytes else 0
     exp = time.strftime('%Y-%m-%d', time.localtime(u['expire_at'])) if u['expire_at'] else t['never']
     links = subscription.import_links(sub_url, s['node_name'] or 'vps2vpn')
     btns = [('Clash Verge / FlClash', links['clash']), ('Shadowrocket', links['shadowrocket']),
+            ('Stash', links['stash']), ('Karing', links['karing']),
             ('Hiddify', links['hiddify']), ('sing-box', links['singbox']), ('v2rayNG', links['v2rayng'])]
     apps = ''.join('<li><b>%s</b>：%s</li>' % (e(a), e(b)) for a, b in t['apps'])
     buttons = ''.join('<a class="btn" href="%s">%s</a>' % (e(href), e(label)) for label, href in btns)
