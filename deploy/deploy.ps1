@@ -652,8 +652,13 @@ function Copy-Text([string]$t, $b) { [Windows.Forms.Clipboard]::SetText($t); $b.
 function Fill-Result($p, $st) {
   $p.SuspendLayout(); $p.Controls.Clear()
   $rec = $st.Rec; $y = 10
-  $h = Add-Label '✅ 部署成功' $y 34 $green $p
+  # "success" only when it can actually be used; a blocked firewall is the most common beginner trap
+  $blocked = @($st.Ports | Where-Object { -not $_.ok }).Count
+  $h = Add-Label $(if ($blocked) { '⚠️ 装好了，还差一步' } else { '✅ 部署成功' }) $y 34 $(if ($blocked) { $red } else { $green }) $p
   $h.Font = New-Object Drawing.Font('Microsoft YaHei UI', 15, [Drawing.FontStyle]::Bold); $y += 42
+  if ($blocked) {
+    Add-Label "现在还连不上：有 $blocked 个端口被云服务商的防火墙挡住了。按下面「防火墙检查」里说的放行，再点「我已放行，再检查一次」。" $y 44 $red $p | Out-Null; $y += 48
+  }
   if ($rec['main']) {
     $msg = switch ($st.Join) {
       'ok' { "已加入主服务器 $($rec['main'])：你在那边的订阅里会自动多出这台服务器（在 VPN 软件里点一下「更新订阅」）。" }
@@ -671,7 +676,7 @@ function Fill-Result($p, $st) {
     $where = @($ai.place, $ai.org, $ai.kind) | Where-Object { $_ }
     $txt = "AI 可用性（从服务器测试）：$($ai.summary)`n" + ($where -join ' · ')
     if ($ai.advice) { $txt += "`n" + (@($ai.advice) -join "`n") }
-    $txt += "`n结果只作参考；以后可以在管理面板 → 系统里重新检测。"
+    $txt += "`n结果只作参考；以后可以在管理面板 →「体检与维护」里重新检测。"
     Add-Label $txt $y 96 $null $p | Out-Null; $y += 100
   }
   if (-not $rec['main'] -and $rec['sub_url']) {
@@ -726,14 +731,19 @@ function Fill-Result($p, $st) {
   } $true))
   if ($rec['admin_password']) { $p.Controls.Add((New-Btn '复制密码' 148 $y 120 { Copy-Text "$($script:st.Rec['admin_password'])" $this })) }
   $p.Controls.Add((New-Btn '打开保存的文件夹' 276 $y 160 { Start-Process explorer.exe -ArgumentList "`"$Records`"" })); $y += 44
-  Add-Label ('浏览器若提示「不安全」，点「高级 → 继续访问」即可（照样加密）。登录信息保存在：' + $st.File) $y 44 $gray $p | Out-Null
+  Add-Label ('浏览器若提示「不安全」，点「高级 → 继续访问」即可（照样加密）。登录信息保存在：' + $st.File) $y 44 $gray $p | Out-Null; $y += 48
+  $t = Add-Label '接下来可以做什么' $y 24 $null $p; $t.Font = New-Object Drawing.Font('Microsoft YaHei UI', 10, [Drawing.FontStyle]::Bold); $y += 28
+  $next = "· 给家人朋友开账号：打开管理面板 →「使用者」添加，每人有自己的订阅链接、流量和到期时间。`n" +
+    "· 再加一台服务器：买好后再运行一次部署工具，在「这台服务器怎么用」里选「加到 … 下面」，大家的订阅里会自动多出它。`n" +
+    '· 以后想升级：再运行一次部署工具、填同一个 IP 就行，账号和设置都会保留。'
+  Add-Label $next $y 110 $gray $p | Out-Null
   $p.ResumeLayout()
 }
 
 function Show-Result($st) {
   $script:st = $st
   $rf = New-Object Windows.Forms.Form -Property @{
-    Text = 'vps2vpn 部署成功'; Width = 600; Height = 740; StartPosition = 'CenterScreen'; Font = $font
+    Text = 'vps2vpn 部署结果'; Width = 600; Height = 740; StartPosition = 'CenterScreen'; Font = $font
     FormBorderStyle = 'FixedSingle'; MaximizeBox = $false; BackColor = [Drawing.Color]::White
   }
   $script:resPanel = New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoScroll = $true }

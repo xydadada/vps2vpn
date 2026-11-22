@@ -131,7 +131,7 @@ SUB=$(read_json "$MERGED" .sub_url)
 V2V_LINK=$(read_json "$MERGED" .links.vps2vpn)
 CLASH=$(read_json "$MERGED" .links.clash)
 PW=$(read_json "$MERGED" .admin_password)
-say "部署成功 / Done!"
+say "服务器上装好了 / Installed on the server"
 AI=$(read_json "$MERGED" .ai.summary)
 if [ -n "$AI" ]; then
   echo
@@ -153,6 +153,9 @@ done < <(read_json "$MERGED" '.checks.filter(function(c){return c[0]=="tcp"}).ma
 if [ "$BAD" = 1 ]; then
   echo "  有端口被云服务商的防火墙挡住了。$(read_json "$MERGED" .cloud_firewall)"
   echo "  请到云服务商控制台的「防火墙 / 安全组」放行：协议选「全部」，来源 0.0.0.0/0。"
+  echo "  ⚠️ 还差这一步：放行之前 VPN 连不上。放行后在 VPN 软件里导入下面的订阅链接即可，不用重新部署。"
+else
+  echo "  全部通了 ✓"
 fi
 
 APP=""
@@ -167,10 +170,15 @@ if [ -n "$APP" ] && safe_url "$IMPORT_URL" '^(vps2vpn|clash|hiddify|sing-box)://
   echo "分流规则（国内网站直连、国外走代理）已经写好，不用自己设置。"
   open -- "$IMPORT_URL" 2>/dev/null
 elif safe_url "$SUB" '^https?://[^/]+'; then
-  echo "没检测到 VPN 软件（或者防火墙还没放行）。推荐装免费开源的 Clash Verge Rev："
-  echo "  https://github.com/clash-verge-rev/clash-verge-rev/releases/latest"
-  echo "装好后把下面的订阅链接粘贴到软件的「新建订阅」里。浏览器里会打开订阅页，手机可以扫上面的二维码导入。"
+  if [ -n "$APP" ]; then
+    echo "检测到你电脑上的 $APP。防火墙放行后，把下面的订阅链接粘贴到它的「新建订阅 / 导入」里。"
+  else
+    echo "没检测到 VPN 软件。推荐装免费开源的 Clash Verge Rev："
+    echo "  https://github.com/clash-verge-rev/clash-verge-rev/releases/latest"
+    echo "装好后把下面的订阅链接粘贴到软件的「新建订阅」里。"
+  fi
   echo "  $SUB"
+  echo "浏览器里会打开订阅页，手机扫那个页面上的二维码就能导入。"
   # xdg-open takes no options (it rejects "--"); safe_url already refused a URL starting with "-".
   # Only a Mac's open: on Debian "open" is openvt.
   if [ "$(uname)" = Darwin ]; then open -- "$SUB" 2>/dev/null
@@ -185,4 +193,9 @@ else
   echo "用户名和密码：用你自己设置的那个。"
 fi
 echo "浏览器若提示「不安全」，点「高级 → 继续访问」即可（照样加密）。"
+echo
+echo "接下来可以做什么："
+echo "  · 给家人朋友开账号：打开管理面板 →「使用者」添加，每人有自己的订阅链接、流量和到期时间。"
+echo "  · 再加一台服务器：在管理面板 →「多服务器」里操作（Mac 上装了 Python 时，部署工具可以自动加入）。"
+echo "  · 以后想升级：再运行一次这个部署工具、填同一个 IP 就行，账号和设置都会保留。"
 read -r -p "按回车关闭 / press Enter to close" _
