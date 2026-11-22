@@ -685,6 +685,8 @@ def import_links(sub_url, name):
     qn = urllib.parse.quote(name, safe='')
     b64 = base64.b64encode(sub_url.encode()).decode()
     return {
+        # our own client (Windows): opens it and imports in one click
+        'vps2vpn': 'vps2vpn://install-config?url=%s&name=%s' % (urllib.parse.quote(sub_url + '?format=clash', safe=''), qn),
         'clash': 'clash://install-config?url=%s&name=%s' % (urllib.parse.quote(sub_url + '?format=clash', safe=''), qn),
         'shadowrocket': 'shadowrocket://add/sub://%s?remark=%s' % (b64, qn),
         # the full config (nodes + routing + DNS), not just a node list

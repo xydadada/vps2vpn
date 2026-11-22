@@ -2259,7 +2259,8 @@ LANDING = {
         'title': '我的订阅', 'used': '已用', 'of': '共', 'unlimited': '不限量', 'expires': '到期', 'never': '永不过期',
         'disabled': '此订阅已停用（流量用完、已到期或被管理员关闭）', 'step1': '第 1 步：装一个 App',
         'step2': '第 2 步：一键导入', 'copy': '复制订阅链接', 'copied': '已复制', 'scan': '手机扫码导入',
-        'apps': [('Windows / macOS', 'Clash Verge Rev 或 FlClash（免费）'), ('Android', 'FlClash 或 Hiddify（免费）'),
+        'apps': [('Windows', 'vps2vpn 客户端（免费，推荐），或 Clash Verge Rev、FlClash'), ('macOS', 'Clash Verge Rev 或 FlClash（免费）'),
+                 ('Android', 'FlClash 或 Hiddify（免费）'),
                  ('iPhone / iPad', 'Shadowrocket（小火箭）或 Stash（都要付费），免费的用 Karing')],
         'tip': '导入后打开 App 里的“系统代理”或“VPN/TUN 模式”开关即可。订阅会自动更新，不用重复导入。',
     },
@@ -2268,7 +2269,8 @@ LANDING = {
         'never': 'never', 'disabled': 'This subscription is paused (quota used up, expired or turned off).',
         'step1': 'Step 1: install an app', 'step2': 'Step 2: import with one tap', 'copy': 'Copy link',
         'copied': 'Copied', 'scan': 'Scan with your phone',
-        'apps': [('Windows / macOS', 'Clash Verge Rev or FlClash (free)'), ('Android', 'FlClash or Hiddify (free)'),
+        'apps': [('Windows', 'the vps2vpn app (free, recommended), or Clash Verge Rev / FlClash'), ('macOS', 'Clash Verge Rev or FlClash (free)'),
+                 ('Android', 'FlClash or Hiddify (free)'),
                  ('iPhone / iPad', 'Shadowrocket or Stash (both paid), or Karing (free)')],
         'tip': 'After importing, switch on "System proxy" or "VPN/TUN mode" in the app. The subscription updates itself.',
     },
@@ -2285,7 +2287,7 @@ def landing_page(s, u, sub_url):
     pct = min(100, int(used * 100 / q_bytes)) if q_bytes else 0
     exp = time.strftime('%Y-%m-%d', time.localtime(u['expire_at'])) if u['expire_at'] else t['never']
     links = subscription.import_links(sub_url, s['node_name'] or 'vps2vpn')
-    btns = [('Clash Verge / FlClash', links['clash']), ('Shadowrocket', links['shadowrocket']),
+    btns = [('vps2vpn 客户端', links['vps2vpn']), ('Clash Verge / FlClash', links['clash']), ('Shadowrocket', links['shadowrocket']),
             ('Stash', links['stash']), ('Karing', links['karing']),
             ('Hiddify', links['hiddify']), ('sing-box', links['singbox']), ('v2rayNG', links['v2rayng'])]
     apps = ''.join('<li><b>%s</b>：%s</li>' % (e(a), e(b)) for a, b in t['apps'])

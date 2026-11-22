@@ -149,6 +149,17 @@ class Texts(unittest.TestCase):
         self.assertNotIn('Stash 或 Karing（免费）', json.dumps(web.LANDING, ensure_ascii=False))
 
 
+class OpenOurClient(unittest.TestCase):
+    def test_vps2vpn_link_and_button(self):
+        links = subscription.import_links('https://h:1/s/tok', 'n')
+        self.assertTrue(links['vps2vpn'].startswith('vps2vpn://install-config?url=https%3A%2F%2Fh%3A1%2Fs%2Ftok%3Fformat%3Dclash'))
+        src = member_js()
+        self.assertIn("h('a', {class: 'btn primary', href: im.vps2vpn}", src)
+        self.assertIn('在 vps2vpn 客户端中打开', src)
+        self.assertIn('vps2vpn-client/releases/latest', src)
+        self.assertIn('vps2vpn 客户端', dict(web.LANDING['zh']['apps'])['Windows'])
+
+
 class Landing(tu.Base):
     def test_uses_effective_quota(self):
         a = db.add_user('amy', 10)
