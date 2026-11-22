@@ -33,6 +33,9 @@ Buy a VPS, click once, get your own private VPN. ([English below](#english))
 
 大多数云厂商默认只放行 SSH。去控制台的 **防火墙 / 安全组** 放行下面这些端口。这一步在服务器外面，安装脚本替你做不了。
 
+> **最省事的做法**：添加一条规则，协议选「全部 / 所有」（TCP 和 UDP），来源 `0.0.0.0/0`。面板端口是安装时随机选的，事先不知道，这样就不用回头再改。
+> 用方法 1（一键部署）的话也可以先跳过这一步：装完它会从你的电脑逐个测试，告诉你还缺哪些。
+
 | 用途 | 协议 / 端口 |
 |---|---|
 | 管理面板 + 订阅 | TCP 随机高位端口（安装时显示，在 40001–60000 之间） |
@@ -50,7 +53,7 @@ Buy a VPS, click once, get your own private VPN. ([English below](#english))
 
 #### 方法 1：电脑上一键部署（最傻瓜）
 
-1. 下载本项目：打开 [Releases 页面](https://github.com/xydadada/vps2vpn/releases/latest)，下载 **Source code (zip)**（或者 GitHub 页面上 Code → Download ZIP），解压。
+1. 下载本项目：打开 [Releases 页面](https://github.com/xydadada/vps2vpn/releases/latest)，下载 **Source code (zip)**（或者 GitHub 页面上 Code → Download ZIP），**先解压**（Windows：右键 → 全部解压缩），别直接在压缩包里双击。
 2. **Windows**：双击 `deploy-windows.bat`，弹出一个窗口。**什么都不用另外装**（用的是 Windows 10/11 自带的 PowerShell、tar 和 ssh）。
    **macOS**：双击 `deploy-mac.command`（第一次可能要右键 → 打开）。Linux：`bash deploy-mac.command`。
 3. 填服务器 IP，把云厂商给你的 **SSH 密钥文件拖进窗口**（整个 `.ssh` 文件夹拖进去也行，会自动找到私钥），或者填 root 密码，点「一键部署」。
@@ -58,7 +61,7 @@ Buy a VPS, click once, get your own private VPN. ([English below](#english))
    - PuTTY 的 `.ppk` 密钥要先用 PuTTYgen 转成 OpenSSH 格式；设了密码保护的密钥不能用，部署工具会直接告诉你。
 4. 等一两分钟，**剩下的全自动**：
    - 管理员账号和你的第一个 VPN 账号自动建好（不用再走设置向导）；
-   - 自动检测你电脑上的 VPN 软件（Clash Verge、FlClash、Mihomo Party 等），**自动打开它并导入**，分流规则（国内直连、国外走代理）已经写好；没装的话给你下载链接；手机扫窗口里的二维码导入；
+   - 自动检测你电脑上的 VPN 软件（Clash Verge、FlClash、Mihomo Party 等），**自动打开它并导入**，分流规则（国内直连、国外走代理）已经写好；没装的话给你下载链接；手机导入：网页版窗口里直接有二维码，Windows 窗口里点「手机扫码（打开订阅页）」，用手机扫页面上的二维码；
    - 从你的电脑**测试云厂商防火墙**有没有放行每个端口，挡住了就告诉你去控制台哪里点、点什么，放行后点「再检查一次」；
    - 面板地址和管理员密码显示在窗口里，并保存在你电脑用户文件夹下的 `vps2vpn` 文件夹（只在你自己电脑上）。
 
