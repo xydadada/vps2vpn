@@ -82,7 +82,7 @@ def enforce(now=None):
         except Exception:
             can_slow = False
         # Usually one pass; quota shared down an invite tree may need one more per level (stops when nothing moves).
-        for _pass in range(10):
+        for _pass in range(max(2, min(len(users), 32))):
             pass_changed = False
             for u in users:
                 if u['remote_id']:

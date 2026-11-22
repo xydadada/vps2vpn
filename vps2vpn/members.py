@@ -380,13 +380,16 @@ def decide(rid, approve, add_gb=None, answer=''):
             # A request is "more for now" ("exams this month"): a top-up for the current period, dropped at the
             # account's next traffic reset. Raising the plan itself is the owner's edit, not an approval.
             db.update_user(u['id'], extra_gb=extra(u) + gb)
-        if u['disabled_reason'] == 'quota':
-            # Switch it back on only if the new quota really covers what was used; otherwise the next
-            # enforce pass would pause it again and tell the owner a second time.
+        if u['disabled_reason'] == 'quota' or u['throttled']:
+            # Switch it back on (or back to full speed) only if the new quota really covers what was used;
+            # otherwise the next enforce pass would pause it again and tell the owner a second time.
             fresh = db.user(u['id'])
             now = time.time()
             quota = effective_quota(fresh, None, now)
             expired = bool(fresh['expire_at']) and fresh['expire_at'] <= now
             if not expired and (not fresh['quota_gb'] or fresh['used_up'] + fresh['used_down'] < quota * (1 << 30)):
-                db.update_user(u['id'], enabled=1, disabled_reason='')
+                upd = {'throttled': 0}
+                if u['disabled_reason'] == 'quota':
+                    upd.update(enabled=1, disabled_reason='')
+                db.update_user(u['id'], **upd)
         db.decide_request(rid, 'approved', answer, gb)

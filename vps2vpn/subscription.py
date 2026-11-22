@@ -73,8 +73,8 @@ def nodes(s, u):
                             if db.valid_rate(s.get('traffic_rate', 1)) else 1.0)
     out = []
     if db.allowed_on(u, db.MAIN_SERVER):
-        out = server_nodes(dict(s, hy2_hop=system.hopping_listed(s), shaping=shaper.active()), tls_info(s),
-                           main_label, u['id'], u)
+        out = _ordered(s, server_nodes(dict(s, hy2_hop=system.hopping_listed(s), shaping=shaper.active()),
+                                       tls_info(s), main_label, u['id'], u))
     for n in out:
         n['ai_score'] = aicheck.score(aicheck.latest())
     seen_labels = {main_label}
@@ -91,8 +91,16 @@ def nodes(s, u):
         more = server_nodes(info, info.get('tls') or {'sni': info['public_host'], 'pin': '', 'pem': ''}, label, lid, u)
         for n in more:
             n['ai_score'] = info.get('ai_score', -1)
-        out += more
+        out += _ordered(s, more)
     return out
+
+
+def _ordered(s, entries):
+    """One server's entries in the owner's line order. "TCP first" puts Reality (TCP) ahead of Hysteria 2 and
+    TUIC (both UDP) for networks that slow UDP down; IPv4 entries stay ahead of their IPv6 copies."""
+    if not s.get('tcp_first'):
+        return entries
+    return sorted(entries, key=lambda n: (n['name'].endswith(' IPv6'), n['type'] != 'reality'))
 
 
 def server_groups(ns):

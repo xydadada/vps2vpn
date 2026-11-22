@@ -2192,6 +2192,52 @@ class AirportFeatures(tu.Base):
             self.assertTrue(doctor.speed_limits()[0]['ok'])
 
 
+class AirportFeaturesAudit5Leftovers(tu.Base):
+    """The fifth audit's items that the sixth audit's release did not carry over."""
+
+    @mock.patch('vps2vpn.shaper.active', return_value=True)
+    def test_approved_top_up_lifts_the_slow_down_at_once(self, _active):
+        u = mk('ask', 1, throttle_mbps=5)
+        db.update_user(u['id'], used_down=2 << 30, login_hash='x')
+        with mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        self.assertEqual(db.user(u['id'])['throttled'], 1)
+        members.decide(db.add_request(u['id'], 5, 'exams'), True, 5)
+        got = db.user(u['id'])
+        self.assertEqual((got['throttled'], got['enabled']), (0, 1))
+        # a top-up too small to cover what was used keeps the slow-down
+        db.update_user(u['id'], used_down=20 << 30, throttled=1)
+        members.decide(db.add_request(u['id'], 1, 'more'), True, 1)
+        self.assertEqual(db.user(u['id'])['throttled'], 1)
+
+    def test_leftover_ingress_is_removed_only_next_to_our_root(self):
+        from vps2vpn import shaper
+
+        def fake(root, ingress):
+            calls = []
+
+            def run(cmd, stdin=None):
+                calls.append(cmd)
+                if cmd[:3] == ['tc', 'qdisc', 'show']:
+                    return 0, root
+                if cmd[:3] == ['tc', 'filter', 'show']:
+                    return 0, ingress
+                return 0, ''
+            with mock.patch.object(shaper, '_run', side_effect=run):
+                shaper._teardown('eth0')
+            return ['tc', 'qdisc', 'del', 'dev', 'eth0', 'ingress'] in calls
+        ours = 'qdisc htb %s: root refcnt 2' % shaper._ROOT
+        connmark_only = 'filter protocol all pref 1 u32 chain 0\n  action order 1: connmark zone 0 pipe\n'
+        self.assertTrue(fake(ours, connmark_only))
+        self.assertTrue(fake(ours, ''))
+        self.assertTrue(fake('', 'action order 2: mirred (Egress Redirect to device %s) stolen' % shaper.IFB))
+        self.assertFalse(fake('', connmark_only))          # without our root qdisc it may be someone else's
+        self.assertFalse(fake(ours, 'action order 1: mirred (Egress Redirect to device other0) stolen'))
+
+    def test_billing_is_never_negative(self):
+        self.assertEqual(db.billed(-10, 2), 0)
+        self.assertEqual(db.billed(-10, 1), -10)       # rate 1 passes counters through untouched
+
 
 class AirportFeaturesAudit6(tu.Base):
     """Speed limits, slow-down and rates after the sixth outside audit."""

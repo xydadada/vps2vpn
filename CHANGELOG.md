@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.27
+
+- **Line order: TCP first.** A new switch under routing in the panel puts Reality (TCP) ahead of Hysteria 2 and TUIC (UDP) on every server in the subscription, for networks that slow UDP down. IPv4 entries stay ahead of their IPv6 copies. Off by default; nothing changes until you turn it on.
+  **线路优先顺序：TCP 优先。** 面板「分流」里新增开关：订阅里每台服务器先用 Reality（TCP），再用 Hysteria 2 / TUIC（UDP），适合 UDP 常被限速的网络。默认关闭。
+- An approved top-up now lifts a slow-down at once, when the new quota covers what was used.
+  批准加流量后，如果新额度够用，降速立刻解除。
+- Speed-limit cleanup also removes an ingress qdisc that a failed setup left with only its connmark step, but only next to our own root qdisc.
+  限速清理时，失败残留的入站规则也会清掉（只清我们自己的）。
+- Quota checks settle invite trees up to 32 levels deep in one run; billing on a server with a traffic rate never goes below zero.
+  多层邀请的流量结算一次最多处理 32 层；倍率计费不会出现负数。
+
 ## 0.2.26
 
 Fixes from a sixth outside review of the speed-limit and slow-down features.

@@ -128,11 +128,15 @@ NFT_RULES = ('table inet %s\ndelete table inet %s\ntable inet %s {\n'
 
 def _teardown(dev):
     # only qdiscs we set up: a root or ingress qdisc someone else put on the card stays
-    if dev and _ours(dev):
-        _run(['tc', 'qdisc', 'del', 'dev', dev, 'root'])
+    if dev:
+        mine = _ours(dev)
+        if mine:
+            _run(['tc', 'qdisc', 'del', 'dev', dev, 'root'])
         code, out = _run(['tc', 'filter', 'show', 'dev', dev, 'parent', 'ffff:'])
-        # ours: redirects to our ifb device, or empty (a batch that failed between the qdisc and its filters)
-        if code == 0 and (IFB in out or not out.strip()):
+        # ours: it redirects to our ifb device. With our root qdisc also there, an ingress that a batch left
+        # empty or with only its connmark step (failed before the redirect) is ours too.
+        leftover = not out.strip() or ('connmark' in out and 'mirred' not in out)
+        if code == 0 and (IFB in out or (mine and leftover)):
             _run(['tc', 'qdisc', 'del', 'dev', dev, 'ingress'])
     _run(['ip', 'link', 'del', IFB])
     _run(['nft', 'delete', 'table', 'inet', NFT_TABLE])

@@ -33,6 +33,7 @@ const T = {
     tuic: 'TUIC v5', tuic_d: 'UDP + QUIC。另一种 QUIC 协议，Hysteria 2 被限速时的备选，0-RTT 握手延迟低。', tuic_port: 'UDP 端口',
     block_ads: '屏蔽广告', block_bt: '禁止 BT 下载走服务器（防止机房投诉）', ai_group: '单独的「AI 服务」分组（ChatGPT、Claude、Gemini 等）',
     ipv6_nodes: '同时提供 IPv6 节点（IPv4 线路卡的时候可以换着用）',
+    tcp_first: 'TCP 优先：订阅里先用 Reality，再用 Hysteria 2 / TUIC（适合 UDP 常被限速的网络）',
     cert_mode: '证书方式', cert_auto: '自动申请免费证书（Let\'s Encrypt，支持纯 IP）', cert_self: '只用自签名证书',
     domain: '域名（可选，有就填）', email: '邮箱（可选，证书快过期时提醒）', cert_now: '立即申请证书',
     cert_ok: '受信任证书', cert_self_s: '自签名证书', cert_self_tip: '仍然全程加密，只是浏览器会提示不安全。',
@@ -142,6 +143,7 @@ const T = {
     tuic: 'TUIC v5', tuic_d: 'UDP + QUIC. A second QUIC protocol to switch to if Hysteria 2 gets throttled; 0-RTT handshakes.', tuic_port: 'UDP port',
     block_ads: 'Block ads', block_bt: 'Block BitTorrent through the server (avoids abuse complaints)', ai_group: 'Separate "AI" group (ChatGPT, Claude, Gemini…)',
     ipv6_nodes: 'Also offer IPv6 entries (handy when the IPv4 route is slow)',
+    tcp_first: 'TCP first: subscriptions try Reality before Hysteria 2 / TUIC (for networks that slow UDP down)',
     cert_mode: 'Certificate', cert_auto: 'Free certificate from Let\'s Encrypt (works with a bare IP)', cert_self: 'Self-signed only',
     domain: 'Domain (optional)', email: 'E-mail (optional, expiry notices)', cert_now: 'Get certificate now',
     cert_ok: 'Trusted certificate', cert_self_s: 'Self-signed', cert_self_tip: 'Still fully encrypted; browsers just show a warning.',
@@ -1190,7 +1192,7 @@ function drawSettings() {
         field(t('support_url'), inp('support_url', 'url')), field(t('sub_update_hours'), inp('sub_update_hours', 'number')),
         check(t('tune'), cb('tune_network')), s.public_ipv6 ? check(t('ipv6_nodes') + ' · ' + s.public_ipv6, cb('ipv6_nodes')) : null,
         check(t('ip_limit_pause'), cb('ip_limit_pause')))),
-      panel(t('s_route'), null, null, h('div', {class: 'stack'}, check(t('block_ads'), cb('block_ads')), check(t('ai_group'), cb('ai_group')), check(t('block_bt'), cb('block_bt'))))),
+      panel(t('s_route'), null, null, h('div', {class: 'stack'}, check(t('tcp_first'), cb('tcp_first')), check(t('block_ads'), cb('block_ads')), check(t('ai_group'), cb('ai_group')), check(t('block_bt'), cb('block_bt'))))),
     panel(t('routing_custom'), null, null, tip(t('routing_tip')), h('div', {class: 'grid g-3'},
       ...[['custom_direct', 'c_direct', 'ok'], ['custom_proxy', 'c_proxy', 'info'], ['custom_block', 'c_block', 'bad']].map(([k, lk, c]) => {
         const ta = bind(k, h('textarea', {rows: '6', spellcheck: 'false', class: 'mono', placeholder: k === 'custom_direct' ? 'example.cn\nmy-nas.com' : k === 'custom_proxy' ? 'example.com' : 'ads.example.com'}));

@@ -148,7 +148,7 @@ def valid_rate(v):
 
 def billed(n, rate):
     """Bytes as they count against quotas on a server with this multiplier."""
-    return n if rate == 1 else min(int(n * rate + 0.5), (1 << 62))
+    return n if rate == 1 else max(0, min(int(n * rate + 0.5), (1 << 62)))
 
 
 def limit_mbps(u):
@@ -205,6 +205,7 @@ DEFAULTS = {
     # Server tuning
     'tune_network': True,
     'ipv6_nodes': False,        # also list IPv6 entries (when the server has public IPv6)
+    'tcp_first': False,         # line order in subscriptions: Reality (TCP) before Hysteria 2 / TUIC (UDP)
     # Telegram alerts
     'tg_token': '',
     'tg_chat': '',

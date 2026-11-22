@@ -606,6 +606,19 @@ class Ops(Base):
         self.assertIn('[2001:db8::5]', subscription.share_link(n[3]))
         self.assertIn('IPv6', subscription.render('clash', db.settings(), u, 'https://x')[1])
 
+    def test_tcp_first_puts_reality_ahead_on_every_server(self):
+        u = db.user(db.add_user('a'))
+        db.set_settings(tuic_enabled=True, public_ipv6='2001:db8::5', ipv6_nodes=True)
+        self.assertEqual([n['type'] for n in subscription.nodes(db.settings(), u)][:3], ['hy2', 'reality', 'tuic'])
+        self.assertEqual(web.validate_settings({'tcp_first': 'on'}, db.settings()), {'tcp_first': True})
+        db.set_settings(tcp_first=True)
+        n = subscription.nodes(db.settings(), u)
+        self.assertEqual([(x['type'], x['name'].endswith('IPv6')) for x in n],
+                         [('reality', False), ('hy2', False), ('tuic', False),
+                          ('reality', True), ('hy2', True), ('tuic', True)])
+        text = subscription.render('clash', db.settings(), u, 'https://x')[1]
+        self.assertLess(text.index(n[0]['name']), text.index(n[1]['name']))
+
     def test_switches_from_json_mean_what_they_say(self):
         for v, want in ((True, True), (False, False), (1, True), (0, False), ('false', False), ('0', False),
                         ('off', False), ('true', True), ('on', True)):
