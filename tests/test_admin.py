@@ -97,6 +97,20 @@ class Limits(tu.Base):
 
 
 class Routing(tu.Base):
+    def test_google_play_cn_names_go_through_the_proxy(self):
+        # services.googleapis.cn must not fall into the cn list's catch-all .cn rule (Google Play stalls direct)
+        plan = rules.route_plan(db.settings())
+        for d in ('googleapis.cn', 'google.cn'):
+            self.assertLess(plan.index(('suffix', d, 'proxy')), plan.index(('set', 'cn', 'cn')))
+        uid = db.add_user('gp', 0)
+        s = dict(db.settings(), public_host='203.0.113.5')
+        clash = subscription.clash(s, db.user(uid), 'https://x')
+        self.assertIn('DOMAIN-SUFFIX,googleapis.cn,%s' % subscription.names(s)['proxy'], clash['rules'])
+        # the owner's own direct list still wins
+        plan = rules.route_plan(dict(db.settings(), custom_direct=['google.cn']))
+        self.assertIn(('suffix', 'google.cn', 'direct'), plan)
+        self.assertNotIn(('suffix', 'google.cn', 'proxy'), plan)
+
     def test_custom_lists_in_every_format(self):
         s = dict(db.settings(), custom_direct=['corp.example'], custom_proxy=['news.example'],
                  custom_block=['tracker.example', 'corp.example'])

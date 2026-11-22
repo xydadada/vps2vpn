@@ -35,6 +35,9 @@ SETS = {
 
 # Small, high-value lists kept inline (no download needed).
 AD_EXCEPTIONS_PROXY = ['googletagmanager.com', 'google-analytics.com', 'app-measurement.com', 'clarity.ms']
+# Google's .cn names (Play Store downloads use services.googleapis.cn) resolve to Google servers that are blocked
+# in China; the cn list's catch-all "DOMAIN-SUFFIX,cn" would send them direct and Google Play stalls.
+FOREIGN_CN_PROXY = ['googleapis.cn', 'google.cn', 'g.cn']
 CN_DIRECT_SUFFIX = ['steamcontent.com', 'steamserver.net', 'dl.steam.clngaa.com', 'download.windowsupdate.com',
                     'dl.delivery.mp.microsoft.com', 'officecdn.microsoft.com.edgesuite.net', 'mzstatic.com',
                     'cdn-apple.com', 'epicgames-download1-1251447533.file.myqcloud.com']
@@ -67,6 +70,10 @@ def route_plan(s):
             if d not in seen:
                 seen.add(d)
                 plan.append(('suffix', d, 'proxy'))
+    for d in FOREIGN_CN_PROXY:
+        if d not in seen:
+            seen.add(d)
+            plan.append(('suffix', d, 'proxy'))
     if s.get('ai_group', True):
         for d in AI_SUFFIX:
             if d not in seen:

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.25
+
+- Google Play downloads no longer stall in China. Its `services.googleapis.cn` (and `google.cn`) matched the China list's catch-all ".cn goes direct" rule, but these names lead to Google servers that are blocked there; they now go through the proxy in every app format. An owner's own direct list still wins.
+
 ## 0.2.24
 
 - The member page and the plain subscription page have an "Open in the vps2vpn app" button: one tap opens the vps2vpn client and imports the subscription, with a download link under it. On Windows it is the main button, and the app lists now recommend the vps2vpn client (macOS still recommends Clash Verge Rev).
