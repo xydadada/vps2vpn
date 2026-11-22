@@ -2560,6 +2560,10 @@ class ClientSync(unittest.TestCase):
                          ['vps2vpn-1.0.9-windows-amd64-setup.exe', 'vps2vpn-1.0.9-windows-amd64-setup.exe.sig'])
         with open(os.path.join(self.dir, 'vps2vpn-1.0.9-windows-amd64-setup.exe'), 'rb') as f:
             self.assertEqual(f.read(), b'setup' * 100)
+        if os.name == 'posix':      # private like the rest of the data folder (the VPS acceptance check)
+            for n in ('vps2vpn-1.0.9-windows-amd64-setup.exe', 'vps2vpn-1.0.9-windows-amd64-setup.exe.sig',
+                      clientsync.MANIFEST):
+                self.assertEqual(os.stat(os.path.join(self.dir, n)).st_mode & 0o777, 0o600, n)
         self.assertIsNone(self._sync())              # nothing newer: nothing downloaded again
         # Members are now offered it, signed.
         with mock.patch.object(paths, 'CLIENT', self.dir):

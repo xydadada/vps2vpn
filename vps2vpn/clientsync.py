@@ -166,10 +166,7 @@ def _manifest(folder):
 
 
 def _save_manifest(folder, names):
-    tmp = os.path.join(folder, MANIFEST + '.tmp')
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(sorted(set(names)), f)
-    os.replace(tmp, os.path.join(folder, MANIFEST))
+    paths.write_atomic(os.path.join(folder, MANIFEST), json.dumps(sorted(set(names))))
 
 
 def held_version(folder):
@@ -235,9 +232,9 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
                 os.unlink(tmp)
                 log('client update %s: the signature does not match; not published' % name)
                 continue
-            with open(os.path.join(folder, name + '.sig.tmp'), 'w', encoding='ascii') as f:
-                f.write(sig.strip() + '\n')
-            os.chmod(tmp, 0o644)
+            # Private like the rest of /var/lib/vps2vpn (the panel serves them as root): 0600, not the umask's.
+            paths.write_atomic(os.path.join(folder, name + '.sig.tmp'), sig.strip() + '\n')
+            os.chmod(tmp, 0o600)
             os.replace(tmp, os.path.join(folder, name))
             os.replace(os.path.join(folder, name + '.sig.tmp'), os.path.join(folder, name + '.sig'))
             published.append(name)
