@@ -91,8 +91,10 @@ def enforce(now=None):
                         log('disabled %s (expired; main server account)' % u['name'])
                         pass_changed = True
                     continue
-                if u['expire_after_days'] and not u['expire_at'] and u['used_up'] + u['used_down'] > 0:
-                    # "N days from first use": the clock starts with the first traffic
+                if u['expire_after_days'] and not u['expire_at'] and (u['used_up'] + u['used_down'] > 0
+                                                                      or u['last_seen']):
+                    # "N days from first use": the clock starts with the first traffic. last_seen counts too:
+                    # on a x0 server traffic is recorded as 0 bytes, but the visit still sets last_seen.
                     days = u['expire_after_days']
                     u['expire_at'] = int(t_now + days * 86400)
                     u['expire_after_days'] = 0

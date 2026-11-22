@@ -45,6 +45,14 @@ class Limits(tu.Base):
         self.assertAlmostEqual(u['expire_at'], time.time() + 30 * 86400, delta=60)
         self.assertEqual(u['expire_after_days'], 0)
 
+    def test_lifetime_starts_on_a_free_server_too(self):
+        # On a x0 server the traffic is billed as 0 bytes; the first visit still starts the clock.
+        uid = db.add_user('free', 0, expire_after_days=7)
+        db.add_traffic(uid, db.billed(5000, 0), db.billed(90000, 0))
+        self.assertEqual(db.user(uid)['used_up'] + db.user(uid)['used_down'], 0)
+        jobs.enforce()
+        self.assertAlmostEqual(db.user(uid)['expire_at'], time.time() + 7 * 86400, delta=60)
+
     def test_device_limit_pause_and_release(self):
         uid = db.add_user('busy', 0, max_ips=2)
         other = db.add_user('fine', 0, max_ips=2)

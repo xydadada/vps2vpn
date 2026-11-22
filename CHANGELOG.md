@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.22
+
+- An account set to expire "N days from first use" now starts its clock on a x0 (free) server too. There its traffic is billed as 0 bytes, so before, the clock never started and the account never expired.
+
 ## 0.2.21
 
 The member page, walked through as a member would use it, plus two clearer labels in the owner panel.
