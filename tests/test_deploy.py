@@ -501,7 +501,7 @@ class Installer(unittest.TestCase):
         rc, out = self.sh('snapshot_before_upgrade; echo "SNAP=$SNAPSHOT"')
         live.close()
         self.assertEqual(rc, 0, out)
-        self.assertIn('to roll back this upgrade later:  sudo bash ', out)
+        self.assertRegex(out, r'to roll back this upgrade later[^\n]*:  sudo bash \S+/restore\.sh')
         kept = sorted(os.listdir(snaps))
         self.assertEqual(len(kept), 3, kept)
         self.assertNotIn('20200101-000000-v0.1', kept)
