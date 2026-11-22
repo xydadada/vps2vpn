@@ -13,6 +13,12 @@ The rest of the owner-panel walkthrough.
 **Overview**
 - The 30-day traffic figure adds up the same 30 days as the chart (it counted 31), and is labelled as user traffic as billed. A ×2 server counts double there, unlike "this server, this month".
 
+**One-click deploy and installer**
+- `deploy-mac.command` and `install.sh` are executable in the repository, so double-clicking the macOS deployer from the GitHub zip no longer says "no access privileges".
+- Double-clicking `deploy-windows.bat` inside the zip (without extracting) says to extract the zip first, instead of asking to install Python.
+- `install.sh` explains its three common errors (not root, download failed, panel failed to start) in Chinese too, with what to do next.
+- README: extract first, the simplest firewall rule, and how phones import from the Windows window.
+
 ## 0.2.19
 
 A walk through the owner's panel, as an owner running it for family and friends would use it.
