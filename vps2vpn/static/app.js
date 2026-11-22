@@ -444,6 +444,13 @@ async function renderShell() {
   if (!S.popBound) {
     S.popBound = true;
     window.addEventListener('popstate', () => {
+      if (S.backPending) {                                     // our own step back after closing the drawer
+        S.backPending = false;
+        if (S.hashAfterBack) { const hv = S.hashAfterBack; S.hashAfterBack = ''; try { history.pushState(null, '', '#' + hv); } catch (e) { /* no history */ } }
+        if (S.pushAfterBack && $('drawer') && $('drawer').classList.contains('on')) { S.pushAfterBack = false; drawerPush(); }
+        return;
+      }
+      if (S.drawerHist) { closeDrawer(true); return; }       // Back with the drawer open: just close it
       const v = location.hash.slice(1) || 'home';
       if ($('view') && v !== S.view && VIEWS.some(x => x[0] === v)) { closeDrawer(); go(v, 'none'); }
     });
@@ -454,7 +461,8 @@ async function renderShell() {
 }
 
 function go(v, how) {
-  if (how !== 'none' && location.hash !== '#' + v) {
+  if (how !== 'none' && S.backPending) S.hashAfterBack = v;        // a drawer close is stepping back: set it after
+  else if (how !== 'none' && location.hash !== '#' + v) {
     try { history[how === 'replace' || S.view === v ? 'replaceState' : 'pushState'](null, '', '#' + v); } catch (e) { /* sandboxed: no history */ }
   }
   S.view = v;
@@ -795,8 +803,20 @@ function batchAdd() {
   openDrawer(); setTimeout(() => f.prefix.focus(), 250);
 }
 
-function openDrawer() { $('drawer').classList.add('on'); $('drawer').setAttribute('aria-hidden', 'false'); $('scrim').classList.add('on'); document.body.style.overflow = 'hidden'; }
-function closeDrawer() { S.drawerSeq++; const d = $('drawer'); if (!d) return; d.classList.remove('on'); d.setAttribute('aria-hidden', 'true'); $('scrim').classList.remove('on'); document.body.style.overflow = ''; }
+// The drawer is one step in the history, so a phone's Back button closes it instead of leaving the page.
+function drawerPush() {
+  if (S.drawerHist) return;
+  if (S.backPending) { S.pushAfterBack = true; return; }      // a close is still being undone: push after it
+  try { history.pushState({drawer: 1}, '', location.hash); S.drawerHist = true; } catch (e) { /* no history */ }
+}
+function openDrawer() { drawerPush(); $('drawer').classList.add('on'); $('drawer').setAttribute('aria-hidden', 'false'); $('scrim').classList.add('on'); document.body.style.overflow = 'hidden'; }
+function closeDrawer(fromBack) {
+  S.pushAfterBack = false;
+  if (S.drawerHist) {
+    S.drawerHist = false;
+    if (!fromBack) { S.backPending = true; try { history.back(); } catch (e) { S.backPending = false; } }
+  }
+  S.drawerSeq++; const d = $('drawer'); if (!d) return; d.classList.remove('on'); d.setAttribute('aria-hidden', 'true'); $('scrim').classList.remove('on'); document.body.style.overflow = ''; }
 
 async function openUser(id, first) {
   const u = S.data.users.find(x => x.id === id); if (!u) return;

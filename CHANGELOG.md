@@ -3,6 +3,8 @@
 ## 0.2.23
 
 - The owner panel keeps the open page in the address (for example `#users`). Reloading, or reopening the panel on a phone, stays on that page instead of jumping back to the overview, and the browser's or phone's Back button returns to the previous page instead of leaving the panel.
+- On a phone, Back closes an open account panel first, instead of switching pages under it.
+- The one-click deployer writes its install log in Chinese (the server's install steps in English and Chinese). The deploy page opens this log by itself when something fails, so you can see which step stopped without reading English.
 
 ## 0.2.22
 
