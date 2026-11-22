@@ -42,6 +42,10 @@ class Refused(ValueError):
     """A rule said no; the message is shown to the person."""
 
 
+class CodeRefused(Refused):
+    """The invite code itself is wrong, used up or expired: the only sign-up error that counts as a guess."""
+
+
 def new_code():
     pick = lambda: ''.join(secrets.choice(ALPHABET) for _ in range(5))
     return pick() + '-' + pick()
@@ -281,7 +285,7 @@ def register(code, name, password, now=None):
     now = time.time() if now is None else now
     inv = db.invite_by_code(normalize(code))
     if not inv or not _live(inv, now):
-        raise Refused('invite code is wrong, used up or expired')
+        raise CodeRefused('invite code is wrong, used up or expired')
     name = check_name(name)
     password = check_password(password)
     fields = {'login_hash': secure.hash_password(password)}
@@ -314,6 +318,18 @@ def register(code, name, password, now=None):
     return uid
 
 
+def void_code(inv, now=None):
+    """A usable member code that would be refused now: the inviter has no room left to honour it."""
+    now = time.time() if now is None else now
+    if inv['kind'] != 'member' or not _live(inv, now):
+        return False
+    inviter = db.user(inv['inviter'])
+    if not inviter or not _active(inviter, now):
+        return True
+    room = _room(inviter, now, keep=0.0)
+    return room is not None and room < -1e-9
+
+
 def invite_view(inv, names, register_url=''):
     now = time.time()
     status = 'expired' if inv['status'] == 'unused' and inv['valid_until'] <= now else inv['status']
@@ -324,7 +340,8 @@ def invite_view(inv, names, register_url=''):
             'expire_days': inv['expire_days'], 'reset_day': inv['reset_day'], 'valid_until': inv['valid_until'],
             'created_at': inv['created_at'], 'note': inv['note'], 'servers': db.server_list(inv),
             'speed_mbps': inv['speed_mbps'] or 0, 'throttle_mbps': inv['throttle_mbps'] or 0,
-            'register_url': register_url + '#register=' + inv['code'] if register_url else ''}
+            'register_url': register_url + '#register=' + inv['code'] if register_url else '',
+            'void': void_code(inv, now)}
 
 
 @_serial
