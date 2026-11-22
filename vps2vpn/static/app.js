@@ -100,7 +100,7 @@ const T = {
     shaper_off: '这台服务器的内核不支持按账号限速（容器 VPS 常见），限速设置暂不生效；流量用完的账号仍会降速而不是停用，但速度不受限。',
     rate: '倍率', rate_tip: '这台服务器的流量按几倍计入额度（机场常见做法，如 ×2 表示 1 GB 记 2 GB；0 = 不计）', rate_this: '本机倍率', rate_set: '设置倍率',
     inv_limits: '限速与服务器', exp_mode: '到期方式', exp_never: '永久有效', exp_date: '指定日期', exp_first: '首次使用后开始计时', exp_days: '从今天起多少天',
-    exp_first_days: '首次使用后多少天到期', exp_waiting: '首用后', r_devices: '设备超限', dev_limit: '设备上限', no_match: '没有符合条件的使用者。',
+    exp_first_days: '首次使用后多少天到期', exp_waiting: '首用后', r_devices: '设备超限', dev_limit: '设备上限', reset_on: '每月 {d} 号重置', srv_pause: '暂停这台（上面的账号全部停用）', srv_resume: '恢复这台', no_match: '没有符合条件的使用者。',
     sec: '登录安全', totp: '两步验证（2FA）', totp_tip: '开启后，登录时除了密码，还要输入手机验证器 App（Google Authenticator、Microsoft Authenticator、1Password 等）里的 6 位数字。就算密码泄露也登不进来。',
     totp_on: '已开启', totp_off: '未开启', totp_enable: '开启两步验证', totp_disable: '关闭两步验证', totp_scan: '① 用验证器 App 扫码（或手动输入下面的密钥）　② 填入 App 显示的 6 位数字',
     totp_code: '6 位验证码', totp_need: '请输入验证器 App 里的 6 位数字', totp_pw: '输入管理员密码确认关闭', totp_confirm: '确认开启',
@@ -209,7 +209,7 @@ const T = {
     shaper_off: 'This server\'s kernel cannot limit single accounts (common on container VPSes): speed limits do not apply here yet. Accounts that use up their quota still slow down instead of stopping, but at full speed.',
     rate: 'Rate', rate_tip: 'How many times this server\'s traffic counts against quotas (as airports do: x2 means 1 GB counts as 2 GB; 0 = free)', rate_this: 'This server\'s rate', rate_set: 'Set rate',
     inv_limits: 'Speed and servers', exp_mode: 'Expiry', exp_never: 'Never expires', exp_date: 'On a date', exp_first: 'Counted from first use', exp_days: 'Days from today',
-    exp_first_days: 'Days after first use', exp_waiting: 'after first use', r_devices: 'too many devices', dev_limit: 'Device limit', no_match: 'No users match.',
+    exp_first_days: 'Days after first use', exp_waiting: 'after first use', r_devices: 'too many devices', dev_limit: 'Device limit', reset_on: 'resets on day {d}', srv_pause: 'Pause this server (every account on it is switched off)', srv_resume: 'Resume this server', no_match: 'No users match.',
     sec: 'Sign-in security', totp: 'Two-step verification (2FA)', totp_tip: 'When on, signing in also needs the 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password …). A leaked password alone is not enough.',
     totp_on: 'on', totp_off: 'off', totp_enable: 'Turn on 2FA', totp_disable: 'Turn off 2FA', totp_scan: '1) Scan with your authenticator app (or type the key below)  2) Enter the 6-digit code it shows',
     totp_code: '6-digit code', totp_need: 'Enter the 6-digit code from your authenticator app', totp_pw: 'Enter the admin password to turn it off', totp_confirm: 'Turn on',
@@ -719,7 +719,7 @@ function renderUsersList() {
             : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
       h('div', {class: 'c-use'}, usageBar(u)),
       h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
-        [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null,
+        [u.reset_day ? t('reset_on').replace('{d}', u.reset_day) : '', u.max_ips ? t('dev_limit') + ' ' + u.max_ips : ''].filter(Boolean).join(' · ')) : null,
         u.limit_mbps ? h('div', {class: 'cell-sub'}, (u.throttled ? t('slowed') : t('limited_now')) + ' ' + u.limit_mbps + ' Mbps') : null),
       h('div', {class: 'c-state'}, userState(u)),
       h('div', {class: 'row-acts c-acts'}, h('button', {class: 'btn sm primary', onclick: () => openUser(u.id)}, icon('link'), t('share')),
@@ -1013,8 +1013,8 @@ async function drawServers() {
       h('button', {class: 'btn sm', title: t('rate_set'), onclick: async e => { const b = e.currentTarget;
         const v = await modal({title: t('rate_set') + ' · ' + x.name, text: t('rate_tip'), input: true, type: 'number', value: String(x.rate), confirm: t('save')});
         if (v != null) act(b, x.id, 'save', {rate: Number(v)}); }}, '×' + x.rate),
-      h('button', {class: 'btn sm', onclick: e => act(e.currentTarget, x.id, 'sync')}, icon('refresh')),
-      h('button', {class: 'btn sm', onclick: e => act(e.currentTarget, x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
+      h('button', {class: 'btn sm', title: t('sync_now'), 'aria-label': t('sync_now'), onclick: e => act(e.currentTarget, x.id, 'sync')}, icon('refresh')),
+      h('button', {class: 'btn sm', title: t(x.enabled ? 'srv_pause' : 'srv_resume'), 'aria-label': t(x.enabled ? 'srv_pause' : 'srv_resume'), onclick: e => act(e.currentTarget, x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
       h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x')))));
   const sm = S.data.server_month || {}, used = (sm.rx || 0) + (sm.tx || 0), cap = s.server_cap_gb * GB;
   const capIn = h('input', {type: 'number', min: '0', value: s.server_cap_gb || 0}), dayIn = h('input', {type: 'number', min: '1', max: '28', value: s.server_reset_day || 1});
