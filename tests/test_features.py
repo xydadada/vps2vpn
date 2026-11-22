@@ -2192,6 +2192,90 @@ class AirportFeatures(tu.Base):
             self.assertTrue(doctor.speed_limits()[0]['ok'])
 
 
+
+class AirportFeaturesAudit6(tu.Base):
+    """Speed limits, slow-down and rates after the sixth outside audit."""
+
+    @mock.patch('vps2vpn.shaper.active', return_value=True)
+    def test_hysteria_only_server_keeps_limited_accounts_and_does_not_slow_them(self, _active):
+        slow = mk('capped', 1, speed_mbps=20, throttle_mbps=2)
+        db.update_user(slow['id'], used_down=2 << 30)
+        db.set_settings(reality_enabled=False, tuic_enabled=False, hy2_enabled=True)
+        s = db.settings()
+        users = cores.active_users()
+        self.assertIn('u%d' % slow['id'], cores.hysteria_config(s, users)['auth']['userpass'])
+        self.assertIn('hy2', {n['type'] for n in subscription.nodes(s, db.user(slow['id']))})
+        # slowing down cannot hold here: the account stops for its quota as on a server without limits
+        with mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        got = db.user(slow['id'])
+        self.assertEqual((got['enabled'], got['throttled'], got['disabled_reason']), (0, 0, 'quota'))
+
+    @mock.patch('vps2vpn.shaper.active', return_value=True)
+    def test_accounts_off_by_hand_are_not_slowed_and_slow_alerts_come_back(self, _active):
+        off = mk('off', 1, throttle_mbps=5)
+        db.update_user(off['id'], used_down=2 << 30, enabled=0, disabled_reason='manual')
+        u = mk('topped', 1, throttle_mbps=5)
+        db.update_user(u['id'], used_down=2 << 30)
+        with mock.patch.object(jobs.notify, 'send') as send:
+            jobs.enforce()
+        self.assertEqual((db.user(off['id'])['throttled'], db.user(off['id'])['disabled_reason']), (0, 'manual'))
+        keys = [c[1].get('key') for c in send.call_args_list if c[1].get('key', '').startswith('slow-')]
+        self.assertEqual(len(keys), 1)
+        self.assertTrue(keys[0].startswith('slow-%d-' % u['id']))
+        # more quota, used up again in the same period: a new key, so the owner is told again
+        db.update_user(u['id'], quota_gb=3)
+        with mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        self.assertEqual(db.user(u['id'])['throttled'], 0)
+        db.update_user(u['id'], used_down=4 << 30)
+        with mock.patch.object(jobs.notify, 'send') as send:
+            jobs.enforce()
+        again = [c[1].get('key') for c in send.call_args_list if c[1].get('key', '').startswith('slow-')]
+        self.assertTrue(again and again[0] != keys[0], (keys, again))
+        with mock.patch.object(jobs.notify, 'forget') as forget:
+            jobs.forget_quota_alerts(u['id'])
+        self.assertIn(mock.call('slow-%d-' % u['id']), forget.call_args_list)
+
+    def test_member_invitee_gets_the_inviters_limits_of_now(self):
+        code = members.create_invite('admin', 50, 7, servers=['main', 'abcd1234'])['code']
+        uid = members.register(code, 'parent', 'goodpassword1')
+        sub = members.create_invite('member', 5, 7, inviter=uid)['code']
+        db.update_user(uid, servers='main', speed_mbps=8)          # the admin tightens the inviter later
+        kid = db.user(members.register(sub, 'kid', 'goodpassword2'))
+        self.assertEqual((kid['servers'], kid['speed_mbps']), ('main', 8.0))
+
+    def test_billing_never_overflows_and_renamed_servers_keep_their_rate(self):
+        self.assertEqual(db.billed(1 << 62, 100), 1 << 62)
+        u = mk('ann', 10)
+        info = cluster.public_info(dict(db.settings(), public_host='198.51.100.5', node_name='Tokyo'))
+        servers = [{'id': sid, 'name': 'Tokyo', 'url': 'https://198.51.100.5:1/x', 'key': 'k', 'pin': '',
+                    'info': info, 'idmap': {str(u['id']): 42}, 'rate': 2} for sid in ('abcd1234', 'ffff0000')]
+        db.set_settings(servers=servers)
+        groups = {n['group'] for n in subscription.nodes(db.settings(), db.user(u['id']))}
+        self.assertIn('Tokyo ×2', groups)
+        self.assertIn('Tokyo ffff ×2', groups)
+
+    def test_landing_page_shows_zero_quota_and_the_app_in_english(self):
+        u = mk('giver', 0)
+        db.update_user(u['id'], quota_gb=5)
+        with mock.patch.object(members, 'effective_quota', return_value=0):
+            page = web.landing_page(dict(db.settings(), language='en'), db.user(u['id']), 'https://h:1/s/x')
+        self.assertIn('0 B', page)
+        self.assertNotIn('>1 B<', page)
+        self.assertIn('vps2vpn app', page)
+        self.assertNotIn('vps2vpn 客户端', page)
+
+    def test_shaper_quantum_and_bad_speeds(self):
+        from vps2vpn import shaper
+        text = shaper.script('eth0', {5: 1})
+        self.assertNotIn('r2q', text)
+        self.assertIn('htb rate 1000kbit ceil 1000kbit quantum 1514', text)
+        self.assertIn('htb rate 100gbit quantum 200000', text)
+        with mock.patch.object(shaper, 'available', return_value=False):
+            self.assertTrue(shaper.apply({5: float('nan'), 6: float('inf'), 7: True}))   # nothing valid to hold
+
+
 if __name__ == '__main__':
     unittest.main()
 

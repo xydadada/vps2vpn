@@ -186,7 +186,7 @@ async function renderHome() {
       // on Windows the big button opens our own app and imports in one click
       onWindows() && im.vps2vpn ? h('div', {class: 'stack', style: 'margin:10px 0 0;gap:6px'},
         h('a', {class: 'btn primary', href: im.vps2vpn}, icon('bolt'), t('open_app')),
-        h('a', {class: 'muted', style: 'font-size:12px', href: 'https://github.com/xydadada/vps2vpn-client/releases/latest', target: '_blank', rel: 'noopener noreferrer'}, t('get_app'))) : null,
+        h('a', {class: 'muted', style: 'font-size:12px', href: (me.client && ((me.client.files || {}).windows || me.client.url)) || 'https://github.com/xydadada/vps2vpn-client/releases/latest', target: '_blank', rel: 'noopener noreferrer'}, t('get_app'))) : null,
       h('div', {class: 'act-grid', style: 'margin:10px 0'}, h('button', {class: onWindows() && im.vps2vpn ? 'btn' : 'btn primary', onclick: () => copyText(me.sub_url, t('copy'))}, icon('copy'), t('copy')),
         h('a', {class: 'btn', href: im.clash}, 'Clash / FlClash')),
       h('div', {class: 'import-grid'},

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.26
+
+Fixes from a sixth outside review of the speed-limit and slow-down features.
+
+**Speed limits and slowing down**
+- On a server with only Hysteria 2 on, a limited account is no longer locked out: Hysteria cannot hold one account to a speed, so there it keeps Hysteria at full speed (as its subscription already assumed), and "slow down instead of stopping" stops the account as on a server without limits.
+- An account switched off by hand or paused for its devices is not "slowed down" (and not reported as such) when its quota runs out; it stays off.
+- After a top-up that is used up again in the same period, the owner is told about the slow-down again, and a manual traffic reset re-arms that message too.
+- The kernel's speed classes get a fixed quantum, so 1-5 Mbps slow-downs no longer make the kernel warn and burst; an empty ingress queue left by a failed attempt is cleaned up instead of blocking every later one. Odd values (not a finite number) are ignored.
+
+**Accounts and invites**
+- Someone who registers with a member's invite code gets the servers and speed limits the member has now, not the ones when the code was made, so tightening a member also covers codes already handed out.
+- Invite trees more than two levels deep settle in one quota check.
+
+**Subscriptions and pages**
+- A joined server whose name clashes with another keeps its "x2" rate in the group name.
+- The member page counts only the servers this member may use and that are not paused.
+- "No vps2vpn app yet?" on the member page downloads the installer from this panel when it holds one (GitHub is often out of reach before the app is installed).
+- The plain subscription page shows 0 B, not 1 B, for an account that shared all its quota, and names the app in English on an English panel.
+
+**Tests**
+- The installer's snapshot test matches its bilingual rollback hint (CI had failed since 0.2.23).
+
 ## 0.2.25
 
 - Google Play downloads no longer stall in China. Its `services.googleapis.cn` (and `google.cn`) matched the China list's catch-all ".cn goes direct" rule, but these names lead to Google servers that are blocked there; they now go through the proxy in every app format. An owner's own direct list still wins.

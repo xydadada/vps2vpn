@@ -63,6 +63,7 @@ def forget_quota_alerts(uid):
     """After a manual traffic reset the account may warn and pause again in the same period."""
     notify.forget('q80-%d-' % uid)
     notify.forget('off-%d-quota' % uid)
+    notify.forget('slow-%d-' % uid)
 
 
 def enforce(now=None):
@@ -76,10 +77,12 @@ def enforce(now=None):
         try:
             # Slowing down only means something where speed limits hold; elsewhere (a container without tc)
             # "slow down instead of stopping" would be "never stop", so such accounts stop as before.
-            can_slow = shaper.active()
+            st = db.settings()
+            can_slow = shaper.active() and bool(st['reality_enabled'] or st.get('tuic_enabled'))
         except Exception:
             can_slow = False
-        for _pass in range(2):
+        # Usually one pass; quota shared down an invite tree may need one more per level (stops when nothing moves).
+        for _pass in range(10):
             pass_changed = False
             for u in users:
                 if u['remote_id']:
@@ -114,7 +117,10 @@ def enforce(now=None):
                 reason = over_limit(u, now, quota)
                 # Quota used up on an account that slows down instead of stopping: it keeps working, held to
                 # its slow-down speed until the next reset or more quota.
-                slow = int(reason == 'quota' and (u['throttle_mbps'] or 0) > 0 and can_slow)
+                # only an account that runs, or one stopped for its quota: switched off by hand or paused for
+                # devices it stays so (and is not reported as slowed down)
+                slow = int(reason == 'quota' and (u['throttle_mbps'] or 0) > 0 and can_slow
+                           and (u['enabled'] or u['disabled_reason'] == 'quota'))
                 if slow:
                     reason = ''
                 if slow != (u['throttled'] or 0):
@@ -125,8 +131,9 @@ def enforce(now=None):
                         log('slowed %s down to %g Mbps (quota used up)' % (u['name'], u['throttle_mbps']))
                         notify.send('%s used up %g GB: slowed down to %g Mbps / %s 流量已用完，已降速到 %g Mbps' % (
                             u['name'], quota, u['throttle_mbps'], u['name'], u['throttle_mbps']),
-                            key='slow-%d-%s' % (u['id'], u['last_reset'] or 'total'), every=40 * 86400)
-                    else:
+                            # with the quota: a top-up that runs out again in the same period is told again
+                            key='slow-%d-%s-%g' % (u['id'], u['last_reset'] or 'total', quota), every=40 * 86400)
+                    elif not reason:
                         log('full speed again: %s' % u['name'])
                 if device_due:
                     if reason:

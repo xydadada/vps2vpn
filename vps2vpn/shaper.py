@@ -11,6 +11,7 @@ Hysteria 2 has no per-user outbound settings, so a limited account is simply not
 limits work here: the apps switch to Reality or TUIC. Where the kernel lacks these modules (OpenVZ/LXC and
 other containers), limits are reported as unavailable and nothing is changed.
 """
+import math
 import shutil
 import subprocess
 import threading
@@ -100,13 +101,13 @@ def script(dev, limits):
     """tc -batch text for {uid: mbps} (both directions); '' when there is nothing to limit."""
     lines = []
     for d in (dev, IFB):
-        lines += ['qdisc add dev %s root handle %s: htb default 1 r2q 1000' % (d, _ROOT),
-                  'class add dev %s parent %s: classid %s:1 htb rate 100gbit' % (d, _ROOT, _ROOT),
+        lines += ['qdisc add dev %s root handle %s: htb default 1' % (d, _ROOT),
+                  'class add dev %s parent %s: classid %s:1 htb rate 100gbit quantum 200000' % (d, _ROOT, _ROOT),
                   'qdisc add dev %s parent %s:1 fq_codel' % (d, _ROOT)]
         for i, uid in enumerate(sorted(limits), 16):
             rate = _kbit(limits[uid])
             minor = '%x' % i
-            lines += ['class add dev %s parent %s: classid %s:%s htb rate %dkbit ceil %dkbit'
+            lines += ['class add dev %s parent %s: classid %s:%s htb rate %dkbit ceil %dkbit quantum 1514'
                       % (d, _ROOT, _ROOT, minor, rate, rate),
                       'qdisc add dev %s parent %s:%s fq_codel' % (d, _ROOT, minor),
                       'filter add dev %s parent %s: protocol all prio 1 handle 0x%x fw classid %s:%s'
@@ -130,7 +131,8 @@ def _teardown(dev):
     if dev and _ours(dev):
         _run(['tc', 'qdisc', 'del', 'dev', dev, 'root'])
         code, out = _run(['tc', 'filter', 'show', 'dev', dev, 'parent', 'ffff:'])
-        if code == 0 and IFB in out:
+        # ours: redirects to our ifb device, or empty (a batch that failed between the qdisc and its filters)
+        if code == 0 and (IFB in out or not out.strip()):
             _run(['tc', 'qdisc', 'del', 'dev', dev, 'ingress'])
     _run(['ip', 'link', 'del', IFB])
     _run(['nft', 'delete', 'table', 'inet', NFT_TABLE])
@@ -143,7 +145,8 @@ def _ours(dev):
 
 def apply(limits, log=print, force=False):
     """Make the kernel hold each {uid: mbps} account to its speed. Idempotent; returns True when it holds."""
-    limits = {int(k): float(v) for k, v in limits.items() if v and float(v) > 0}
+    limits = {int(k): float(v) for k, v in limits.items()
+              if type(v) in (int, float) and math.isfinite(v) and 0 < v <= 100000}
     if not available():
         return not limits
     with _lock:

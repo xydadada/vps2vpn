@@ -84,7 +84,7 @@ def nodes(s, u):
             continue                       # not synced yet: the next sync (within a minute) adds it
         label = rate_label(x['name'], cluster.server_rate(x))
         if label in seen_labels:
-            label = '%s %s' % (x['name'], x['id'][:4])
+            label = rate_label('%s %s' % (x['name'], x['id'][:4]), cluster.server_rate(x))
         while label in seen_labels:
             label += '_'
         seen_labels.add(label)

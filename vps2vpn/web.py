@@ -1853,7 +1853,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'invites': [members.invite_view(i, names, reg) for i in db.invites(u['id'])][:20] if s['member_invites'] else [],
             'invitees': [{'name': x['name'], 'quota_gb': x['invite_deduct'], 'active': members.deducting(x)}
                          for x in invitees.get(u['id'], ())],
-            'online': online, 'servers': 1 + len([x for x in s['servers'] if x.get('info')]),
+            'online': online,
+            'servers': int(db.allowed_on(u, db.MAIN_SERVER)) + len([x for x in s['servers'] if x.get('info')
+                                                                     and x.get('enabled', True) and db.allowed_on(u, x['id'])]),
             'speed_mbps': u['speed_mbps'] or 0, 'throttle_mbps': u['throttle_mbps'] or 0, 'throttled': bool(u['throttled']),
             'limit_mbps': db.limit_mbps(u),
             'ai': ai_view(aicheck.latest()),
@@ -2282,12 +2284,12 @@ def landing_page(s, u, sub_url):
     e = html.escape
     used = u['used_up'] + u['used_down']
     # what this account may really use: plus top-ups, minus what it shared with invitees (as on the member page)
-    q_bytes = max(1, members.effective_quota(u) * (1 << 30)) if u['quota_gb'] else 0
-    quota = fmt_bytes(q_bytes) if q_bytes else t['unlimited']
-    pct = min(100, int(used * 100 / q_bytes)) if q_bytes else 0
+    q_bytes = max(0, members.effective_quota(u) * (1 << 30)) if u['quota_gb'] else None
+    quota = fmt_bytes(q_bytes) if q_bytes is not None else t['unlimited']
+    pct = (min(100, int(used * 100 / q_bytes)) if q_bytes else 100) if q_bytes is not None else 0
     exp = time.strftime('%Y-%m-%d', time.localtime(u['expire_at'])) if u['expire_at'] else t['never']
     links = subscription.import_links(sub_url, s['node_name'] or 'vps2vpn')
-    btns = [('vps2vpn 客户端', links['vps2vpn']), ('Clash Verge / FlClash', links['clash']), ('Shadowrocket', links['shadowrocket']),
+    btns = [('vps2vpn app' if s['language'] == 'en' else 'vps2vpn 客户端', links['vps2vpn']), ('Clash Verge / FlClash', links['clash']), ('Shadowrocket', links['shadowrocket']),
             ('Stash', links['stash']), ('Karing', links['karing']),
             ('Hiddify', links['hiddify']), ('sing-box', links['singbox']), ('v2rayNG', links['v2rayng'])]
     apps = ''.join('<li><b>%s</b>：%s</li>' % (e(a), e(b)) for a, b in t['apps'])

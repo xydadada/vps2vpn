@@ -148,7 +148,7 @@ def valid_rate(v):
 
 def billed(n, rate):
     """Bytes as they count against quotas on a server with this multiplier."""
-    return n if rate == 1 else int(n * rate + 0.5)
+    return n if rate == 1 else min(int(n * rate + 0.5), (1 << 62))
 
 
 def limit_mbps(u):

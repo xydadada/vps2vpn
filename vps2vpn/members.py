@@ -307,7 +307,8 @@ def register(code, name, password, now=None):
             fields['expire_after_days'] = inviter['expire_after_days']
     else:
         expire_at = int(now + inv['expire_days'] * 86400) if inv['expire_days'] else 0
-    fields.update(servers=inv['servers'] or '', speed_mbps=inv['speed_mbps'] or 0, throttle_mbps=inv['throttle_mbps'] or 0)
+    src = inviter if inv['kind'] == 'member' else inv     # the inviter's limits now: the admin may have tightened them
+    fields.update(servers=src['servers'] or '', speed_mbps=src['speed_mbps'] or 0, throttle_mbps=src['throttle_mbps'] or 0)
     note = 'invite %s' % inv['code'] + (' · ' + inv['note'] if inv['note'] else '')
     with db.transaction():
         uid = db.add_user(name, inv['quota_gb'], expire_at, inv['reset_day'], note[:200], **fields)

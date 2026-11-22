@@ -135,7 +135,9 @@ def hysteria_config(s, users):
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
     stream_win, conn_win = _quic_windows()
     # Hysteria cannot hold one account to a speed: limited accounts use Reality and TUIC instead (see shaper).
-    held = limits(users)
+    # Only where Reality or TUIC can carry them: on a Hysteria-only server they keep Hysteria (unlimited), as the
+    # subscription assumes (subscription.server_nodes).
+    held = limits(users) if (s['reality_enabled'] or s.get('tuic_enabled')) else {}
     # With no enabled user the core must still start, but nobody may log in: one random placeholder account.
     userpass = {email(u): u['hy2_pass'] for u in users if u['id'] not in held} or {'u0': _placeholder(s)}
     conf = {
