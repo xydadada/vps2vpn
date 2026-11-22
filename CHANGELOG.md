@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.24
+
+- The member page and the plain subscription page have an "Open in the vps2vpn app" button: one tap opens the vps2vpn client and imports the subscription, with a download link under it. On Windows it is the main button, and the app lists now recommend the vps2vpn client (macOS still recommends Clash Verge Rev).
+- The one-click deploy page uses the same look as the owner panel. On Windows, when no VPN app is found, it offers the vps2vpn client. The "clear chosen key" button only shows once a key is chosen, and the tab title is in Chinese.
+
 ## 0.2.23
 
 - The owner panel keeps the open page in the address (for example `#users`). Reloading, or reopening the panel on a phone, stays on that page instead of jumping back to the overview, and the browser's or phone's Back button returns to the previous page instead of leaving the panel.
