@@ -427,6 +427,12 @@ def ssh_base(job):
     return cmd, env
 
 
+def probe(cmd, env, user):
+    sudo = '' if user == 'root' else 'sudo -n '
+    return subprocess.run(cmd + ['echo connected; uname -sm; %sid -u' % sudo], capture_output=True, text=True,
+                          errors='replace', env=env, timeout=60, stdin=subprocess.DEVNULL)
+
+
 def run_job(job):
     log = job['log']
 
@@ -436,13 +442,24 @@ def run_job(job):
     try:
         if not shutil.which('ssh'):
             raise RuntimeError('这台电脑没有 ssh 程序。Windows 10/11：设置 > 应用 > 可选功能 > 添加“OpenSSH 客户端”。')
+        if job.get('password') and not ssh_supports_askpass():
+            raise RuntimeError('这台电脑的 ssh 版本太旧，不支持自动填密码。请用密钥文件，'
+                               '或在「设置 > 应用 > 可选功能」里更新 OpenSSH 客户端。')
         cmd, env = ssh_base(job)
-        sudo = '' if job['user'] == 'root' else 'sudo -n '
         say('connecting to %s ...' % job['host'])
-        r = subprocess.run(cmd + ['echo connected; uname -sm; %sid -u' % sudo], capture_output=True, text=True,
-                           env=env, timeout=60, stdin=subprocess.DEVNULL)
+        r = probe(cmd, env, job['user'])
+        wanted = login_as_hint(r.stdout + r.stderr)
+        if 'connected' not in r.stdout and wanted and wanted != job['user']:
+            # e.g. AWS images: root's key only prints 'Please login as the user "ubuntu" rather than "root"'
+            say('the server asks to log in as "%s" instead of "%s"; trying that ...' % (wanted, job['user']))
+            job['user'] = wanted
+            cmd = cmd[:-1] + ['%s@%s' % (wanted, job['host'])]
+            r = probe(cmd, env, wanted)
         if r.returncode != 0 or 'connected' not in r.stdout:
             msg = (r.stderr or r.stdout).strip()[-400:]
+            wanted = login_as_hint(r.stdout + r.stderr)
+            if wanted and wanted != job['user']:
+                msg += '\n-> 服务器要求用 %s 登录：把用户名改成 %s 再试。' % (wanted, wanted)
             if 'Permission denied' in msg:
                 msg += '\n-> 密钥或密码不对，或者用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）。'
             if 'timed out' in msg or 'Connection refused' in msg:
@@ -612,7 +629,10 @@ function fallbackCopy(t,done){const a=document.createElement('textarea');a.value
 function copy(t,b){const done=()=>{if(!b.dataset.orig)b.dataset.orig=b.textContent;b.textContent='已复制';clearTimeout(b._tm);b._tm=setTimeout(()=>{b.textContent=b.dataset.orig},1500)};
  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done).catch(()=>fallbackCopy(t,done))}else fallbackCopy(t,done)}
 function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceChildren();
- box.append(el('h2',{text:'✅ 部署成功'}));
+ const blocked=(s.ports||[]).filter(c=>!c.ok).length;
+ // "success" only when it can actually be used; a blocked firewall is the most common beginner trap
+ box.append(el('h2',{text:blocked?'⚠️ 装好了，还差一步':'✅ 部署成功'}));
+ if(blocked)box.append(el('p',{class:'bad',text:'现在还连不上：有 '+blocked+' 个端口被云服务商的防火墙挡住了。按下面「防火墙检查」里说的放行，再点「我已放行，再检查一次」。'}));
  if(r.main){const m={ok:['ok','已加入主服务器 '+r.main+'：你在那边的订阅里会自动多出这台服务器（在 Clash / Shadowrocket 里点一下“更新订阅”）。'],
   totp:['bad','主服务器开了两步验证，没法自动加入。请打开主服务器面板 → 多服务器 → 粘贴下面的加入码。'],
   wait:['bad',s.join_msg],fail:['bad','没能自动加入主服务器：'+(s.join_msg||'')+' 你可以打开主服务器面板 → 多服务器 → 粘贴下面的加入码。']}[s.join]||['mute',''];
@@ -620,7 +640,7 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
   if(s.join==='totp'||s.join==='fail'){const b=el('button',{class:'ghost',text:'复制加入码'});b.onclick=()=>copy(r.join_code,b);box.append(b)}}
  if(r.ai&&r.ai.summary){const a=r.ai;box.append(el('div',{class:'note'},el('b',{text:'AI 可用性（从服务器测试）：'+a.summary}),
   el('div',{class:'mute',text:[a.place,a.org,a.kind].filter(Boolean).join(' · ')}),...(a.advice||[]).map(x=>el('div',{text:x})),
-  el('div',{class:'mute',style:'font-size:13px',text:'结果只作参考；以后可以在管理面板 → 系统里重新检测。'})))}
+  el('div',{class:'mute',style:'font-size:13px',text:'结果只作参考；以后可以在管理面板 →「体检与维护」里重新检测。'})))}
  const subUrl=safeHref(r.sub_url,['http','https']);
  if(!r.main&&subUrl){box.append(el('h3',{text:'① 把 VPN 装到你的设备上'}));
   const c=s.client;
@@ -652,7 +672,11 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
   const cp=el('button',{class:'ghost',text:'复制'});cp.onclick=()=>copy(pw,cp);const cu=el('button',{class:'ghost',text:'打开'});cu.onclick=()=>window.open(panelUrl,'_blank','noopener,noreferrer');
   box.append(el('div',{class:'kv'},el('span',{class:'mute',text:'地址'}),el('code',{text:panelUrl}),cu,el('span',{class:'mute',text:'用户名'}),el('code',{text:r.admin_user||'admin'}),el('span'),
    el('span',{class:'mute',text:'密码'}),pv,pw?el('div',{class:'btns'},show,cp):el('span')));
-  box.append(el('p',{class:'mute',style:'font-size:13px',text:'浏览器若提示“不安全”，点“高级 → 继续访问”即可（照样加密）。这些信息已保存在：'+(s.record_file||'')}))}}
+  box.append(el('p',{class:'mute',style:'font-size:13px',text:'浏览器若提示“不安全”，点“高级 → 继续访问”即可（照样加密）。这些信息已保存在：'+(s.record_file||'')}))}
+ box.append(el('h3',{text:'接下来可以做什么'}),el('div',{class:'mute'},...NEXT_STEPS.map(t=>el('div',{text:'· '+t}))))}
+const NEXT_STEPS=['给家人朋友开账号：打开管理面板 →「使用者」添加，每人有自己的订阅链接、流量和到期时间。',
+ '再加一台服务器：买好后再运行一次部署工具，在「这台服务器怎么用」里选「加到 … 下面」，大家的订阅里会自动多出它。',
+ '以后想升级：再运行一次部署工具、填同一个 IP 就行，账号和设置都会保留。'];
 $('#go').onclick=async()=>{
  const host=$('#host').value.trim();if(!host)return alert('先填服务器 IP');if(!key&&!$('#pw').value)return alert('拖入密钥文件，或者填密码');
  $('#go').disabled=true;$('#out').hidden=false;$('#res').hidden=true;$('#status').textContent='正在部署，大约 1-3 分钟，别关这个页面…';
@@ -738,6 +762,9 @@ class H(http.server.BaseHTTPRequestHandler):
         if err:
             return self.reply(400, json.dumps({'error': err}))
         if d.get('key'):
+            bad = key_problem(str(d['key']))
+            if bad:
+                return self.reply(400, json.dumps({'error': bad}))
             job['key'] = write_key(str(d['key']))
         elif d.get('pw'):
             job['password'] = str(d['pw'])
@@ -758,6 +785,56 @@ def new_job(host, user, port, main=''):
     if main and (main == host or not load_record(main).get('admin_password')):
         return None, '选的主服务器不能用（不能加到它自己下面，或者没保存它的面板密码）'
     return {'state': 'running', 'log': [], 'host': host, 'user': user, 'port': int(port), 'main': main}, ''
+
+
+def key_problem(text):
+    """A plain-language reason this file cannot be used as an ssh key, or '' if it looks usable."""
+    t = text.replace('\r\n', '\n').strip()
+    if t.startswith('PuTTY-User-Key-File'):
+        return ('这是 PuTTY 格式的密钥（.ppk），ssh 不能直接用。请用 PuTTYgen 打开它，'
+                '点「Conversions > Export OpenSSH key」另存一份，再把新文件拖进来。')
+    if 'PRIVATE KEY' not in t:
+        if re.match(r'(ssh-(rsa|ed25519|dss)|ecdsa-sha2-\S+|sk-\S+) AAAA', t):
+            return '这是公钥（通常是 .pub 文件），要用的是同名但不带 .pub 的私钥文件。'
+        return '这不是私钥文件（里面没有 PRIVATE KEY）。请选 .pem / .key / id_ed25519 这类文件。'
+    if 'ENCRYPTED' in t.split('\n\n')[0] or encrypted_openssh_key(t):
+        return ('这个私钥设了密码保护，部署工具不能替你输入。请换一个没有密码的密钥，'
+                '或者先复制一份密钥，再在命令行运行  ssh-keygen -p -f 复制出的文件  去掉密码后拖入那份。')
+    return ''
+
+
+def encrypted_openssh_key(text):
+    """True for a new-format OpenSSH key protected by a passphrase (its cipher name is not 'none')."""
+    m = re.search(r'-----BEGIN OPENSSH PRIVATE KEY-----(.*?)-----END', text, re.S)
+    if not m:
+        return False
+    try:
+        raw = base64.b64decode(''.join(m.group(1).split()))
+    except ValueError:
+        return False
+    magic = b'openssh-key-v1\x00'
+    if not raw.startswith(magic) or len(raw) < len(magic) + 4:
+        return False
+    n = int.from_bytes(raw[len(magic):len(magic) + 4], 'big')
+    return raw[len(magic) + 4:len(magic) + 4 + n] != b'none'
+
+
+def login_as_hint(text):
+    """Cloud images (AWS and others) answer root logins with 'Please login as the user "ubuntu" ...'."""
+    m = re.search(r'login as the user "?([a-z_][a-z0-9_.-]{0,31})"? rather than', text or '')
+    return m.group(1) if m else ''
+
+
+def ssh_supports_askpass():
+    """Windows' built-in OpenSSH before 8.4 ignores SSH_ASKPASS_REQUIRE, so it cannot be handed a password."""
+    if os.name != 'nt':
+        return True
+    try:
+        v = subprocess.run(['ssh', '-V'], capture_output=True, text=True, errors='replace', timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    m = re.search(r'OpenSSH_for_Windows_(\d+)\.(\d+)', (v.stderr or '') + (v.stdout or ''))
+    return not m or (int(m.group(1)), int(m.group(2))) >= (8, 4)
 
 
 def write_key(text):
@@ -798,8 +875,12 @@ def headless(argv):
     if err:
         sys.exit(err)
     job['no_import'] = True         # tests never touch the VPN app on this computer
-    with open(keyfile, encoding='utf-8') as f:
-        job['key'] = write_key(f.read())
+    with open(keyfile, encoding='utf-8', errors='replace') as f:
+        text = f.read()
+    bad = key_problem(text)
+    if bad:
+        sys.exit(bad)
+    job['key'] = write_key(text)
     run_job(job)
     print('\n'.join(job['log']))
     v = page_view(job)

@@ -36,7 +36,8 @@ if [ -n "$KEY" ] && [ -d "$KEY" ]; then
   for n in id_ed25519 id_ecdsa id_rsa; do [ -f "$KEY/$n" ] && KEY="$KEY/$n" && break; done
 fi
 USER_DEF=root
-case "$KEY" in *[Ll]ightsail*|*.pem) USER_DEF=ubuntu ;; esac
+# AWS key names only: a .pem from another cloud usually logs in as root
+case "$(basename "$KEY")" in *[Ll]ightsail*|*[Ee][Cc]2*|*[Aa][Ww][Ss]*) USER_DEF=ubuntu ;; esac
 read -r -p "登录用户名 / login user [$USER_DEF]: " LUSER
 LUSER=${LUSER:-$USER_DEF}
 if ! [[ "$LUSER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]]; then
@@ -59,7 +60,19 @@ OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsF
       -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
 if [ -n "$KEY" ]; then
   [ -f "$KEY" ] || { echo "找不到这个文件 / file not found: $KEY"; exit 1; }
-  cp "$KEY" "$WORK/key" && chmod 600 "$WORK/key"
+  # a key saved on Windows may have CRLF line ends, which ssh rejects
+  (umask 077; tr -d '\r' < "$KEY" > "$WORK/key") || exit 1
+  if head -c 20 "$WORK/key" | grep -q '^PuTTY-User-Key-File'; then
+    echo "这是 PuTTY 格式的密钥（.ppk），ssh 不能直接用：先用 puttygen 转成 OpenSSH 格式再拖进来。"
+    echo "This is a PuTTY .ppk key; convert it first:  puttygen key.ppk -O private-openssh -o key.pem"; exit 1
+  fi
+  if ! grep -q 'PRIVATE KEY' "$WORK/key"; then
+    echo "这不是私钥文件（.pub 是公钥，要用不带 .pub 的那个）/ not a private key file"; exit 1
+  fi
+  if grep -q 'ENCRYPTED' "$WORK/key" || ! ssh-keygen -y -P '' -f "$WORK/key" >/dev/null 2>&1; then
+    echo "这个私钥设了密码保护或已损坏：换一个没有密码的密钥，或先复制一份再运行  ssh-keygen -p -f 复制出的文件  去掉密码。"
+    echo "This key is passphrase-protected (or damaged); use a key without a passphrase."; exit 1
+  fi
   OPTS+=(-i "$WORK/key" -o IdentitiesOnly=yes)
 fi
 RUNAS=""; [ "$LUSER" = root ] || RUNAS="sudo -n env "
@@ -71,9 +84,14 @@ REMOTE='set -e; T=$(mktemp -d); trap '\''rm -rf "$T"'\'' EXIT; base64 -d > "$T/v
 ssh "${OPTS[@]}" -- "$LUSER@$HOST" "$REMOTE" < "$WORK/v.b64" | tee "$WORK/log" | grep -v '^V2V_RESULT:'
 rc=${PIPESTATUS[0]}
 B64=$(grep '^V2V_RESULT:' "$WORK/log" | tail -1 | cut -d: -f2 | tr -d '\r\n ')
+# cloud images (AWS and others) answer root logins with: Please login as the user "ubuntu" rather than ...
+WANT=$(grep -o 'login as the user "[a-z_][a-z0-9_.-]*"' "$WORK/log" | head -1 | cut -d'"' -f2)
 rm -f "$WORK/log"
 if [ "$rc" -ne 0 ] || [ -z "$B64" ]; then
   say "出错了 / something went wrong (exit $rc)."
+  if [ -n "$WANT" ] && [ "$WANT" != "$LUSER" ]; then
+    echo "-> 服务器要求用 $WANT 登录：重新运行，用户名填 $WANT / log in as \"$WANT\" instead of \"$LUSER\""
+  fi
   echo "Permission denied -> 密钥/密码/用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）"
   echo "timed out / refused -> IP 写错、服务器没开机，或云厂商防火墙没放行 SSH 端口"
   echo "Host key verification failed -> 服务器身份和上次不一样。刚重装过系统就运行  ssh-keygen -R '$KH_NAME' -f '$KH'  再部署；没重装过先别继续，可能有人冒充你的服务器"
@@ -113,7 +131,7 @@ SUB=$(read_json "$MERGED" .sub_url)
 V2V_LINK=$(read_json "$MERGED" .links.vps2vpn)
 CLASH=$(read_json "$MERGED" .links.clash)
 PW=$(read_json "$MERGED" .admin_password)
-say "部署成功 / Done!"
+say "服务器上装好了 / Installed on the server"
 AI=$(read_json "$MERGED" .ai.summary)
 if [ -n "$AI" ]; then
   echo
@@ -135,6 +153,9 @@ done < <(read_json "$MERGED" '.checks.filter(function(c){return c[0]=="tcp"}).ma
 if [ "$BAD" = 1 ]; then
   echo "  有端口被云服务商的防火墙挡住了。$(read_json "$MERGED" .cloud_firewall)"
   echo "  请到云服务商控制台的「防火墙 / 安全组」放行：协议选「全部」，来源 0.0.0.0/0。"
+  echo "  ⚠️ 还差这一步：放行之前 VPN 连不上。放行后在 VPN 软件里导入下面的订阅链接即可，不用重新部署。"
+else
+  echo "  全部通了 ✓"
 fi
 
 APP=""
@@ -149,10 +170,15 @@ if [ -n "$APP" ] && safe_url "$IMPORT_URL" '^(vps2vpn|clash|hiddify|sing-box)://
   echo "分流规则（国内网站直连、国外走代理）已经写好，不用自己设置。"
   open -- "$IMPORT_URL" 2>/dev/null
 elif safe_url "$SUB" '^https?://[^/]+'; then
-  echo "没检测到 VPN 软件（或者防火墙还没放行）。推荐装免费开源的 Clash Verge Rev："
-  echo "  https://github.com/clash-verge-rev/clash-verge-rev/releases/latest"
-  echo "装好后把下面的订阅链接粘贴到软件的「新建订阅」里。浏览器里会打开订阅页，手机可以扫上面的二维码导入。"
+  if [ -n "$APP" ]; then
+    echo "检测到你电脑上的 $APP。防火墙放行后，把下面的订阅链接粘贴到它的「新建订阅 / 导入」里。"
+  else
+    echo "没检测到 VPN 软件。推荐装免费开源的 Clash Verge Rev："
+    echo "  https://github.com/clash-verge-rev/clash-verge-rev/releases/latest"
+    echo "装好后把下面的订阅链接粘贴到软件的「新建订阅」里。"
+  fi
   echo "  $SUB"
+  echo "浏览器里会打开订阅页，手机扫那个页面上的二维码就能导入。"
   # xdg-open takes no options (it rejects "--"); safe_url already refused a URL starting with "-".
   # Only a Mac's open: on Debian "open" is openvt.
   if [ "$(uname)" = Darwin ]; then open -- "$SUB" 2>/dev/null
@@ -167,4 +193,9 @@ else
   echo "用户名和密码：用你自己设置的那个。"
 fi
 echo "浏览器若提示「不安全」，点「高级 → 继续访问」即可（照样加密）。"
+echo
+echo "接下来可以做什么："
+echo "  · 给家人朋友开账号：打开管理面板 →「使用者」添加，每人有自己的订阅链接、流量和到期时间。"
+echo "  · 再加一台服务器：在管理面板 →「多服务器」里操作（Mac 上装了 Python 时，部署工具可以自动加入）。"
+echo "  · 以后想升级：再运行一次这个部署工具、填同一个 IP 就行，账号和设置都会保留。"
 read -r -p "按回车关闭 / press Enter to close" _

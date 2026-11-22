@@ -89,11 +89,46 @@ function Find-KeyFile([string]$p) {
   return $p
 }
 
+function Get-KeyProblem([string]$text) {
+  # Same checks and wording as key_problem() in deploy.py.
+  $t = $text.Trim()
+  if ($t.StartsWith('PuTTY-User-Key-File')) {
+    return '这是 PuTTY 格式的密钥（.ppk），ssh 不能直接用。请用 PuTTYgen 打开它，点「Conversions > Export OpenSSH key」另存一份，再把新文件拖进来。'
+  }
+  if ($t -notmatch 'PRIVATE KEY') {
+    if ($t -match '^(ssh-(rsa|ed25519|dss)|ecdsa-sha2-\S+|sk-\S+) AAAA') { return '这是公钥（通常是 .pub 文件），要用的是同名但不带 .pub 的私钥文件。' }
+    return '这不是私钥文件（里面没有 PRIVATE KEY）。请选 .pem / .key / id_ed25519 这类文件。'
+  }
+  $encrypted = ($t -split "`n`n")[0] -match 'ENCRYPTED'
+  if (-not $encrypted -and $t -match '(?s)-----BEGIN OPENSSH PRIVATE KEY-----(.*?)-----END') {
+    try {
+      $raw = [Convert]::FromBase64String(($Matches[1] -replace '\s', ''))
+      $magic = [Text.Encoding]::ASCII.GetBytes("openssh-key-v1`0")
+      if ($raw.Length -ge $magic.Length + 4 -and [Text.Encoding]::ASCII.GetString($raw, 0, $magic.Length) -eq "openssh-key-v1`0") {
+        $n = ([int]$raw[15] -shl 24) -bor ([int]$raw[16] -shl 16) -bor ([int]$raw[17] -shl 8) -bor [int]$raw[18]
+        $n = [Math]::Max(0, [Math]::Min($n, $raw.Length - 19))
+        $encrypted = [Text.Encoding]::ASCII.GetString($raw, 19, $n) -ne 'none'
+      }
+    } catch { }
+  }
+  if ($encrypted) {
+    return '这个私钥设了密码保护，部署工具不能替你输入。请换一个没有密码的密钥，或者先复制一份密钥，再在命令行运行  ssh-keygen -p -f 复制出的文件  去掉密码后拖入那份。'
+  }
+  return ''
+}
+
+function Get-LoginAsUser([string]$text) {
+  # Cloud images (AWS and others) answer root logins with: Please login as the user "ubuntu" rather than the user "root".
+  if ($text -cmatch 'login as the user "?([a-z_][a-z0-9_.-]{0,31})"? rather than') { return $Matches[1] }
+  return ''
+}
+
 function Copy-Key([string]$src) {
   # Windows ssh refuses keys that other accounts can read, so use a private copy (deleted afterwards).
   $dst = Join-Path $Work 'key'
   $text = [IO.File]::ReadAllText($src) -replace "`r`n", "`n"
-  if ($text -notmatch 'PRIVATE KEY') { throw '这不是私钥文件（里面没有 PRIVATE KEY）。请拖入 .pem / .key / id_ed25519 这类文件。' }
+  $bad = Get-KeyProblem $text
+  if ($bad) { throw $bad }
   if (-not $text.EndsWith("`n")) { $text += "`n" }
   [IO.File]::WriteAllText($dst, $text, (New-Object Text.UTF8Encoding($false)))
   Restrict-Path $dst
@@ -197,6 +232,9 @@ function Get-Result([string]$text) {
 }
 
 function Explain([string]$msg) {
+  if ($msg -cmatch 'login as the user "?([a-z_][a-z0-9_.-]{0,31})"? rather than' -and $Matches[1] -ne $User) {
+    $msg += "`r`n→ 服务器要求用 $($Matches[1]) 登录：把用户名改成 $($Matches[1]) 再试。"
+  }
   if ($msg -match 'Permission denied') { $msg += "`r`n→ 密钥或密码不对，或者用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）。" }
   if ($msg -match 'timed out|Connection refused|No route') { $msg += "`r`n→ 连不上服务器的 $Port 端口：检查 IP 是否写对、服务器是否开机、云厂商防火墙是否放行 SSH。" }
   if ($msg -match 'Could not resolve') { $msg += "`r`n→ 服务器地址写错了。" }
@@ -469,11 +507,23 @@ if ($Headless) {
     if ($Main -and -not (Get-Record $Main).admin_password) { throw "no saved login for main server $Main" }
     $kp = $null
     if ($Key) { $kf = Find-KeyFile $Key; if (-not $kf) { throw 'no key file found' }; $kp = Copy-Key $kf }
-    elseif ($Pass) { Set-AskPass $Pass }
+    elseif ($Pass) {
+      if (-not (Test-SshVersionForPassword)) { throw 'this ssh is too old to be given a password (needs OpenSSH 8.4+); use -Key' }
+      Set-AskPass $Pass
+    }
     $a = Get-SshArgs $kp ([bool]$Pass)
     $j = Start-Ssh $a (& $ProbeCmd) $null
     $j.Proc.WaitForExit()
     $t = Read-New $j
+    $w = Get-LoginAsUser $t
+    if ($t -notmatch 'connected' -and $w -and $w -ne $User) {
+      Write-Output "the server asks to log in as `"$w`" instead of `"$User`"; trying that ..."
+      $User = $w
+      $a = Get-SshArgs $kp ([bool]$Pass)
+      $j = Start-Ssh $a (& $ProbeCmd) $null
+      $j.Proc.WaitForExit()
+      $t = Read-New $j
+    }
     if ($t -notmatch 'connected') { throw (Explain $t.Trim()) }
     Write-Output $t.Trim()
     $j = Start-Ssh $a (& $InstallCmd) (New-Payload)
@@ -576,7 +626,8 @@ function Take-Key([string]$p) {
   if (-not $k) { [Windows.Forms.MessageBox]::Show('这里面没找到私钥文件。请拖入 .pem / .key / id_ed25519 文件。') | Out-Null; return }
   $script:keyFile = $k
   $drop.Text = '已选：' + (Split-Path -Leaf $k) + '    （点这里可以换一个）'
-  if ($k -match 'Lightsail|\.pem$' -and $tbUser.Text -eq 'root') { $tbUser.Text = 'ubuntu' }
+  # AWS key names only (a .pem from another cloud usually logs in as root); a wrong guess is corrected on connect
+  if ((Split-Path -Leaf $k) -match 'Lightsail|ec2|aws' -and $tbUser.Text -eq 'root') { $tbUser.Text = 'ubuntu' }
 }
 $onEnter = { param($s, $e) if ($e.Data.GetDataPresent([Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = 'Copy' } }
 $onDrop = { param($s, $e) $f = $e.Data.GetData([Windows.Forms.DataFormats]::FileDrop); if ($f) { Take-Key $f[0] } }
@@ -601,8 +652,13 @@ function Copy-Text([string]$t, $b) { [Windows.Forms.Clipboard]::SetText($t); $b.
 function Fill-Result($p, $st) {
   $p.SuspendLayout(); $p.Controls.Clear()
   $rec = $st.Rec; $y = 10
-  $h = Add-Label '✅ 部署成功' $y 34 $green $p
+  # "success" only when it can actually be used; a blocked firewall is the most common beginner trap
+  $blocked = @($st.Ports | Where-Object { -not $_.ok }).Count
+  $h = Add-Label $(if ($blocked) { '⚠️ 装好了，还差一步' } else { '✅ 部署成功' }) $y 34 $(if ($blocked) { $red } else { $green }) $p
   $h.Font = New-Object Drawing.Font('Microsoft YaHei UI', 15, [Drawing.FontStyle]::Bold); $y += 42
+  if ($blocked) {
+    Add-Label "现在还连不上：有 $blocked 个端口被云服务商的防火墙挡住了。按下面「防火墙检查」里说的放行，再点「我已放行，再检查一次」。" $y 44 $red $p | Out-Null; $y += 48
+  }
   if ($rec['main']) {
     $msg = switch ($st.Join) {
       'ok' { "已加入主服务器 $($rec['main'])：你在那边的订阅里会自动多出这台服务器（在 VPN 软件里点一下「更新订阅」）。" }
@@ -620,7 +676,7 @@ function Fill-Result($p, $st) {
     $where = @($ai.place, $ai.org, $ai.kind) | Where-Object { $_ }
     $txt = "AI 可用性（从服务器测试）：$($ai.summary)`n" + ($where -join ' · ')
     if ($ai.advice) { $txt += "`n" + (@($ai.advice) -join "`n") }
-    $txt += "`n结果只作参考；以后可以在管理面板 → 系统里重新检测。"
+    $txt += "`n结果只作参考；以后可以在管理面板 →「体检与维护」里重新检测。"
     Add-Label $txt $y 96 $null $p | Out-Null; $y += 100
   }
   if (-not $rec['main'] -and $rec['sub_url']) {
@@ -675,14 +731,19 @@ function Fill-Result($p, $st) {
   } $true))
   if ($rec['admin_password']) { $p.Controls.Add((New-Btn '复制密码' 148 $y 120 { Copy-Text "$($script:st.Rec['admin_password'])" $this })) }
   $p.Controls.Add((New-Btn '打开保存的文件夹' 276 $y 160 { Start-Process explorer.exe -ArgumentList "`"$Records`"" })); $y += 44
-  Add-Label ('浏览器若提示「不安全」，点「高级 → 继续访问」即可（照样加密）。登录信息保存在：' + $st.File) $y 44 $gray $p | Out-Null
+  Add-Label ('浏览器若提示「不安全」，点「高级 → 继续访问」即可（照样加密）。登录信息保存在：' + $st.File) $y 44 $gray $p | Out-Null; $y += 48
+  $t = Add-Label '接下来可以做什么' $y 24 $null $p; $t.Font = New-Object Drawing.Font('Microsoft YaHei UI', 10, [Drawing.FontStyle]::Bold); $y += 28
+  $next = "· 给家人朋友开账号：打开管理面板 →「使用者」添加，每人有自己的订阅链接、流量和到期时间。`n" +
+    "· 再加一台服务器：买好后再运行一次部署工具，在「这台服务器怎么用」里选「加到 … 下面」，大家的订阅里会自动多出它。`n" +
+    '· 以后想升级：再运行一次部署工具、填同一个 IP 就行，账号和设置都会保留。'
+  Add-Label $next $y 110 $gray $p | Out-Null
   $p.ResumeLayout()
 }
 
 function Show-Result($st) {
   $script:st = $st
   $rf = New-Object Windows.Forms.Form -Property @{
-    Text = 'vps2vpn 部署成功'; Width = 600; Height = 740; StartPosition = 'CenterScreen'; Font = $font
+    Text = 'vps2vpn 部署结果'; Width = 600; Height = 740; StartPosition = 'CenterScreen'; Font = $font
     FormBorderStyle = 'FixedSingle'; MaximizeBox = $false; BackColor = [Drawing.Color]::White
   }
   $script:resPanel = New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoScroll = $true }
@@ -724,6 +785,14 @@ $timer.Add_Tick({
   if (-not $j.Proc.HasExited) { return }
   $t = Read-New $j; $j.Text += $t
   if ($script:stage -eq 'probe') {
+    $w = Get-LoginAsUser $j.Text
+    if ($j.Text -notmatch 'connected' -and $w -and $w -ne $script:User) {
+      Say "服务器要求用 $w 登录（不是 $($script:User)），正在换成 $w 重试…`n"
+      $script:User = $w; $tbUser.Text = $w
+      $script:sshArgs = @($script:sshArgs[0..($script:sshArgs.Count - 2)]) + @("$w@$($script:Server)")
+      $script:job = Start-Ssh $script:sshArgs (& $ProbeCmd) $null
+      return
+    }
     if ($j.Text -notmatch 'connected') { Finish $false (Explain $j.Text.Trim()); return }
     Say ($j.Text.Trim() + "`n正在上传并安装（1-3 分钟，请别关窗口）…`n")
     $status.Text = '正在安装，大约 1-3 分钟…'
