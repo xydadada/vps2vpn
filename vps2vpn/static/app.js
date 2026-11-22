@@ -13,7 +13,7 @@ const T = {
     nav_main: '运营', nav_infra: '服务器', nav_home: '总览', nav_users: '使用者', nav_settings: '协议与设置', nav_system: '体检与维护',
     k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
     live: '实时吞吐', down: '下行', up_: '上行', online: '在线连接', users_n: '个使用者', active_n: '正常', paused_n: '停用',
-    month: '近 30 天流量', today: '今日', avg7: '近 7 日均', server: '服务器', mem: '内存', load: '负载', uptime: '已运行',
+    month: '近 30 天用户流量（计入额度）', today: '今日', avg7: '近 7 日均', server: '服务器', mem: '内存', load: '负载', uptime: '已运行',
     live_chart: '实时流量', live_sub: '服务器网卡 · 3 分钟', days_chart: '每日流量', days_sub: '近 30 天，全部使用者',
     services: '服务状态', running: '运行中', stopped: '未运行', off: '已关闭', unknown: '未知',
     users: '使用者', add_user: '添加使用者', name: '名字', quota: '流量上限 (GB，0 = 不限)', expire: '到期日（留空 = 永久）',
@@ -82,7 +82,7 @@ const T = {
     change_port: '换一个端口', change_port_q: name => `把「${name}」换到一个新的随机端口？`,
     change_port_tip: '端口被运营商封了或限速时用。换好后大家的软件更新一下订阅就能用（vps2vpn 客户端和多数软件 12 小时内会自动更新）。云服务器自带防火墙的（如 AWS Lightsail、阿里云、腾讯云），还要在云控制台放行新端口。',
     port_changed: p => `已换到端口 ${p}。请让大家更新订阅；云防火墙也要放行这个端口。`,
-    managed_by: '本机正被主服务器管理：', server_month: '本机本月流量', cap: '每月流量上限 (GB，0 = 不限)', cap_day: '每月几号开始计算', cap_tip: '很多 VPS 按月限流量。到 80% 和 100% 时 Telegram 提醒你（不会自动断网）。',
+    managed_by: '本机正被主服务器管理：', remote_user: '这个账号来自主服务器「{m}」，由它统一管理：流量、到期、暂停和删除都请在主服务器的面板里改，这里改了也会被下次同步覆盖。', server_month: '本机本月流量', cap: '每月流量上限 (GB，0 = 不限)', cap_day: '每月几号开始计算', cap_tip: '很多 VPS 按月限流量。到 80% 和 100% 时 Telegram 提醒你（不会自动断网）。',
     monitor: '网站连通监控', monitor_tip: '服务器每 5 分钟自己访问一次这些网站，记录能不能打开、多快。用户说「某某网站打不开」时先看这里。', run_now: '立即检测',
     region: '网站看到的地区', chatgpt_ok: 'ChatGPT 可用', chatgpt_bad: 'ChatGPT 不支持这个地区', speed: '服务器下载速度', uptime24: '24 小时可用率', median: '中位延迟',
     no_data: '还没有数据，点「立即检测」。', monitor_enabled: '自动监控（每 5 分钟）',
@@ -122,7 +122,7 @@ const T = {
     nav_main: 'Operate', nav_infra: 'Server', nav_home: 'Overview', nav_users: 'Users', nav_settings: 'Protocols & settings', nav_system: 'Health & upkeep',
     k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
     live: 'Live throughput', down: 'down', up_: 'up', online: 'Online', users_n: 'users', active_n: 'active', paused_n: 'paused',
-    month: 'Traffic, 30 days', today: 'Today', avg7: '7-day avg', server: 'Server', mem: 'Memory', load: 'Load', uptime: 'Uptime',
+    month: 'User traffic, 30 days (as billed)', today: 'Today', avg7: '7-day avg', server: 'Server', mem: 'Memory', load: 'Load', uptime: 'Uptime',
     live_chart: 'Live traffic', live_sub: 'Server network · 3 minutes', days_chart: 'Daily traffic', days_sub: 'Last 30 days, all users',
     services: 'Services', running: 'running', stopped: 'stopped', off: 'off', unknown: 'unknown',
     users: 'Users', add_user: 'Add user', name: 'Name', quota: 'Quota (GB, 0 = unlimited)', expire: 'Expires (empty = never)',
@@ -191,7 +191,7 @@ const T = {
     change_port: 'Use another port', change_port_q: name => `Move ${name} to a new random port?`,
     change_port_tip: 'For a port that gets blocked or throttled. Everyone then updates the subscription (most apps do it within 12 hours). With a cloud firewall (AWS Lightsail, Alibaba, Tencent...) also open the new port there.',
     port_changed: p => `Moved to port ${p}. Ask everyone to update the subscription and open the port in the cloud firewall.`,
-    managed_by: 'This server is managed by main server: ', server_month: 'This server, this month', cap: 'Monthly traffic cap (GB, 0 = none)', cap_day: 'Billing period starts on day', cap_tip: 'Many VPS plans cap monthly traffic. You get a Telegram alert at 80% and 100% (nothing is cut off).',
+    managed_by: 'This server is managed by main server: ', remote_user: 'This account comes from the main server "{m}", which manages it: change quota, expiry, pausing or deleting there. Changes made here are overwritten at the next sync.', server_month: 'This server, this month', cap: 'Monthly traffic cap (GB, 0 = none)', cap_day: 'Billing period starts on day', cap_tip: 'Many VPS plans cap monthly traffic. You get a Telegram alert at 80% and 100% (nothing is cut off).',
     monitor: 'Site reachability', monitor_tip: 'Every 5 minutes the server opens these sites itself and records whether and how fast they load. Check here first when someone says a site does not work.', run_now: 'Check now',
     region: 'Region sites see', chatgpt_ok: 'ChatGPT available', chatgpt_bad: 'ChatGPT does not serve this region', speed: 'Server download speed', uptime24: '24 h availability', median: 'median',
     no_data: 'No data yet. Press "Check now".', monitor_enabled: 'Automatic checks (every 5 minutes)',
@@ -607,8 +607,8 @@ function updateHome() {
   $('kOnlineU').textContent = '/ ' + d.users.length + ' ' + t('users_n');
   $('kOnlineS').replaceChildren(h('span', null, t('active_n') + ' ', h('b', null, active)), h('span', null, t('paused_n') + ' ', h('b', null, d.users.length - active)));
   const rows = S.days.map(x => ({day: x.day, upload: x.up, download: x.down}));
-  const days30 = last30(), d7 = new Set(days30.slice(-7));
-  const total = rows.reduce((a, r) => a + r.upload + r.download, 0);
+  const days30 = last30(), d30 = new Set(days30), d7 = new Set(days30.slice(-7));
+  const total = rows.filter(r => d30.has(r.day)).reduce((a, r) => a + r.upload + r.download, 0);   // the same 30 days as the chart
   const today = localDay(Date.now()), tr = rows.find(r => r.day === today);
   const last7 = rows.filter(r => d7.has(r.day)).reduce((a, r) => a + r.upload + r.download, 0) / 7;
   c.tw.month.set(total); $('kMonthU').textContent = 'GB';
@@ -835,6 +835,7 @@ async function openUser(id, first) {
           actBtn('btn', 'lock', t('set_pw'), b => act(b, () => api(`users/${u.id}/login`, {password: pwIn.value}))),
           u.has_login ? actBtn('btn ghost', null, t('clear_pw'), b => act(b, () => api(`users/${u.id}/login`, {password: ''}), t('pw_cleared'))) : null),
         S.data.member_url ? h('div', {class: 'muted', style: 'font-size:12px;margin-top:8px;word-break:break-all'}, t('member_centre') + sep + S.data.member_url) : null),
+      u.remote_id && S.data.node_master ? h('div', {class: 'dr-sec'}, h('div', {class: 'alert'}, icon('server'), t('remote_user').replace('{m}', S.data.node_master))) :
       h('div', {class: 'dr-sec'}, h('h4', null, t('actions')), h('div', {class: 'act-grid'},
         h('button', {class: 'btn', onclick: () => { closeDrawer(); editUser(u); }}, icon('edit'), t('edit')),
         actBtn('btn', u.enabled ? 'pause' : 'play', u.enabled ? t('disable') : t('enable'), b => act(b, () => api(`users/${u.id}/save`, {enabled: !u.enabled}))),

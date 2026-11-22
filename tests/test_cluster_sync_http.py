@@ -171,3 +171,17 @@ class OwnerWalkthrough(tu.Base):
         db.set_settings(domain='', public_host='203.0.113.9')
         db.import_all(backup)
         self.assertEqual(db.settings()['public_host'], 'vpn.example.org')
+
+
+class DomainAndAddress(tu.Base):
+    def test_domain_and_server_address_never_disagree_silently(self):
+        from vps2vpn import web
+        s = dict(db.settings(), domain='vpn.example.org', public_host='vpn.example.org')
+        ok = web.validate_settings({'domain': 'vpn.example.org', 'public_host': 'vpn.example.org'}, s)
+        self.assertEqual(ok['public_host'], 'vpn.example.org')
+        self.assertIsInstance(web.validate_settings({'domain': 'vpn.example.org', 'public_host': '203.0.113.9'}, s), str)
+        self.assertIsInstance(web.validate_settings({'domain': '', 'public_host': 'vpn.example.org'}, s), str)
+        out = web.validate_settings({'domain': '', 'public_host': '203.0.113.9'}, s)
+        self.assertEqual((out['domain'], out['public_host']), ('', '203.0.113.9'))
+        new = web.validate_settings({'domain': 'new.example.org', 'public_host': 'vpn.example.org'}, s)
+        self.assertEqual(new['public_host'], 'new.example.org')

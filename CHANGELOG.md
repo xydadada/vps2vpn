@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.20
+
+The rest of the owner-panel walkthrough.
+
+**Joined servers**
+- On a joined server, the main server's accounts are shown read-only, with a note to change them on the main server. They used to look editable, but every change was ignored or undone at the next sync (a deleted account came back). Single and bulk actions on them are refused while the server is joined. Once it has left, the leftovers can be deleted.
+
+**Settings**
+- With a domain set, typing a different server address is refused with a reason, instead of being silently replaced by the domain. Clearing the domain asks for this server's IP, instead of leaving subscriptions on the old domain and automatic IP repair off.
+
+**Overview**
+- The 30-day traffic figure adds up the same 30 days as the chart (it counted 31), and is labelled as user traffic as billed. A ×2 server counts double there, unlike "this server, this month".
+
 ## 0.2.19
 
 A walk through the owner's panel, as an owner running it for family and friends would use it.

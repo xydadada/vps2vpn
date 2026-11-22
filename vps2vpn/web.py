@@ -1267,6 +1267,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'online': None if online is None else len(online), 'rules_age': rules.mirror_age(), 'log': jobs.LOG[-60:],
             'ports': system.needed_ports(s), 'os': system.os_info(), 'base_url': base,
             'member_url': '%s/%s/' % (base, s['member_path']) if s['member_enabled'] else '',
+            'node_master': s['node_master'],
             'pending_requests': len(db.requests(status='pending')), 'servers': cluster.view(s),
             'server_month': {k: v for k, v in (s['server_month'] or {}).items() if not k.startswith('last_')},
             'renew_days': jobs.renew_days_left(s), 'line_trouble': self.trouble_view(s),
@@ -1417,9 +1418,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         and int(max(user['expire_at'], now) + value * 86400) > MAX_ACCOUNT_EXPIRE_AT):
                     return self.json({'error': 'expire_at is out of supported range'}, 400)
         done = 0
+        managed = bool(db.settings()['node_master'])
         for uid in ids:
             u = db.user(uid)
-            if not u:
+            if not u or (managed and u['remote_id']):    # the main server's accounts are changed over there
                 continue
             done += 1
             if action == 'enable':
@@ -1480,6 +1482,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         fields = {}             # set by 'save' only
         if not u:
             return self.json({'error': 'no such user'}, 404)
+        if u['remote_id'] and db.settings()['node_master'] and action in ('save', 'reset', 'rotate', 'delete', 'login'):
+            # The main server owns this account and overwrites it on every sync: a change here would not last.
+            return self.json({'error': 'managed by the main server: change it there'}, 409)
         if action == 'delete':
             db.delete_user(uid)
         elif action == 'rotate':
@@ -2114,8 +2119,17 @@ def validate_settings(d, s):
         if h and not HOST_RE.match(h):
             return 'invalid domain name'
         out['domain'] = h
+        old_domain = s.get('domain') or ''
+        typed = out.get('public_host')
         if h:
+            # With a domain, subscriptions and certificates use it. A different address typed alongside an
+            # unchanged domain would be dropped without a word: say so instead.
+            if h == old_domain and typed and typed.lower() != h:
+                return 'a domain is set, so the server address is the domain: clear the domain first to use an IP'
             out['public_host'] = h
+        elif old_domain and (not typed or typed.lower() == old_domain.lower()):
+            # Domain removed but the address still names it: nothing would point at this server's IP.
+            return 'the domain was cleared: enter this server IP as the server address'
     if 'acme_email' in d:
         e = str(d['acme_email']).strip()
         if e and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', e):

@@ -326,6 +326,22 @@ class AdminWeb(tu.Base):
         st, body, _ = self.req('POST', '/adm/api/users-bulk', {'ids': [uid], 'action': 'enable'})
         self.assertEqual(json.loads(body)['still_paused'], 1)
 
+    def test_main_server_accounts_are_read_only_on_a_joined_server(self):
+        self.login()
+        uid = db.add_user('mum@main')
+        db.update_user(uid, remote_id=7)
+        db.set_settings(node_master='main-sg', node_master_id='abc')
+        for action, body in (('save', {'quota_gb': 5}), ('reset', {}), ('rotate', {}), ('delete', {})):
+            st, _, _ = self.req('POST', '/adm/api/users/%d/%s' % (uid, action), body)
+            self.assertEqual(st, 409, action)
+        st, body, _ = self.req('POST', '/adm/api/users-bulk', {'ids': [uid], 'action': 'disable'})
+        self.assertEqual(json.loads(body)['done'], 0)
+        self.assertTrue(db.user(uid)['enabled'])
+        # once this server has left its main server, the leftovers are its own to tidy up
+        db.set_settings(node_master='', node_master_id='')
+        st, _, _ = self.req('POST', '/adm/api/users/%d/delete' % uid, {})
+        self.assertEqual(st, 200)
+
     def login(self, **extra):
         return self.req('POST', '/adm/api/login', dict({'username': 'admin', 'password': 'adminpassword'}, **extra))
 
