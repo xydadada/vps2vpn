@@ -446,12 +446,12 @@ def run_job(job):
             raise RuntimeError('这台电脑的 ssh 版本太旧，不支持自动填密码。请用密钥文件，'
                                '或在「设置 > 应用 > 可选功能」里更新 OpenSSH 客户端。')
         cmd, env = ssh_base(job)
-        say('connecting to %s ...' % job['host'])
+        say('正在连接 %s …' % job['host'])
         r = probe(cmd, env, job['user'])
         wanted = login_as_hint(r.stdout + r.stderr)
         if 'connected' not in r.stdout and wanted and wanted != job['user']:
             # e.g. AWS images: root's key only prints 'Please login as the user "ubuntu" rather than "root"'
-            say('the server asks to log in as "%s" instead of "%s"; trying that ...' % (wanted, job['user']))
+            say('服务器要求用 %s 登录（不是 %s），正在换成 %s 重试…' % (wanted, job['user'], wanted))
             job['user'] = wanted
             cmd = cmd[:-1] + ['%s@%s' % (wanted, job['host'])]
             r = probe(cmd, env, wanted)
@@ -472,7 +472,7 @@ def run_job(job):
                         % (known_host_name(job['host'], job['port']), os.path.join(RECORDS, 'known_hosts')))
             raise RuntimeError(msg)
         say(r.stdout.strip().replace('\n', ' | '))
-        say('uploading vps2vpn and running the installer (1-3 minutes) ...')
+        say('正在上传 vps2vpn 并在服务器上安装（大约 1-3 分钟）…')
         payload = base64.b64encode(package()) + b'\n'
         run_as = 'sudo -n env ' if job['user'] != 'root' else ''
         remote = ('set -e; T=$(mktemp -d); trap \'rm -rf "$T"\' EXIT; base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; '
@@ -507,7 +507,7 @@ def run_job(job):
             raise RuntimeError('安装过程出错了，详情见上面的日志')
         finish(job, res, say)
         job['state'] = 'done'
-        say('done.')
+        say('安装完成。')
     except Exception as e:      # shown on the page
         job['state'] = 'error'
         job['error'] = str(e)
@@ -533,7 +533,7 @@ def finish(job, res, say):
         job['client'] = detect_client()
     except Exception:       # never fail a finished install over this
         job['client'] = None
-    say('checking the firewall from this computer ...')
+    say('正在从这台电脑检查服务器防火墙…')
     recheck(job)
 
 

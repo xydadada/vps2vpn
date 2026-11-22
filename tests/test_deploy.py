@@ -1057,6 +1057,20 @@ class DownloadedZip(unittest.TestCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn(b'Extract All', p.stdout)
 
+    def test_progress_lines_are_in_chinese(self):
+        # the install log opens by itself when a deploy fails: what we write there must be readable
+        with open(os.path.join(ROOT_DIR, 'deploy', 'deploy.py'), encoding='utf-8') as f:
+            says = re.findall(r"""\bsay\((['"])(.*?)\1""", f.read())
+        self.assertTrue(says)
+        for _, text in says:
+            if text.strip(' !%s'):
+                self.assertRegex(text, '[一-鿿]', text)
+        with open(os.path.join(ROOT_DIR, 'install.sh'), encoding='utf-8') as f:
+            lines = re.findall(r'^\s*say "(.*)"', f.read(), re.M)
+        self.assertGreater(len(lines), 10)
+        for text in lines:
+            self.assertRegex(text, '[一-鿿]', text)
+
 
 
 if __name__ == '__main__':
