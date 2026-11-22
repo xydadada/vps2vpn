@@ -7,7 +7,7 @@ import re
 import time
 import urllib.parse
 
-from . import certs, rules, system
+from . import certs, db, rules, system
 
 GROUP_NAMES = {
     'zh': {'proxy': '节点选择', 'auto': '自动选择', 'ai': 'AI服务', 'cn': '国内服务', 'final': '漏网之鱼'},
@@ -33,10 +33,18 @@ def tls_info(s):
         return {'sni': host, 'pin': '', 'pem': ''}
 
 
+def rate_label(label, rate):
+    """'Tokyo' -> 'Tokyo x2' on a server whose traffic counts twice (what airport subscriptions show)."""
+    return label if rate == 1 else '%s \u00d7%g' % (label, rate)
+
+
 def server_nodes(s, tls, label, local_id, u):
     """Entries of one server. `s` holds its protocol settings, `local_id` is the user's id on that server."""
     out = []
-    if s['hy2_enabled']:
+    # Hysteria cannot hold one account to a speed: where that server enforces limits, a limited account
+    # gets its other protocols only (unless Hysteria is all it has).
+    skip_hy2 = (db.limit_mbps(u) > 0 and s.get('shaping') and (s['reality_enabled'] or s.get('tuic_enabled')))
+    if s['hy2_enabled'] and not skip_hy2:
         n = {'type': 'hy2', 'name': '%s Hysteria2' % label, 'server': s['public_host'], 'port': s['hy2_port'],
              # Hysteria's userpass auth expects "user:password" from the client
              'password': 'u%d:%s' % (local_id, u['hy2_pass']), 'obfs': s['hy2_obfs'], **tls}
@@ -60,17 +68,21 @@ def server_nodes(s, tls, label, local_id, u):
 
 def nodes(s, u):
     """Protocol-neutral description of this user's proxies: this server first, then joined servers."""
-    from . import aicheck
-    main_label = s['node_name'] or 'vps2vpn'
-    out = server_nodes(dict(s, hy2_hop=system.hopping_listed(s)), tls_info(s), main_label, u['id'], u)
+    from . import aicheck, cluster, shaper
+    main_label = rate_label(s['node_name'] or 'vps2vpn', float(s.get('traffic_rate', 1))
+                            if db.valid_rate(s.get('traffic_rate', 1)) else 1.0)
+    out = []
+    if db.allowed_on(u, db.MAIN_SERVER):
+        out = server_nodes(dict(s, hy2_hop=system.hopping_listed(s), shaping=shaper.active()), tls_info(s),
+                           main_label, u['id'], u)
     for n in out:
         n['ai_score'] = aicheck.score(aicheck.latest())
     seen_labels = {main_label}
     for x in s.get('servers') or []:
         info, lid = x.get('info'), (x.get('idmap') or {}).get(str(u['id']))
-        if not x.get('enabled', True) or not info or lid is None:
+        if not x.get('enabled', True) or not info or lid is None or not db.allowed_on(u, x['id']):
             continue                       # not synced yet: the next sync (within a minute) adds it
-        label = x['name']
+        label = rate_label(x['name'], cluster.server_rate(x))
         if label in seen_labels:
             label = '%s %s' % (x['name'], x['id'][:4])
         while label in seen_labels:
@@ -155,7 +167,10 @@ def warning_text(u, quota_gb=None, now=None):
         date = time.strftime('%Y-%m-%d', time.localtime(exp))
         parts.append(('%d 天后到期（%s）' % (days, date), 'expires in %d day(s) on %s' % (days, date)))
     quota = u.get('quota_gb') if quota_gb is None else quota_gb
-    if quota and quota > 0:
+    if u.get('throttled') and u.get('throttle_mbps'):
+        mbps = u['throttle_mbps']
+        parts.append(('流量已用完，已降速到 %g Mbps' % mbps, 'quota used up, slowed down to %g Mbps' % mbps))
+    elif quota and quota > 0:
         total = quota * (1 << 30)
         used = int(u.get('used_up') or 0) + int(u.get('used_down') or 0)
         if used >= WARN_USED * total:

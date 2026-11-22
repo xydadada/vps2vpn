@@ -114,7 +114,13 @@ sudo bash install.sh
 - **流量上限**（GB，0 = 不限）和**每月几号重置**（0 = 不重置）；
 - **到期方式**：永久、指定日期、从今天起多少天，或**首次使用后开始计时**（适合先发链接、后使用）；
 - **同时在线设备上限**（0 = 不限）。超了默认暂停 10 分钟，也可以在设置里改成只提醒；
+- **限速**（Mbps，0 = 不限），以及**流量用完后降速**到多少 Mbps（0 = 直接停用；填了就不停用，降速用到下次重置或加流量）；
+- **可用服务器**：有多台服务器时，可以只让他用其中几台（默认全部，以后新加的也算）；
 - 备注。
+
+邀请码也能设限速、降速和可用服务器；会员自己发的码，跟着他本人的设置走。
+
+限速靠内核的流量控制（tc），一般的 KVM / 独立服务器都支持；容器 VPS（OpenVZ、LXC）不支持，面板会提示，限速账号照常全速使用。被限速的账号订阅里不出现 Hysteria 2 节点（它没法按账号限速），Reality / TUIC 照常。升级照常用安装命令（见下面「升级与回滚」），它会顺便给代理服务加上限速需要的权限。
 
 建好后点他的名字，「订阅」里有链接和二维码：发给他，手机扫码，或在 App 里「从 URL 导入」。链接就是钥匙，泄露了点「更换链接」，旧链接立刻失效。
 
@@ -200,6 +206,8 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 加入码相当于那台服务器的钥匙，别发给别人。泄露了在那台上点「换一个加入码」，再到主服务器删掉它重新添加。
 
+**流量倍率**：每台服务器可以设倍率（机场常见做法），比如东京 ×2 表示在东京用 1 GB 记 2 GB，×0.5 记一半，0 表示不计。订阅里的节点组名会带上「×2」。主服务器自己的倍率也在这一页设。
+
 「多服务器」页还能设本机每月流量上限（到 80% / 100% 时 Telegram 提醒，不会自动断网）和 VPS 续费日（到期前 7 天、3 天、1 天和当天提醒）。
 
 ---
@@ -263,7 +271,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 - 每个使用者的流量 = 上传 + 下载，由代理程序按人统计，每 20 秒记一次。到上限自动停用，每月重置日或你加流量后自动恢复。
 - 邀请朋友时分出去的额度会从自己的可用额度里扣掉（面板上显示「实际可用额度」）。
-- 多台服务器时，各台的流量都汇总到主服务器同一个额度里。
+- 多台服务器时，各台的流量都汇总到主服务器同一个额度里；设了倍率的服务器按倍率记。
 - 「本机本月流量」是服务器网卡的总流量，和云厂商账单更接近；使用者流量的合计会比它少一些。
 - 在面板里可以给某人「清零流量」。
 
@@ -367,7 +375,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 ## 实测（本项目的测试都是真程序真流量）
 
-`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http` —— 341 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
+`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http` —— 350 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
 
 `python tests/e2e_local.py <放官方程序的目录>` —— 在一台电脑上启动**真的** Xray、Hysteria 和 sing-box（TUIC）服务端，再用**真的** mihomo（Clash 内核）和 sing-box 客户端发流量，共 54 项检查：
 
@@ -465,7 +473,7 @@ MIT
 
 ### Users, invites, member page
 
-Add users with a quota, an expiry (date, days, or counting from first use), a monthly reset day and a device limit. Each user gets one link and QR code. Admin invite codes create accounts with preset limits; members can carve invite codes from their own quota (keeping at least 1 GB). Opening the subscription link in a browser (or logging in at the member-centre address) shows the member page: remaining data, import buttons, quota requests, invites, password and link change.
+Add users with a quota, an expiry (date, days, or counting from first use), a monthly reset day, a device limit, a speed limit, a slow-down speed once the quota is used up (instead of stopping the account) and the servers they may use. Speed limits use the kernel's tc (not on OpenVZ/LXC containers); a limited account gets no Hysteria 2 entries. Each user gets one link and QR code. Admin invite codes create accounts with preset limits; members can carve invite codes from their own quota (keeping at least 1 GB). Opening the subscription link in a browser (or logging in at the member-centre address) shows the member page: remaining data, import buttons, quota requests, invites, password and link change.
 
 ### Apps
 
@@ -486,7 +494,7 @@ Re-run the one-line installer as root. It installs the latest tagged release, ch
 
 ### Several servers
 
-Deployer (Chinese UI): under 这台服务器怎么用 pick 加到 <first server> 下面 (needs the first server deployed from the same computer, so its panel password is saved). By hand: copy the join code from the new server's Servers page and paste it on the main server's Servers page. Users are managed on the main server only; every subscription gets each server's entries and traffic counts against the same quota.
+Deployer (Chinese UI): under 这台服务器怎么用 pick 加到 <first server> 下面 (needs the first server deployed from the same computer, so its panel password is saved). By hand: copy the join code from the new server's Servers page and paste it on the main server's Servers page. Users are managed on the main server only; every subscription gets each server's entries and traffic counts against the same quota. Each server can have a traffic rate (x2 counts 1 GB as 2 GB), shown in the group names.
 
 ### Telegram bot
 
@@ -503,7 +511,7 @@ Health & upkeep → Telegram alerts: create a bot with @BotFather, paste the tok
 
 ### Tested
 
-341 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
+350 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
 
 Standard-library Python panel: no Docker, no database server, no third-party scripts in the browser.
 

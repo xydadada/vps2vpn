@@ -194,7 +194,7 @@ def _num(v, low, high, label, integer=False):
 
 @_serial
 def create_invite(kind, quota_gb, valid_days, max_uses=1, inviter=0, expire_days=0, reset_day=0, note='',
-                  by_member=False, now=None):
+                  by_member=False, now=None, servers='', speed_mbps=0, throttle_mbps=0):
     now = time.time() if now is None else now
     note = str(note or '').strip()
     if len(note) > 100 or any(ord(c) < 32 for c in note):
@@ -217,13 +217,21 @@ def create_invite(kind, quota_gb, valid_days, max_uses=1, inviter=0, expire_days
                           '(you always keep at least 1 GB)' % (times, grant, room))
         if by_member and len(db.member_live_invites(inviter, now)) >= MEMBER_PENDING_MAX:
             raise Refused('at most %d unused codes; use or revoke one first' % MEMBER_PENDING_MAX)
-        rec.update(inviter=inviter, quota_gb=grant, max_uses=times, reset_day=u['reset_day'])
+        # what the inviter may use is all the invitee may use: same servers, same speed rules
+        rec.update(inviter=inviter, quota_gb=grant, max_uses=times, reset_day=u['reset_day'],
+                   servers=u['servers'] or '', speed_mbps=u['speed_mbps'] or 0, throttle_mbps=u['throttle_mbps'] or 0)
     elif kind == 'admin':
         low, high = ADMIN_VALID_DAYS
         rec.update(quota_gb=_num(quota_gb, 0, 100000, 'quota (GB)'),
                    expire_days=_num(expire_days, 0, 3650, 'account lifetime (days)', True),
                    reset_day=_num(reset_day, 0, 28, 'reset day', True),
-                   max_uses=_num(max_uses, 1, ADMIN_MAX_USES, 'uses', True))
+                   max_uses=_num(max_uses, 1, ADMIN_MAX_USES, 'uses', True),
+                   speed_mbps=_num(speed_mbps or 0, 0, db.MAX_MBPS, 'speed limit (Mbps)'),
+                   throttle_mbps=_num(throttle_mbps or 0, 0, db.MAX_MBPS, 'slow-down speed (Mbps)'))
+        try:
+            rec['servers'] = db.clean_servers(servers)
+        except ValueError as e:
+            raise Refused(str(e))
     else:
         raise Refused('unknown invite kind')
     rec['valid_until'] = int(now + _num(valid_days, low, high, 'code valid for (days)', True) * 86400)
@@ -287,6 +295,7 @@ def register(code, name, password, now=None):
             fields['expire_after_days'] = inviter['expire_after_days']
     else:
         expire_at = int(now + inv['expire_days'] * 86400) if inv['expire_days'] else 0
+    fields.update(servers=inv['servers'] or '', speed_mbps=inv['speed_mbps'] or 0, throttle_mbps=inv['throttle_mbps'] or 0)
     note = 'invite %s' % inv['code'] + (' · ' + inv['note'] if inv['note'] else '')
     with db.transaction():
         uid = db.add_user(name, inv['quota_gb'], expire_at, inv['reset_day'], note[:200], **fields)
@@ -305,7 +314,8 @@ def invite_view(inv, names, register_url=''):
             'inviter': inv['inviter'], 'inviter_name': names.get(inv['inviter'], ''), 'uses': inv['uses'],
             'max_uses': inv['max_uses'], 'used_by': [names.get(u, '#%d' % u) for u in used],
             'expire_days': inv['expire_days'], 'reset_day': inv['reset_day'], 'valid_until': inv['valid_until'],
-            'created_at': inv['created_at'], 'note': inv['note'],
+            'created_at': inv['created_at'], 'note': inv['note'], 'servers': db.server_list(inv),
+            'speed_mbps': inv['speed_mbps'] or 0, 'throttle_mbps': inv['throttle_mbps'] or 0,
             'register_url': register_url + '#register=' + inv['code'] if register_url else ''}
 
 

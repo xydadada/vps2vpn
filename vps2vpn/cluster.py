@@ -18,6 +18,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import math
 import re
 import secrets
 import socket
@@ -58,6 +59,8 @@ def public_info(s):
             'hy2_hop_range', 'hy2_obfs', 'tuic_enabled', 'tuic_port')
     info = {k: s[k] for k in keys}
     info['hy2_hop'] = system.hopping_listed(s)     # the main server lists what actually works here
+    from . import shaper
+    info['shaping'] = shaper.active()       # limited accounts get no Hysteria entry for this server then
     info['tls'] = tls_info(s)
     from . import aicheck
     res = aicheck.latest()      # lets the main server send AI traffic to the server that suits it best
@@ -156,9 +159,12 @@ def _validated_sync_snapshot(body):
         expire_at = u.get('expire_at', 0)          # absent from main servers older than 0.2.4: never
         if type(expire_at) is not int or not 0 <= expire_at < (1 << 40):
             raise ValueError('invalid remote expiry')
+        limit = u.get('limit_mbps', 0)            # absent from main servers older than 0.2.17: none
+        if type(limit) not in (int, float) or not math.isfinite(limit) or not 0 <= limit <= db.MAX_MBPS:
+            raise ValueError('invalid remote speed limit')
         uuids.add(uuid.lower())
         wanted[rid] = {'name': _clean_label(name, 24) or 'u%d' % rid, 'uuid': uuid,
-                       'hy2_pass': secret, 'enabled': int(enabled), 'expire_at': expire_at}
+                       'hy2_pass': secret, 'enabled': int(enabled), 'expire_at': expire_at, 'limit': float(limit)}
     return master, master_id, wanted, uuids
 
 
@@ -188,17 +194,18 @@ def handle_sync(s, body, base_url=''):
                 name = _remote_name(w['name'], master, rid)
                 uid = db.add_user(name, expire_at=w['expire_at'], note='from main server %s' % master,
                                   remote_id=rid, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                                  disabled_reason=w['reason'])
+                                  disabled_reason=w['reason'], speed_mbps=w['limit'])
                 mine[rid] = db.user(uid)
                 changed = True
             else:
                 new_name = _remote_name(w['name'], master, rid, skip_uid=u['id'])
-                core_changed = (u['uuid'], u['hy2_pass'], u['enabled']) != (w['uuid'], w['hy2_pass'], w['enabled'])
+                core_changed = ((u['uuid'], u['hy2_pass'], u['enabled'], float(u['speed_mbps'] or 0))
+                                != (w['uuid'], w['hy2_pass'], w['enabled'], w['limit']))
                 if core_changed or u['name'] != new_name or u['expire_at'] != w['expire_at']:
                     db.update_user(u['id'], name=new_name, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                                   disabled_reason=w['reason'], expire_at=w['expire_at'])
+                                   disabled_reason=w['reason'], expire_at=w['expire_at'], speed_mbps=w['limit'])
                     u.update(name=new_name, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                             expire_at=w['expire_at'])
+                             expire_at=w['expire_at'], speed_mbps=w['limit'])
                     if core_changed:
                         changed = True
         for rid, u in list(mine.items()):
@@ -401,10 +408,18 @@ def _request(server, body, timeout=15):
     raise SyncError('certificate does not match; remove and re-add the server')
 
 
-def push_users():
+def push_users(server_id=None, users=None):
+    """The accounts a joined server serves: this server's own ones that may use it (all when server_id is None),
+    each with the speed it is held to right now (enforced there; 0 = none)."""
+    users = db.users() if users is None else users
     return [{'id': u['id'], 'name': u['name'], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'], 'enabled': bool(u['enabled']),
-             'expire_at': int(u['expire_at'] or 0)}
-            for u in db.users() if not u['remote_id']]
+             'expire_at': int(u['expire_at'] or 0), 'limit_mbps': db.limit_mbps(u)}
+            for u in users if not u['remote_id'] and (server_id is None or db.allowed_on(u, server_id))]
+
+
+def server_rate(server):
+    rate = server.get('rate', 1)
+    return float(rate) if db.valid_rate(rate) else 1.0
 
 
 def _apply_sync_answer(server, ans, got_pin, log=print):
@@ -438,6 +453,7 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
         rid_key = str(rid)
         if uid in known and rid_key in seen:
             up0, down0 = seen[rid_key]
+            rate = server_rate(server)
             id_changed = old_idmap.get(rid_key) != new_idmap.get(rid_key)
             if up >= up0:
                 dup = up - up0
@@ -456,7 +472,7 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
                 log('server %s user %s download counter rolled back (%d -> %d); re-baselining' % (
                     server.get('name', ''), rid_key, down0, down))
             if dup or ddown:
-                deltas.append((uid, dup, ddown))
+                deltas.append((uid, db.billed(dup, rate), db.billed(ddown, rate)))
         if uid in known:
             seen[rid_key] = (up, down)
     if deltas:
@@ -485,7 +501,7 @@ def sync_one(server, s=None, log=print):
     s = s or db.settings()
     try:
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
-                                         'users': push_users()})
+                                         'users': push_users(server['id'])})
         with db.transaction():
             _apply_sync_answer(server, ans, got_pin, log)
     except (SyncError, OverflowError) as e:
@@ -507,14 +523,15 @@ def _sync_all(log):
             return
         before = json.dumps([(x.get('info'), x.get('idmap')) for x in servers], sort_keys=True)
         gen = _generation[0]
-        payload = {'master': s['node_name'] or 'main', 'master_id': s['install_id'], 'users': push_users()}
+        users = db.users()
+        payload = {'master': s['node_name'] or 'main', 'master_id': s['install_id']}
     # Perform network I/O outside _lock so panel edits/restores never block on slow nodes.
     results, keys = [], {x['id']: x.get('key') for x in servers}
     for srv in servers:
         if not srv.get('enabled', True):
             continue
         try:
-            ans, got_pin = _request(srv, payload)
+            ans, got_pin = _request(srv, dict(payload, users=push_users(srv['id'], users)))
             _validate_sync_answer(ans)
             results.append((srv['id'], srv.get('url'), ans, got_pin, None))
         except SyncError as e:
@@ -642,6 +659,10 @@ def update_server(sid, **kv):
                     x['name'] = unique_name(str(kv['name']), db.settings(), sid) if str(kv['name']).strip() else x['name']
                 if 'enabled' in kv:
                     x['enabled'] = bool(kv['enabled'])
+                if 'rate' in kv:
+                    if not db.valid_rate(kv['rate']):
+                        raise ValueError('traffic rate must be 0-100')
+                    x['rate'] = float(kv['rate'])
         db.set_settings(servers=servers)
 
 
@@ -652,7 +673,7 @@ def view(s):
         info = x.get('info') or {}
         out.append({'id': x['id'], 'name': x['name'], 'host': info.get('public_host') or urllib.parse.urlsplit(x['url']).hostname,
                     'enabled': x.get('enabled', True), 'last_ok': x.get('last_ok', 0), 'error': x.get('error', ''),
-                    'version': x.get('version', ''), 'health': x.get('health') or {},
+                    'version': x.get('version', ''), 'health': x.get('health') or {}, 'rate': server_rate(x),
                     'protocols': [p for p, k in (('reality', 'reality_enabled'), ('hy2', 'hy2_enabled'), ('tuic', 'tuic_enabled'))
                                   if info.get(k)], 'users': len(x.get('idmap') or {})})
     return out

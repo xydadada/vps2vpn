@@ -1974,6 +1974,193 @@ class MemberWeb(tu.Base):
             cluster._request(dict(server, key='nope'), {'users': []})
 
 
+
+class AirportFeatures(tu.Base):
+    """Traffic rates, servers per account, speed limits and slowing down instead of stopping."""
+
+    def _node(self, u, sid='abcd1234', name='Tokyo', rate=None):
+        info = cluster.public_info(dict(db.settings(), public_host='198.51.100.5', node_name=name))
+        node = {'id': sid, 'name': name, 'url': 'https://198.51.100.5:1/x', 'key': 'k', 'pin': '', 'enabled': True,
+                'info': info, 'idmap': {str(u['id']): 42}}
+        if rate is not None:
+            node['rate'] = rate
+        return node
+
+    def test_traffic_rate_bills_this_server_and_each_joined_one(self):
+        a = mk('rated', 10)
+        db.set_settings(traffic_rate=2)
+        with mock.patch.object(cores, 'collect_traffic', return_value={a['id']: (100, 1000)}):
+            cores.save_traffic()
+        got = db.user(a['id'])
+        self.assertEqual((got['used_up'], got['used_down']), (200, 2000))
+        # a main server's accounts on this (joined) server are billed by the main server, at its rate there
+        remote = mk('from-main', remote_id=77)
+        with mock.patch.object(cores, 'collect_traffic', return_value={remote['id']: (5, 7)}):
+            cores.save_traffic()
+        self.assertEqual((db.user(remote['id'])['used_up'], db.user(remote['id'])['used_down']), (5, 7))
+        db.set_settings(traffic_rate=1)
+        server = self._node(a, rate=0.5)
+        info = server['info']
+        answers = [{'ok': True, 'info': info, 'idmap': {str(a['id']): 42}, 'traffic': {str(a['id']): [0, 0]}},
+                   {'ok': True, 'info': info, 'idmap': {str(a['id']): 42}, 'traffic': {str(a['id']): [100, 1001]}}]
+        with mock.patch.object(cluster, '_request', lambda srv, body, timeout=15: (answers.pop(0), 'ab' * 32)):
+            self.assertTrue(cluster.sync_one(server))
+            self.assertTrue(cluster.sync_one(server))
+        got = db.user(a['id'])
+        self.assertEqual((got['used_up'], got['used_down']), (200 + 50, 2000 + 501))
+        db.set_settings(servers=[server], traffic_rate=2)
+        groups = {n['group'] for n in subscription.nodes(db.settings(), db.user(a['id']))}
+        self.assertEqual(groups, {db.settings()['node_name'] + ' ×2', 'Tokyo ×0.5'})
+        with self.assertRaises(ValueError):
+            cluster.update_server('abcd1234', rate=101)
+        cluster.update_server('abcd1234', rate=3)
+        self.assertEqual(cluster.view(db.settings())[0]['rate'], 3.0)
+
+    def test_an_account_only_gets_the_servers_it_may_use(self):
+        a = mk('tokyo-only', 10, servers='abcd1234')
+        b = mk('everywhere', 10)
+        tokyo, paris = self._node(a), self._node(a, 'ffff0000', 'Paris')
+        tokyo['idmap'][str(b['id'])] = 43
+        paris['idmap'][str(b['id'])] = 44
+        db.set_settings(servers=[tokyo, paris])
+        self.assertEqual({n['group'] for n in subscription.nodes(db.settings(), db.user(a['id']))}, {'Tokyo'})
+        self.assertEqual(len({n['group'] for n in subscription.nodes(db.settings(), db.user(b['id']))}), 3)
+        self.assertNotIn(a['id'], [u['id'] for u in cores.active_users()])      # not served by this server's cores
+        self.assertIn(b['id'], [u['id'] for u in cores.active_users()])
+        self.assertEqual({u['id'] for u in cluster.push_users('abcd1234')}, {a['id'], b['id']})
+        self.assertEqual({u['id'] for u in cluster.push_users('ffff0000')}, {b['id']})
+        for bad in ('Tokyo!', ['a', 'B C'], 5, ',,'):
+            with self.assertRaises(ValueError):
+                db.clean_servers(bad)
+        self.assertEqual(db.clean_servers(['main', 'abcd1234', 'main']), 'main,abcd1234')
+        self.assertEqual(db.clean_servers(''), '')
+        self.assertEqual(db.clean_servers([]), '')
+
+    def test_quota_used_up_slows_down_instead_of_stopping(self):
+        u = mk('slow', 1, throttle_mbps=5)
+        db.update_user(u['id'], used_down=2 << 30)
+        with mock.patch.object(jobs.notify, 'send') as send:
+            self.assertTrue(jobs.enforce())
+        got = db.user(u['id'])
+        self.assertEqual((got['enabled'], got['throttled'], db.limit_mbps(got)), (1, 1, 5.0))
+        self.assertTrue(any('5 Mbps' in c[0][0] for c in send.call_args_list))
+        self.assertIn('5 Mbps', subscription.warning_text(got)[0])
+        # a cap that is lower still wins; more quota brings full speed back
+        db.update_user(u['id'], speed_mbps=2)
+        self.assertEqual(db.limit_mbps(db.user(u['id'])), 2.0)
+        db.update_user(u['id'], quota_gb=10, speed_mbps=0)
+        with mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        got = db.user(u['id'])
+        self.assertEqual((got['enabled'], got['throttled'], db.limit_mbps(got)), (1, 0, 0.0))
+        # no slow-down speed: stopped as before
+        db.update_user(u['id'], quota_gb=1, throttle_mbps=0)
+        with mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        self.assertEqual((db.user(u['id'])['enabled'], db.user(u['id'])['disabled_reason']), (0, 'quota'))
+        # turning slow-down on for an account stopped for its quota starts it again, slowed down
+        db.update_user(u['id'], throttle_mbps=3)
+        with mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        got = db.user(u['id'])
+        self.assertEqual((got['enabled'], got['throttled'], got['disabled_reason']), (1, 1, ''))
+
+    def test_limited_accounts_are_marked_and_kept_off_hysteria(self):
+        slow = mk('capped', 0, speed_mbps=20)
+        fast = mk('free', 0)
+        users = cores.active_users()
+        s = dict(db.settings(), tuic_enabled=True)
+        with mock.patch.object(cores.shaper, 'active', return_value=True):
+            x = cores.xray_config(s, users)
+            hy = cores.hysteria_config(s, users)
+            tuic = cores.tuic_config(s, users)
+            self.assertEqual(cores.limits(users), {slow['id']: 20.0})
+        out = next(o for o in x['outbounds'] if o['tag'] == 'lim%d' % slow['id'])
+        self.assertEqual(out['streamSettings']['sockopt']['mark'], 0x56000000 | slow['id'])
+        self.assertIn({'user': ['u%d' % slow['id']], 'outboundTag': 'lim%d' % slow['id']}, x['routing']['rules'])
+        self.assertNotIn('u%d' % slow['id'], hy['auth']['userpass'])
+        self.assertIn('u%d' % fast['id'], hy['auth']['userpass'])
+        marks = {o['tag']: o.get('routing_mark') for o in tuic['outbounds']}
+        self.assertEqual(marks['u%d' % slow['id']], 0x56000000 | slow['id'])
+        self.assertIsNone(marks['u%d' % fast['id']])
+        # where limits cannot be enforced nothing changes (no marks, Hysteria for everyone)
+        with mock.patch.object(cores.shaper, 'active', return_value=False):
+            self.assertEqual(cores.limits(users), {})
+            self.assertIn('u%d' % slow['id'], cores.hysteria_config(s, users)['auth']['userpass'])
+            self.assertFalse(any(o['tag'].startswith('lim') for o in cores.xray_config(s, users)['outbounds']))
+        with mock.patch('vps2vpn.shaper.active', return_value=True):
+            self.assertNotIn('hy2', {n['type'] for n in subscription.nodes(db.settings(), db.user(slow['id']))})
+            self.assertIn('hy2', {n['type'] for n in subscription.nodes(db.settings(), db.user(fast['id']))})
+
+    def test_shaper_script_limits_both_directions_of_marked_accounts_only(self):
+        from vps2vpn import shaper
+        text = shaper.script('eth0', {5: 20, 9: 0.5})
+        self.assertIn('class add dev eth0 parent 1a5: classid 1a5:10 htb rate 20000kbit ceil 20000kbit', text)
+        self.assertIn('class add dev v2vifb0 parent 1a5: classid 1a5:11 htb rate 500kbit ceil 500kbit', text)
+        self.assertIn('handle 0x56000005 fw classid 1a5:10', text)
+        self.assertIn('handle 0x56000000/0xff000000 fw action mirred egress redirect dev v2vifb0', text)
+        self.assertIn('action connmark', text)
+        self.assertIn('ct mark set meta mark', shaper.NFT_RULES)
+
+    def test_node_holds_the_speed_the_main_server_sends(self):
+        snap = {'master': 'main', 'master_id': 'm1', 'users': [
+            {'id': 7, 'name': 'ann', 'uuid': '11111111-2222-4333-8444-555555555555', 'hy2_pass': 'p' * 24,
+             'enabled': True, 'expire_at': 0, 'limit_mbps': 12.5}]}
+        with mock.patch.object(web, 'apply_async', lambda *a, **k: None):
+            cluster.handle_sync(db.settings(), snap)
+            mine = next(u for u in db.users() if u['remote_id'] == 7)
+            self.assertEqual(db.limit_mbps(mine), 12.5)
+            snap['users'][0]['limit_mbps'] = 0
+            cluster.handle_sync(db.settings(), snap)
+            self.assertEqual(db.limit_mbps(next(u for u in db.users() if u['remote_id'] == 7)), 0.0)
+            snap['users'][0]['limit_mbps'] = -1
+            with self.assertRaises(ValueError):
+                cluster.handle_sync(db.settings(), snap)
+        u = mk('pushed', 1, throttle_mbps=4, throttled=1)
+        self.assertEqual(cluster.push_users(None, [u])[0]['limit_mbps'], 4.0)
+
+    def test_invites_carry_servers_and_speed_and_member_codes_inherit_them(self):
+        code = members.create_invite('admin', 50, 7, servers=['abcd1234'], speed_mbps=30, throttle_mbps=2)['code']
+        uid = members.register(code, 'newbie', 'goodpassword1')
+        u = db.user(uid)
+        self.assertEqual((u['servers'], u['speed_mbps'], u['throttle_mbps']), ('abcd1234', 30.0, 2.0))
+        sub = members.create_invite('member', 5, 7, inviter=uid)
+        self.assertEqual((sub['servers'], sub['speed_mbps'], sub['throttle_mbps']), ('abcd1234', 30.0, 2.0))
+        with self.assertRaises(members.Refused):
+            members.create_invite('admin', 50, 7, servers=['not ok'])
+        with self.assertRaises(members.Refused):
+            members.create_invite('admin', 50, 7, speed_mbps=-3)
+        # and they survive a backup round trip
+        backup = json.loads(json.dumps(db.export_all()))
+        db.import_all(json.loads(json.dumps(backup)))
+        self.assertEqual(db.user(uid)['servers'], 'abcd1234')
+        self.assertEqual(db.invite_by_code(sub['code'])['speed_mbps'], 30.0)
+        for field, value in (('speed_mbps', 'fast'), ('throttle_mbps', -1), ('servers', 'Not,ok!'), ('throttled', 2)):
+            bad = json.loads(json.dumps(backup))
+            bad['users'][0][field] = value
+            with self.assertRaises(ValueError, msg=field):
+                db.import_all(bad)
+        bad = json.loads(json.dumps(backup))
+        bad['settings']['traffic_rate'] = 1000
+        with self.assertRaises(ValueError):
+            db.import_all(bad)
+
+    def test_doctor_says_when_speed_limits_do_not_hold(self):
+        from vps2vpn import doctor, shaper
+        self.assertEqual(doctor.speed_limits(), [])
+        mk('capped', 0, speed_mbps=10)
+        with mock.patch.object(shaper, 'active', return_value=False), \
+                mock.patch.object(shaper, 'available', return_value=False):
+            self.assertIsNone(doctor.speed_limits()[0]['ok'])
+        with mock.patch.object(shaper, 'active', return_value=False), \
+                mock.patch.object(shaper, 'available', return_value=True):
+            r = doctor.speed_limits()[0]
+            self.assertFalse(r['ok'])
+            self.assertIn('install.sh', r['fix'])
+        with mock.patch.object(shaper, 'active', return_value=True):
+            self.assertTrue(doctor.speed_limits()[0]['ok'])
+
+
 if __name__ == '__main__':
     unittest.main()
 

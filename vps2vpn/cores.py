@@ -14,7 +14,7 @@ import time
 import urllib.request
 import uuid
 
-from . import certs, db, paths, system
+from . import certs, db, paths, shaper, system
 
 XRAY_UNIT = 'vps2vpn-xray'
 HY2_UNIT = 'vps2vpn-hysteria'
@@ -44,7 +44,15 @@ def _listen_addr():
 
 
 def active_users():
-    return [u for u in db.users() if u['enabled']]
+    """Accounts the cores here serve: enabled, and (a main server's own accounts) allowed on this server."""
+    return [u for u in db.users() if u['enabled'] and (u['remote_id'] or db.allowed_on(u, db.MAIN_SERVER))]
+
+
+def limits(users):
+    """{uid: Mbps} of the accounts held to a speed here, or {} where limits cannot be enforced."""
+    if not users or not shaper.active():
+        return {}
+    return {u['id']: db.limit_mbps(u) for u in users if db.limit_mbps(u) > 0}
 
 
 def email(u):
@@ -75,6 +83,12 @@ def xray_config(s, users):
         rules.append({'domain': ['geosite:private'], 'outboundTag': 'block'})
     if s['block_bt']:
         rules.append({'protocol': ['bittorrent'], 'outboundTag': 'block'})
+    held = limits(users)
+    # A limited account leaves through an outbound of its own whose connections carry its mark (see shaper).
+    rules += [{'user': ['u%d' % uid], 'outboundTag': 'lim%d' % uid} for uid in sorted(held)]
+    limited_out = [{'protocol': 'freedom', 'tag': 'lim%d' % uid,
+                    'streamSettings': {'sockopt': {'domainStrategy': 'UseIP', 'mark': shaper.mark(uid)}}}
+                   for uid in sorted(held)]
     return {
         'log': {'loglevel': 'warning', 'access': 'none'},
         # HandlerService lets the panel add users to the running core (_xray_hot_add) instead of restarting it
@@ -101,7 +115,7 @@ def xray_config(s, users):
         'outbounds': [
             {'protocol': 'freedom', 'tag': 'direct', 'streamSettings': {'sockopt': {'domainStrategy': 'UseIP'}}},
             {'protocol': 'blackhole', 'tag': 'block'},
-        ],
+        ] + limited_out,
         # IPIfNonMatch resolves domain destinations before evaluating geoip:private, blocking DNS-based SSRF.
         'routing': {'domainStrategy': 'IPIfNonMatch', 'rules': rules},
     }
@@ -120,8 +134,10 @@ def _quic_windows(mem_mb=None):
 def hysteria_config(s, users):
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
     stream_win, conn_win = _quic_windows()
+    # Hysteria cannot hold one account to a speed: limited accounts use Reality and TUIC instead (see shaper).
+    held = limits(users)
     # With no enabled user the core must still start, but nobody may log in: one random placeholder account.
-    userpass = {email(u): u['hy2_pass'] for u in users} or {'u0': _placeholder(s)}
+    userpass = {email(u): u['hy2_pass'] for u in users if u['id'] not in held} or {'u0': _placeholder(s)}
     conf = {
         'listen': ':%d' % s['hy2_port'],
         'tls': {'cert': cert, 'key': key},
@@ -152,6 +168,7 @@ def tuic_config(s, users):
     """sing-box serving TUIC v5. Each user leaves through an outbound tagged with their stats key, so the
     Clash API's connection list tells whose traffic is whose (official builds have no per-user counters)."""
     cert, key = certs.current(s.get('domain') or s.get('public_host', ''))
+    held = limits(users)
     # With no enabled user sing-box still needs one user to start: a random placeholder nobody knows.
     tuic_users = ([{'name': email(u), 'uuid': u['uuid'], 'password': u['hy2_pass']} for u in users]
                   or [{'name': 'u0', 'uuid': str(uuid.uuid5(uuid.NAMESPACE_OID, _placeholder(s))), 'password': _placeholder(s)}])
@@ -164,7 +181,9 @@ def tuic_config(s, users):
             'users': tuic_users,
             'congestion_control': 'bbr', 'auth_timeout': '3s', 'zero_rtt_handshake': False, 'heartbeat': '10s',
             'tls': {'enabled': True, 'alpn': ['h3'], 'certificate_path': cert, 'key_path': key}}],
-        'outbounds': [{'type': 'direct', 'tag': 'direct'}] + [{'type': 'direct', 'tag': email(u)} for u in users],
+        'outbounds': [{'type': 'direct', 'tag': 'direct'}] + [
+            dict({'type': 'direct', 'tag': email(u)}, **({'routing_mark': shaper.mark(u['id'])} if u['id'] in held else {}))
+            for u in users],
         'route': {'rules': ([{'action': 'sniff'}, {'protocol': 'bittorrent', 'action': 'reject'}] if s['block_bt'] else [])
                   # resolve domains first so ip_is_private also catches names pointing at private addresses
                   + [{'action': 'resolve'}, {'ip_is_private': True, 'action': 'reject'}]
@@ -351,7 +370,11 @@ def save_traffic(s=None):
         # Accounts deleted meanwhile have nobody left to bill.
         for uid in [uid for uid in _unsaved if uid not in known]:
             del _unsaved[uid]
-        deltas = [(uid, up, down) for uid, (up, down) in _unsaved.items()]
+        # This server's multiplier bills its own accounts; a main server's accounts are billed there.
+        rate = float(s.get('traffic_rate', 1)) if db.valid_rate(s.get('traffic_rate', 1)) else 1.0
+        remote = {u['id'] for u in db.users() if u['remote_id']} if rate != 1 else set()
+        deltas = [(uid, up, down) if uid in remote else (uid, db.billed(up, rate), db.billed(down, rate))
+                  for uid, (up, down) in _unsaved.items()]
         if deltas:
             db.add_traffic_many(deltas)
         _unsaved.clear()
@@ -418,6 +441,8 @@ def apply(s=None, force=False):
                 r = system.systemctl('restart', unit)
                 if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
                     errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
+        # after the cores: they now mark exactly the accounts these classes are for
+        shaper.apply(limits(active_users()))
         hop = system.port_hopping(s)
         if hop and hop.startswith('failed'):
             # Subscriptions stop listing the hop range; the watchdog tries again every 5 minutes.

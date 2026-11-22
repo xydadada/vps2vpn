@@ -83,8 +83,69 @@ MIGRATIONS = {
               ('paused_until', 'INTEGER NOT NULL DEFAULT 0'),      # end of a short pause for too many devices
               ('expire_after_days', 'INTEGER NOT NULL DEFAULT 0'),   # lifetime that starts on first use
               ('sub_fetched_at', 'INTEGER NOT NULL DEFAULT 0'),      # last time an app downloaded the subscription
-              ('sub_ua', "TEXT NOT NULL DEFAULT ''")],               # ...and its User-Agent (sanitised, short)
+              ('sub_ua', "TEXT NOT NULL DEFAULT ''"),                # ...and its User-Agent (sanitised, short)
+              ('servers', "TEXT NOT NULL DEFAULT ''"),               # servers it may use: '' = all, else ids
+              ('speed_mbps', 'REAL NOT NULL DEFAULT 0'),             # speed cap at all times (0 = none)
+              ('throttle_mbps', 'REAL NOT NULL DEFAULT 0'),          # quota used up: slow down to this (0 = stop)
+              ('throttled', 'INTEGER NOT NULL DEFAULT 0')],          # ...and it is slowed down right now
+    'invites': [('servers', "TEXT NOT NULL DEFAULT ''"),           # what accounts made with the code get
+                ('speed_mbps', 'REAL NOT NULL DEFAULT 0'),
+                ('throttle_mbps', 'REAL NOT NULL DEFAULT 0')],
 }
+
+MAIN_SERVER = 'main'        # this server in an account's server list; joined servers use their own ids
+SERVER_ID_RE = re.compile(r'[0-9a-z]{1,16}')
+MAX_MBPS = 100000
+
+
+def server_list(u):
+    """The servers an account may use, or None for all of them."""
+    raw = (u.get('servers') if isinstance(u, dict) else u['servers']) or ''
+    return None if not raw else [x for x in raw.split(',') if x]
+
+
+def allowed_on(u, server_id):
+    ids = server_list(u)
+    return ids is None or server_id in ids
+
+
+def clean_servers(value):
+    """Panel/backup input -> stored text. '' or a list (all = every server); unknown-looking ids are refused."""
+    if value in ('', None) or value == []:
+        return ''
+    if isinstance(value, str):
+        value = value.split(',')
+    if not isinstance(value, list) or len(value) > 200:
+        raise ValueError('servers: expected a list of server ids')
+    out = []
+    for x in value:
+        if not isinstance(x, str) or not SERVER_ID_RE.fullmatch(x):
+            raise ValueError('servers: invalid server id')
+        if x not in out:
+            out.append(x)
+    if not out:
+        raise ValueError('servers: pick at least one server')
+    return ','.join(out)
+
+
+def valid_rate(v):
+    """A traffic multiplier: 0 (free) up to 100 times."""
+    return type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 100
+
+
+def billed(n, rate):
+    """Bytes as they count against quotas on a server with this multiplier."""
+    return n if rate == 1 else int(n * rate + 0.5)
+
+
+def limit_mbps(u):
+    """The speed an account is held to right now (0 = none): its cap, or its slow-down speed while its
+    quota is used up, whichever is lower."""
+    caps = [float(u['speed_mbps'] or 0)]
+    if u['throttled']:
+        caps.append(float(u['throttle_mbps'] or 0))
+    caps = [c for c in caps if c > 0]
+    return min(caps) if caps else 0.0
 
 # Everything the panel can be configured with, and the defaults a fresh install starts from.
 DEFAULTS = {
@@ -169,7 +230,8 @@ DEFAULTS = {
     'node_master': '',          # set on a node once a main server has synced with it (its name)
     'node_master_id': '',       # ...and its identity: a second, different main server is refused
     'install_id': '',           # random identity of this install (sent to nodes as the main server's id)
-    'servers': [],              # main server: [{id, name, url, key, pin, info, idmap, last_ok, error}]
+    'servers': [],              # main server: [{id, name, url, key, pin, info, idmap, last_ok, error, rate}]
+    'traffic_rate': 1.0,        # this server's traffic counts this many times against quotas (joined: per server)
 }
 
 _DEFAULT_SNAPSHOT = json.dumps(DEFAULTS)
@@ -332,7 +394,8 @@ def ensure_secrets():
 
 
 # --- users --------------------------------------------------------------------
-USER_FIELDS = ('name', 'quota_gb', 'expire_at', 'reset_day', 'enabled', 'note', 'max_ips', 'expire_after_days')
+USER_FIELDS = ('name', 'quota_gb', 'expire_at', 'reset_day', 'enabled', 'note', 'max_ips', 'expire_after_days',
+               'servers', 'speed_mbps', 'throttle_mbps')
 
 
 def users():
@@ -406,7 +469,8 @@ def update_user(uid, **kv):
     sets, args = [], []
     for k, v in kv.items():
         if k not in USER_FIELDS + ('disabled_reason', 'used_up', 'used_down', 'last_reset', 'last_seen', 'login_hash',
-                                   'invited_by', 'invite_deduct', 'remote_id', 'uuid', 'hy2_pass', 'paused_until'):
+                                   'invited_by', 'invite_deduct', 'remote_id', 'uuid', 'hy2_pass', 'paused_until',
+                                   'throttled'):
             raise KeyError(k)
         sets.append(k + '=?')
         args.append(v)
@@ -615,7 +679,8 @@ def end_all_member_sessions():
 
 # --- invites, requests, events ---------------------------------------------------
 INVITE_COLS = ('id', 'code', 'kind', 'inviter', 'quota_gb', 'expire_days', 'reset_day',
-               'max_uses', 'uses', 'used_by', 'valid_until', 'status', 'note', 'created_at')
+               'max_uses', 'uses', 'used_by', 'valid_until', 'status', 'note', 'created_at',
+               'servers', 'speed_mbps', 'throttle_mbps')
 REQUEST_COLS = ('id', 'user_id', 'add_gb', 'reason', 'status', 'answer', 'created_at', 'decided_at')
 
 
@@ -714,12 +779,13 @@ def export_all():
             'requests': [dict(r) for r in q('SELECT * FROM requests')]}
 
 
-IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': '', 'sub_ua': ''}
+IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': '', 'sub_ua': '',
+                   'servers': ''}
 _IMPORT_INT = ('expire_at', 'reset_day', 'used_up', 'used_down', 'enabled', 'last_seen', 'created_at', 'invited_by',
-               'remote_id', 'max_ips', 'paused_until', 'expire_after_days', 'sub_fetched_at')
-_IMPORT_REAL = ('quota_gb', 'invite_deduct')
+               'remote_id', 'max_ips', 'paused_until', 'expire_after_days', 'sub_fetched_at', 'throttled')
+_IMPORT_REAL = ('quota_gb', 'invite_deduct', 'speed_mbps', 'throttle_mbps')
 _IMPORT_TEXT = ('name', 'uuid', 'hy2_pass', 'sub_token', 'disabled_reason', 'note', 'last_reset', 'login_hash',
-                'sub_ua')
+                'sub_ua', 'servers')
 _SQLITE_MAX = (1 << 63) - 1
 
 
@@ -803,6 +869,20 @@ def _check_import_invite(inv, i, codes):
         raise ValueError('invite %d: invalid quota_gb' % i)
     if 'note' in inv and not isinstance(inv['note'], str):
         raise ValueError('invite %d: invalid note' % i)
+    _check_import_limits(inv, 'invite %d' % i)
+
+
+def _check_import_limits(row, what):
+    """Server list and speed fields of an account or invite row."""
+    try:
+        if clean_servers(row.get('servers', '')) != (row.get('servers') or ''):
+            raise ValueError('not in stored form')
+    except ValueError:
+        raise ValueError('%s: invalid servers' % what)
+    for k in ('speed_mbps', 'throttle_mbps'):
+        v = row.get(k, 0)
+        if type(v) not in (int, float) or not 0 <= v <= MAX_MBPS or not math.isfinite(v):
+            raise ValueError('%s: invalid %s' % (what, k))
 
 
 def _check_import_servers(servers):
@@ -819,6 +899,8 @@ def _check_import_servers(servers):
         ids.add(x['id'])
         if 'enabled' in x and type(x['enabled']) is not bool:
             raise ValueError('server %d: invalid enabled' % i)
+        if 'rate' in x and not valid_rate(x['rate']):
+            raise ValueError('server %d: invalid traffic rate' % i)
         info, idmap = x.get('info') or {}, x.get('idmap') or {}
         try:
             cluster._validate_sync_answer({'ok': True, 'info': info, 'idmap': idmap, 'traffic': {}})
@@ -851,6 +933,9 @@ def _check_import_user(u, i):
             raise ValueError('user %d: %s must be a number' % (i, k))
     if u.get('enabled', 1) not in (0, 1) or not 0 <= u.get('reset_day', 0) <= 28:
         raise ValueError('user %d: invalid enabled or reset day' % i)
+    if u.get('throttled', 0) not in (0, 1):
+        raise ValueError('user %d: invalid throttled' % i)
+    _check_import_limits(u, 'user %d' % i)
 
 
 def import_all(data):
@@ -866,6 +951,8 @@ def import_all(data):
     for flag in ('setup_done', 'member_enabled'):
         if flag in keep and type(keep[flag]) is not bool:
             raise ValueError('invalid %s in backup' % flag)
+    if 'traffic_rate' in keep and not valid_rate(keep['traffic_rate']):
+        raise ValueError('invalid traffic_rate in backup')
     for key in ('panel_path', 'member_path'):
         value = keep.get(key, DEFAULTS[key])
         if not isinstance(value, str) or (value and not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)):
@@ -896,7 +983,7 @@ def import_all(data):
     cols = ('id', 'name', 'uuid', 'hy2_pass', 'sub_token', 'quota_gb', 'expire_at', 'reset_day', 'used_up',
             'used_down', 'enabled', 'disabled_reason', 'note', 'last_seen', 'last_reset', 'created_at',
             'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
-            'sub_fetched_at', 'sub_ua')
+            'sub_fetched_at', 'sub_ua', 'servers', 'speed_mbps', 'throttle_mbps', 'throttled')
     table_cols = {'invites': INVITE_COLS, 'requests': REQUEST_COLS}
     with transaction() as c:
         c.execute('DELETE FROM settings')

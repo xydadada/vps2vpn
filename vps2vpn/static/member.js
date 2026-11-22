@@ -29,7 +29,7 @@ const T = {
     saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
     notice: '管理员公告', paused_quota: '这个月的流量用完了，所以暂时停用。可以在下面「申请增加流量」，或者等到下次重置日自动恢复。',
     paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限，已自动暂停 10 分钟，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
-    expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。',
+    expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或加流量后恢复。', capped: '这个账号限速 {mbps} Mbps。',
     security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不小心发给了别人？换一个新的，旧链接立刻失效。换完后每台设备都要重新导入一次。',
     rotate_q: '更换后旧链接马上不能用了，所有设备都要重新导入。确定吗？', rotated: '已更换，请重新导入到 App'
   },
@@ -59,7 +59,7 @@ const T = {
     saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
     notice: 'Notice from the admin', paused_quota: 'This month\u2019s quota is used up, so the account is paused. Ask for more below, or wait for the next reset day.',
     paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once; the account is paused for 10 minutes and will resume automatically.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
-    expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.',
+    expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.', slowed: 'This period\'s data is used up: slowed down to {mbps} Mbps until the next reset or more data.', capped: 'This account is limited to {mbps} Mbps.',
     security: 'Account security', rotate: 'New subscription link', rotate_tip: 'Shared your link by mistake? Get a new one; the old link stops working at once. Re-import it on every device.',
     rotate_q: 'The old link stops working immediately and every device must re-import. Continue?', rotated: 'Done. Import the new link into your apps.'
   }
@@ -203,7 +203,9 @@ function statusAlerts(me, used, q) {
   else {
     const d = me.expire_at ? Math.ceil((me.expire_at * 1000 - Date.now()) / 864e5) : 0;
     if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: dateStr(me.expire_at)})));
-    if (q && used / q >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
+    if (me.throttled) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('slowed'), {mbps: me.limit_mbps})));
+    else if (q && used / q >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
+    if (me.speed_mbps && !me.throttled) out.push(h('div', {class: 'alert'}, icon('alert'), fill(t('capped'), {mbps: me.speed_mbps})));
   }
   return out;
 }

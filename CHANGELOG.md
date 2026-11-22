@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.17
+
+**Airport features**
+- **Speed limit per account** (Mbps). Set it on the account, on an invite code (accounts made from it get it), or leave it at 0 for none. It holds on every server the account uses: the main server sends each joined server the speed to keep.
+- **Slow down instead of stopping**: an account can be given a slow-down speed for when its quota is used up. It then keeps working at that speed until the monthly reset or more quota, and the member page, the apps' notice line and Telegram say so. With no slow-down speed an account stops as before.
+- **Servers per account**: with several servers, an account (or an invite code) can be limited to some of them. By default it may use all of them, including ones added later. Member invite codes carry the inviter's servers and speed settings.
+- **Traffic rate per server**: each joined server, and this one, can count its traffic at a rate (x2, x0.5, 0 = free), as airports do. Group names in subscriptions show it ("Tokyo x2").
+
+**How speed limits work**
+- Xray (Reality) and sing-box (TUIC) mark a limited account's connections and the kernel's traffic control (tc HTB with an ifb device for download) holds them to the speed. Other accounts are untouched.
+- Hysteria 2 cannot limit one account, so a limited account gets no Hysteria 2 entries where limits work; Reality and TUIC stay.
+- Container VPSes (OpenVZ, LXC) lack tc/ifb: the panel says so, the self-check reports it, and limited accounts run at full speed.
+- Upgrade with the install command as usual: it also lets the Xray and TUIC services mark traffic. A server whose services cannot mark yet keeps limited accounts at full speed, and the self-check says how to fix it.
+
+**Backup and restore**
+- Backups carry the new account and invite fields and the rates; a restore checks them.
+
 ## 0.2.16
 
 **Telegram**

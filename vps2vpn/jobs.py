@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from . import abuse, aicheck, certs, clientsync, cluster, cores, db, members, monitor, notify, paths, rules, system
+from . import abuse, aicheck, certs, clientsync, cluster, cores, db, members, monitor, notify, paths, rules, shaper, system
 
 LOG = []          # recent events shown in the panel
 _log_lock = threading.Lock()
@@ -104,6 +104,22 @@ def enforce(now=None):
                     log('monthly reset: %s' % u['name'])
                 quota = members.effective_quota(u, now=now, index=invitees)
                 reason = over_limit(u, now, quota)
+                # Quota used up on an account that slows down instead of stopping: it keeps working, held to
+                # its slow-down speed until the next reset or more quota.
+                slow = int(reason == 'quota' and (u['throttle_mbps'] or 0) > 0)
+                if slow:
+                    reason = ''
+                if slow != (u['throttled'] or 0):
+                    db.update_user(u['id'], throttled=slow)
+                    u.update(throttled=slow)
+                    pass_changed = True
+                    if slow:
+                        log('slowed %s down to %g Mbps (quota used up)' % (u['name'], u['throttle_mbps']))
+                        notify.send('%s used up %g GB: slowed down to %g Mbps / %s 流量已用完，已降速到 %g Mbps' % (
+                            u['name'], quota, u['throttle_mbps'], u['name'], u['throttle_mbps']),
+                            key='slow-%d-%s' % (u['id'], u['last_reset'] or 'total'), every=40 * 86400)
+                    else:
+                        log('full speed again: %s' % u['name'])
                 if device_due:
                     if reason:
                         db.update_user(u['id'], enabled=0, disabled_reason=reason, paused_until=0)
@@ -846,6 +862,8 @@ class Scheduler:
             expiry_reminders()
         if self.due('watchdog', 300) and paths.LIVE:
             watchdog(s)
+            # tc state is lost on reboot or when the network card changes; cheap when nothing changed
+            shaper.apply(cores.limits(cores.active_users()), log)
         if self.due('ip', 6 * 3600) or self.ipwatch.seen:
             # Asks outside servers for our address, which can take several timeouts: beside the quota pass.
             # One at a time, so IpWatch's state has a single writer; cores.apply takes its own lock.

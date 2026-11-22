@@ -196,6 +196,24 @@ def rule_mirror():
                    'press "Update routing rules now"; the server needs to reach github.com')]
 
 
+def speed_limits():
+    """Accounts with a speed limit on a server that cannot hold them to it."""
+    from . import shaper
+    limited = [u for u in db.users() if u['enabled'] and db.limit_mbps(u) > 0]
+    if not limited:
+        return []
+    if shaper.active():
+        st = shaper.status()
+        ok = not st['error']
+        return [_check('speed_limits', ok, '%d account(s) limited on %s' % (len(limited), st['dev'] or '?')
+                       if ok else st['error'], 'vps2vpn apply --force   (then see journalctl -u vps2vpn)')]
+    if not shaper.available():
+        return [_check('speed_limits', None, '%d account(s) have a speed limit, but this kernel has no tc/ifb '
+                       '(container VPS?): they run at full speed' % len(limited))]
+    return [_check('speed_limits', False, 'the Xray/TUIC services may not mark traffic yet',
+                   'bash install.sh   (re-run once: it lets the cores mark limited accounts)')]
+
+
 def run_all():
     s = db.settings()
     out = []
@@ -204,7 +222,7 @@ def run_all():
             out += fn(s)
         except Exception as e:      # a broken check must not hide the others
             out.append(_check(fn.__name__, None, 'check failed: %s' % e))
-    for fn in (clock, outbound, resources, versions, rule_mirror):
+    for fn in (clock, outbound, resources, versions, rule_mirror, speed_limits):
         try:
             out += fn()
         except Exception as e:

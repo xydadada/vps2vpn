@@ -349,6 +349,39 @@ class AdminWeb(tu.Base):
         self.assertEqual(self.req('POST', '/adm/api/restore', before)[0], 200)
         self.assertEqual(db.q('SELECT COUNT(*) AS n FROM alerts_sent')[0]['n'], 0)
 
+    def test_speed_limits_servers_and_traffic_rate_over_https(self):
+        self.login()
+        st, body, _ = self.req('POST', '/adm/api/users', {'name': 'capped', 'quota_gb': 5, 'speed_mbps': 20,
+                                                          'throttle_mbps': 2, 'servers': ['main']})
+        self.assertEqual(st, 200, body)
+        uid = json.loads(body)['id']
+        u = db.user(uid)
+        self.assertEqual((u['speed_mbps'], u['throttle_mbps'], u['servers']), (20.0, 2.0, 'main'))
+        for bad in ({'speed_mbps': -1}, {'throttle_mbps': 'x'}, {'speed_mbps': 10 ** 9}, {'servers': ['Bad id']},
+                    {'servers': 'main;rm'}):
+            st, body, _ = self.req('POST', '/adm/api/users/%d/save' % uid, bad)
+            self.assertEqual(st, 400, (bad, body))
+        self.assertEqual(db.user(uid)['speed_mbps'], 20.0)
+        st, body, _ = self.req('POST', '/adm/api/users/%d/save' % uid, {'speed_mbps': 0, 'servers': ''})
+        self.assertEqual(st, 200, body)
+        self.assertEqual((db.user(uid)['speed_mbps'], db.user(uid)['servers']), (0.0, ''))
+        st, body, _ = self.req('POST', '/adm/api/invites', {'kind': 'admin', 'quota_gb': 10, 'valid_days': 7,
+                                                            'speed_mbps': 50, 'servers': ['main']})
+        self.assertEqual(st, 200, body)
+        st, body, _ = self.req('GET', '/adm/api/invites')
+        inv = json.loads(body)['invites'][0]
+        self.assertEqual((inv['speed_mbps'], inv['servers']), (50, ['main']))
+        for value in (-1, 101, 'two', float('inf')):
+            st, body, _ = self.req('POST', '/adm/api/settings', {'traffic_rate': value}) if value != float('inf') \
+                else self.req('POST', '/adm/api/settings', {'traffic_rate': '1e999'})
+            self.assertEqual(st, 400, (value, body))
+        self.assertEqual(self.req('POST', '/adm/api/settings', {'traffic_rate': 1.5})[0], 200)
+        self.assertEqual(db.settings()['traffic_rate'], 1.5)
+        st, body, _ = self.req('GET', '/adm/api/state')
+        row = next(r for r in json.loads(body)['users'] if r['id'] == uid)
+        self.assertEqual((row['throttle_mbps'], row['limit_mbps']), (2.0, 0.0))
+        self.assertIn('active', json.loads(body)['shaper'])
+
     def test_batch_bulk_and_export(self):
         self.login()
         st, body, _ = self.req('POST', '/adm/api/users-batch', {'prefix': 'team', 'count': 3, 'quota_gb': 10,

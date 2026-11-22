@@ -31,7 +31,7 @@ import urllib.error
 import urllib.parse
 
 from . import (VERSION, abuse, aicheck, certs, cluster, cores, db, doctor, jobs, members, monitor, notify, paths, qr, rules,
-               secure, subscription, system)
+               secure, shaper, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
 _fails = {}                    # rate-limit bucket -> [monotonic timestamps] of failed attempts
@@ -1241,7 +1241,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             row = {k: u[k] for k in ('id', 'name', 'quota_gb', 'expire_at', 'reset_day', 'used_up', 'used_down',
                                      'enabled', 'disabled_reason', 'note', 'last_seen', 'created_at', 'invited_by',
                                      'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
-                                     'sub_fetched_at', 'sub_ua')}
+                                     'sub_fetched_at', 'sub_ua', 'speed_mbps', 'throttle_mbps', 'throttled')}
+            row['servers'] = db.server_list(u)
+            row['limit_mbps'] = db.limit_mbps(u)
             row['sub_url'] = sub
             row['quota_eff'] = members.effective_quota(u, index=invitees)
             row['shared_gb'] = members.given_away(u['id'], index=invitees)
@@ -1269,6 +1271,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'server_month': {k: v for k, v in (s['server_month'] or {}).items() if not k.startswith('last_')},
             'renew_days': jobs.renew_days_left(s), 'line_trouble': self.trouble_view(s),
             'client': {'found': client_files(), 'dir': paths.CLIENT},
+            'shaper': shaper.status(),
         })
 
     def trouble_view(self, s):
@@ -1334,7 +1337,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': fields}, 400)
         uid = db.add_user(name, fields.get('quota_gb', 0), fields.get('expire_at', 0), fields.get('reset_day', 0),
                           fields.get('note', ''), max_ips=fields.get('max_ips', 0),
-                          expire_after_days=fields.get('expire_after_days', 0))
+                          expire_after_days=fields.get('expire_after_days', 0), **_limit_fields(fields))
         apply_async()
         return self.json({'ok': True, 'id': uid})
 
@@ -1363,7 +1366,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             made.append(db.add_user(name, fields.get('quota_gb', 0), fields.get('expire_at', 0),
                                     fields.get('reset_day', 0), fields.get('note', ''),
                                     max_ips=fields.get('max_ips', 0),
-                                    expire_after_days=fields.get('expire_after_days', 0)))
+                                    expire_after_days=fields.get('expire_after_days', 0), **_limit_fields(fields)))
         apply_async()
         return self.json({'ok': True, 'ids': made})
 
@@ -1541,7 +1544,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         rec = lambda: {'invite': members.invite_view(db.invite(members.create_invite(
             d.get('kind', 'admin'), d.get('quota_gb', 0), d.get('valid_days', 7), d.get('max_uses', 1),
             inviter=inviter, expire_days=d.get('expire_days', 0), reset_day=d.get('reset_day', 0),
-            note=d.get('note', ''))['id']), names, reg)}
+            note=d.get('note', ''), servers=d.get('servers', ''), speed_mbps=d.get('speed_mbps', 0),
+            throttle_mbps=d.get('throttle_mbps', 0))['id']), names, reg)}
         return self.refused(rec)
 
     def api_requests(self, method, s):
@@ -1578,13 +1582,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cluster.remove_server(sid)
         elif action == 'save':
             d = self.body_json()
-            fields = {k: d[k] for k in ('name', 'enabled') if k in d}
+            fields = {k: d[k] for k in ('name', 'enabled', 'rate') if k in d}
             if 'enabled' in fields:
                 try:
                     fields['enabled'] = as_bool(fields['enabled'])
                 except ValueError:
                     return self.json({'error': 'enabled: expected true or false'}, 400)
-            cluster.update_server(sid, **fields)
+            if 'rate' in fields:
+                try:
+                    fields['rate'] = float(fields['rate'])
+                except (TypeError, ValueError, OverflowError):
+                    return self.json({'error': 'traffic rate must be 0-100'}, 400)
+            try:
+                cluster.update_server(sid, **fields)
+            except ValueError as e:
+                return self.json({'error': str(e)}, 400)
         else:
             cluster.sync_all(jobs.log)
         return self.json({'ok': True, 'servers': cluster.view(db.settings())})
@@ -1815,6 +1827,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'invitees': [{'name': x['name'], 'quota_gb': x['invite_deduct'], 'active': members.deducting(x)}
                          for x in invitees.get(u['id'], ())],
             'online': online, 'servers': 1 + len([x for x in s['servers'] if x.get('info')]),
+            'speed_mbps': u['speed_mbps'] or 0, 'throttle_mbps': u['throttle_mbps'] or 0, 'throttled': bool(u['throttled']),
+            'limit_mbps': db.limit_mbps(u),
             'ai': ai_view(aicheck.latest()),
             'client': client_info(s, dl_url),
         }
@@ -1961,6 +1975,10 @@ def _dummy_hash():
 MAX_ACCOUNT_EXPIRE_AT = 253402300799
 
 
+def _limit_fields(fields):
+    return {k: fields[k] for k in ('servers', 'speed_mbps', 'throttle_mbps') if k in fields}
+
+
 def user_fields(d):
     out = {}
     try:
@@ -1998,6 +2016,17 @@ def user_fields(d):
             out['expire_at'] = int(time.time() + days * 86400)
         if 'note' in d:
             out['note'] = str(d['note'])[:200]
+        for k, label in (('speed_mbps', 'speed limit'), ('throttle_mbps', 'slow-down speed')):
+            if k in d:
+                v = float(d[k] or 0)
+                if not math.isfinite(v) or not 0 <= v <= db.MAX_MBPS:
+                    return '%s must be 0-%d Mbps' % (label, db.MAX_MBPS)
+                out[k] = v
+        if 'servers' in d:
+            try:
+                out['servers'] = db.clean_servers(d['servers'])
+            except ValueError as e:
+                return str(e)
         if 'name' in d and str(d['name']).strip():
             out['name'] = str(d['name']).strip()[:32]
     except (TypeError, ValueError, OverflowError):
@@ -2050,6 +2079,14 @@ def validate_settings(d, s):
             if len(clean) > 500:
                 return 'at most 500 domains per list'
             out[k] = clean
+    if 'traffic_rate' in d:
+        try:
+            rate = float(d['traffic_rate'])
+        except (TypeError, ValueError, OverflowError):
+            return 'traffic rate must be 0-100'
+        if not db.valid_rate(rate):
+            return 'traffic rate must be 0-100'
+        out['traffic_rate'] = rate
     if 'language' in d:
         out['language'] = 'en' if d['language'] == 'en' else 'zh'
     if 'member_notice' in d:

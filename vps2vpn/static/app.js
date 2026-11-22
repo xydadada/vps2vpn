@@ -95,7 +95,11 @@ const T = {
     extend_days: '延长多少天（没设到期日的人不受影响）', add_gb_q: '每人增加多少 GB（不限量的人不受影响）', bulk_done: '已处理',
     confirm_bulk_del: '删除后这些人的链接立即失效，不能恢复。', confirm_bulk_rotate: '这些人的旧链接会立刻失效，需要把新链接重新发给他们。',
     batch_add: '批量添加', export_csv: '导出表格', batch_prefix: '名字前缀（生成 前缀-01、前缀-02…）', batch_count: '数量（1–200）', batch_made: '已创建',
-    max_ips: '同时在线设备上限（0 = 不限）', exp_mode: '到期方式', exp_never: '永久有效', exp_date: '指定日期', exp_first: '首次使用后开始计时', exp_days: '从今天起多少天',
+    max_ips: '同时在线设备上限（0 = 不限）', speed_mbps: '限速 Mbps（0 = 不限）', throttle_mbps: '流量用完后降速到 Mbps（0 = 直接停用）',
+    srv_pick: '可用服务器', srv_all: '全部服务器（以后加入的也算）', srv_none: '至少选一台服务器', limited_now: '限速中', slowed: '已降速',
+    shaper_off: '这台服务器的内核不支持按账号限速（容器 VPS 常见），限速设置暂不生效；流量用完的账号仍会降速而不是停用，但速度不受限。',
+    rate: '倍率', rate_tip: '这台服务器的流量按几倍计入额度（机场常见做法，如 ×2 表示 1 GB 记 2 GB；0 = 不计）', rate_this: '本机倍率', rate_set: '设置倍率',
+    inv_limits: '限速与服务器', exp_mode: '到期方式', exp_never: '永久有效', exp_date: '指定日期', exp_first: '首次使用后开始计时', exp_days: '从今天起多少天',
     exp_first_days: '首次使用后多少天到期', exp_waiting: '首用后', r_devices: '设备超限', dev_limit: '设备上限', no_match: '没有符合条件的使用者。',
     sec: '登录安全', totp: '两步验证（2FA）', totp_tip: '开启后，登录时除了密码，还要输入手机验证器 App（Google Authenticator、Microsoft Authenticator、1Password 等）里的 6 位数字。就算密码泄露也登不进来。',
     totp_on: '已开启', totp_off: '未开启', totp_enable: '开启两步验证', totp_disable: '关闭两步验证', totp_scan: '① 用验证器 App 扫码（或手动输入下面的密钥）　② 填入 App 显示的 6 位数字',
@@ -200,7 +204,11 @@ const T = {
     extend_days: 'Days to add (accounts without an expiry are unchanged)', add_gb_q: 'GB to add per person (unlimited accounts are unchanged)', bulk_done: 'Done:',
     confirm_bulk_del: 'Their links stop working immediately. This cannot be undone.', confirm_bulk_rotate: 'Their old links stop working at once; send them the new ones.',
     batch_add: 'Add many', export_csv: 'Export CSV', batch_prefix: 'Name prefix (makes prefix-01, prefix-02 …)', batch_count: 'How many (1–200)', batch_made: 'Created',
-    max_ips: 'Devices online at once (0 = no limit)', exp_mode: 'Expiry', exp_never: 'Never expires', exp_date: 'On a date', exp_first: 'Counted from first use', exp_days: 'Days from today',
+    max_ips: 'Devices online at once (0 = no limit)', speed_mbps: 'Speed limit, Mbps (0 = none)', throttle_mbps: 'When the quota is used up, slow down to Mbps (0 = stop)',
+    srv_pick: 'Servers it may use', srv_all: 'All servers (including ones added later)', srv_none: 'Pick at least one server', limited_now: 'Limited', slowed: 'Slowed down',
+    shaper_off: 'This server\'s kernel cannot limit single accounts (common on container VPSes): speed limits do not apply here yet. Accounts that use up their quota still slow down instead of stopping, but at full speed.',
+    rate: 'Rate', rate_tip: 'How many times this server\'s traffic counts against quotas (as airports do: x2 means 1 GB counts as 2 GB; 0 = free)', rate_this: 'This server\'s rate', rate_set: 'Set rate',
+    inv_limits: 'Speed and servers', exp_mode: 'Expiry', exp_never: 'Never expires', exp_date: 'On a date', exp_first: 'Counted from first use', exp_days: 'Days from today',
     exp_first_days: 'Days after first use', exp_waiting: 'after first use', r_devices: 'too many devices', dev_limit: 'Device limit', no_match: 'No users match.',
     sec: 'Sign-in security', totp: 'Two-step verification (2FA)', totp_tip: 'When on, signing in also needs the 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password …). A leaked password alone is not enough.',
     totp_on: 'on', totp_off: 'off', totp_enable: 'Turn on 2FA', totp_disable: 'Turn off 2FA', totp_scan: '1) Scan with your authenticator app (or type the key below)  2) Enter the 6-digit code it shows',
@@ -708,7 +716,8 @@ function renderUsersList() {
             : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
       h('div', {class: 'c-use'}, usageBar(u)),
       h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
-        [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null),
+        [u.reset_day ? '↻ ' + u.reset_day : '', u.max_ips ? '⧉ ' + u.max_ips : ''].filter(Boolean).join('  ')) : null,
+        u.limit_mbps ? h('div', {class: 'cell-sub'}, (u.throttled ? t('slowed') : t('limited_now')) + ' ' + u.limit_mbps + ' Mbps') : null),
       h('div', {class: 'c-state'}, userState(u)),
       h('div', {class: 'row-acts c-acts'}, h('button', {class: 'btn sm primary', onclick: () => openUser(u.id)}, icon('link'), t('share')),
         h('button', {class: 'btn sm icon', title: t('edit'), onclick: () => editUser(u)}, icon('edit'))));
@@ -835,14 +844,43 @@ async function openUser(id, first) {
   }).catch(() => {});
 }
 
+function serverChoices() {
+  return [{id: 'main', name: (S.data.settings.node_name || 'vps2vpn') + (S.data.settings.traffic_rate !== 1 ? ' ×' + S.data.settings.traffic_rate : '')}]
+    .concat((S.data.servers || []).map(x => ({id: x.id, name: x.name + (x.rate !== 1 ? ' ×' + x.rate : '')})));
+}
+
+function serverPicker(selected) {
+  const all = h('input', {type: 'checkbox', checked: !selected || !selected.length});
+  const boxes = serverChoices().map(x => ({id: x.id, el: h('input', {type: 'checkbox', checked: !selected || !selected.length || selected.includes(x.id)}), name: x.name}));
+  const sync = () => boxes.forEach(b => { b.el.disabled = all.checked; if (all.checked) b.el.checked = true; });
+  all.onchange = sync; sync();
+  const el = h('div', {class: 'full stack', style: 'gap:6px'}, h('small', {class: 'muted'}, t('srv_pick')), check(t('srv_all'), all),
+    h('div', {style: 'display:flex;flex-wrap:wrap;gap:4px 14px'}, ...boxes.map(b => check(b.name, b.el))));
+  // one server and no others: nothing to choose
+  if (boxes.length < 2) el.hidden = true;
+  return {el, value() {
+    if (all.checked || boxes.length < 2) return '';
+    const ids = boxes.filter(b => b.el.checked).map(b => b.id);
+    if (!ids.length) throw new Error(t('srv_none'));
+    return ids;
+  }};
+}
+
+function shaperNote() {
+  const sh = S.data.shaper;
+  return sh && !sh.active ? h('div', {class: 'full muted', style: 'font-size:12px'}, t('shaper_off')) : null;
+}
+
 function editUser(u) {
   S.drawerSeq++;
-  const isNew = !u; u = u || {name: '', quota_gb: 0, expire_at: 0, reset_day: 0, note: '', max_ips: 0, expire_after_days: 0};
+  const isNew = !u; u = u || {name: '', quota_gb: 0, expire_at: 0, reset_day: 0, note: '', max_ips: 0, expire_after_days: 0, speed_mbps: 0, throttle_mbps: 0, servers: null};
   const f = {name: h('input', {type: 'text', value: u.name, maxlength: '32'}), quota: h('input', {type: 'number', min: '0', step: '1', value: u.quota_gb || 0}),
     exp: h('input', {type: 'date', value: u.expire_at ? dateStr(u.expire_at) : ''}), reset: h('input', {type: 'number', min: '0', max: '28', value: u.reset_day || 0}),
     note: h('input', {type: 'text', value: u.note || '', maxlength: '200'}), ips: h('input', {type: 'number', min: '0', max: '100', value: u.max_ips || 0}),
     mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'date'}, t('exp_date')), h('option', {value: 'first'}, t('exp_first'))),
-    first: h('input', {type: 'number', min: '1', max: '3650', value: u.expire_after_days || 30})};
+    first: h('input', {type: 'number', min: '1', max: '3650', value: u.expire_after_days || 30}),
+    speed: h('input', {type: 'number', min: '0', step: '1', value: u.speed_mbps || 0}), slow: h('input', {type: 'number', min: '0', step: '1', value: u.throttle_mbps || 0})};
+  const pick = serverPicker(u.servers);
   f.mode.value = u.expire_at ? 'date' : u.expire_after_days ? 'first' : 'never';
   const expF = field(t('expire').split(/[（(]/)[0], f.exp), firstF = field(t('exp_first_days'), f.first);
   const sync = () => { expF.hidden = f.mode.value !== 'date'; firstF.hidden = f.mode.value !== 'first'; f.exp.disabled = expF.hidden; f.first.disabled = firstF.hidden; };
@@ -850,15 +888,20 @@ function editUser(u) {
   sync();
   const save = h('button', {class: 'btn primary', type: 'submit'}, icon('check'), t('save'));
   const form = h('form', {class: 'stack'}, field(t('name'), f.name), h('div', {class: 'form-grid'}, field(t('quota'), f.quota), field(t('reset_day'), f.reset),
-      field(t('exp_mode'), f.mode), h('div', null, expF, firstF), h('div', {class: 'full'}, field(t('max_ips'), f.ips))),
+      field(t('exp_mode'), f.mode), h('div', null, expF, firstF), h('div', {class: 'full'}, field(t('max_ips'), f.ips)),
+      field(t('speed_mbps'), f.speed), field(t('throttle_mbps'), f.slow), shaperNote(), pick.el),
     field(t('note'), f.note), h('div', {class: 'acts', style: 'display:flex;gap:8px;justify-content:flex-end'},
       h('button', {class: 'btn ghost', type: 'button', onclick: closeDrawer}, t('cancel')), save));
   form.onsubmit = async e => {
-    e.preventDefault(); save.disabled = true;
+    e.preventDefault();
+    let servers;
+    try { servers = pick.value(); } catch (er) { return err(er); }
+    save.disabled = true;
     const exp = f.mode.value === 'date' ? f.exp.value : '';
     const body = {name: f.name.value.trim(), quota_gb: Number(f.quota.value || 0), reset_day: Number(f.reset.value || 0), note: f.note.value,
       expire_at: exp ? Math.floor(new Date(exp + 'T23:59:59').getTime() / 1000) : 0, max_ips: Number(f.ips.value || 0),
-      expire_after_days: f.mode.value === 'first' ? Number(f.first.value || 0) : 0};
+      expire_after_days: f.mode.value === 'first' ? Number(f.first.value || 0) : 0,
+      speed_mbps: Number(f.speed.value || 0), throttle_mbps: Number(f.slow.value || 0), servers};
     try {
       const r = isNew ? await api('users', body) : await api(`users/${u.id}/save`, body);
       await load(); toast(t('saved')); closeDrawer();
@@ -902,20 +945,28 @@ async function drawMembers() {
     h('span', {class: 'muted'}, fmt.time(r.decided_at) + (r.answer ? ' · ' + r.answer : '')), h('span', {class: 'tl-acts'}, chip(r.status === 'approved' ? 'ok' : 'off', t(r.status)))));
   const f = {quota: h('input', {type: 'number', min: '0', step: '1', value: '100'}), life: h('input', {type: 'number', min: '0', value: '30'}),
     uses: h('input', {type: 'number', min: '1', max: '1000', value: '1'}), valid: h('input', {type: 'number', min: '1', max: '90', value: '7'}),
-    reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}), note: h('input', {type: 'text', maxlength: '100'})};
+    reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}), note: h('input', {type: 'text', maxlength: '100'}),
+    speed: h('input', {type: 'number', min: '0', step: '1', value: '0'}), slow: h('input', {type: 'number', min: '0', step: '1', value: '0'})};
+  const pick = serverPicker(null);
   const mk = h('button', {class: 'btn primary'}, icon('key'), t('inv_make'));
   mk.onclick = async () => {
+    let servers;
+    try { servers = pick.value(); } catch (er) { return err(er); }
     mk.disabled = true;
     try {
       const r = await api('invites', {kind: 'admin', quota_gb: Number(f.quota.value), expire_days: Number(f.life.value), max_uses: Number(f.uses.value),
-        valid_days: Number(f.valid.value), reset_day: Number(f.reset.value), note: f.note.value});
+        valid_days: Number(f.valid.value), reset_day: Number(f.reset.value), note: f.note.value,
+        speed_mbps: Number(f.speed.value || 0), throttle_mbps: Number(f.slow.value || 0), servers});
       await copyText(r.invite.code + (r.invite.register_url ? '\n' + r.invite.register_url : ''), t('copy_code')); drawMembers();
     } catch (e) { err(e); mk.disabled = false; }
   };
   const invRows = inv.invites.map(i => h('div', {class: 'tl-row'}, h('code', {class: 'code-chip'}, i.code),
     h('span', {class: 'muted'}, (i.kind === 'admin' ? t('inv_admin') : i.inviter_name) + ' · ' + (i.quota_gb ? i.quota_gb + ' GB' : t('unlimited')) +
       (i.kind === 'admin' && i.expire_days ? ' · ' + i.expire_days + t('days') : '') + ' · ' + i.uses + '/' + i.max_uses +
-      (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + (i.note ? ' · ' + i.note : '') + ' · ' + fmt.time(i.valid_until)),
+      (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + (i.note ? ' · ' + i.note : '') +
+      (i.speed_mbps ? ' · ⏬ ' + i.speed_mbps + ' Mbps' : '') + (i.throttle_mbps ? ' · ' + t('slowed') + ' ' + i.throttle_mbps + ' Mbps' : '') +
+      (i.servers && i.servers.length ? ' · ' + i.servers.map(id => (serverChoices().find(x => x.id === id) || {name: id}).name).join('/') : '') +
+      ' · ' + fmt.time(i.valid_until)),
     h('span', {class: 'tl-acts'}, chip(i.status === 'unused' ? 'ok' : 'off', t('st_' + i.status)),
       i.status === 'unused' ? h('button', {class: 'btn sm', title: t('copy_link'), onclick: () => copyText(i.register_url || i.code, t('copy_link'))}, icon('link')) : null,
       i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('revoke'), i.code)) { b.disabled = true; try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (er) { err(er); b.disabled = false; } } }}, t('revoke')) : null)));
@@ -932,7 +983,8 @@ async function drawMembers() {
           h('button', {class: 'btn sm', style: 'margin-top:8px', onclick: () => copyText(S.data.member_url, t('member_centre'))}, icon('copy'), t('copy_btn'))) : null))),
     panel(t('invites'), null, null, tip(t('inv_tip')), h('div', {class: 'stack'},
       h('div', {class: 'form-grid g3'}, field(t('inv_quota'), f.quota), field(t('inv_life'), f.life), field(t('inv_uses'), f.uses), field(t('inv_valid'), f.valid),
-        field(t('inv_reset'), f.reset), field(t('note'), f.note)), h('div', null, mk),
+        field(t('inv_reset'), f.reset), field(t('note'), f.note), field(t('speed_mbps'), f.speed), field(t('throttle_mbps'), f.slow), shaperNote(), pick.el),
+      h('div', null, mk),
       h('div', {class: 'tl'}, ...(invRows.length ? invRows : [h('div', {class: 'empty', style: 'padding:18px'}, t('inv_none'))]))))));
 }
 
@@ -951,8 +1003,11 @@ async function drawServers() {
   const rows = sv.servers.map(x => h('div', {class: 'tl-row'},
     h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + x.protocols.join(' / ') + ' · ' + x.users + ' ' + t('users_n') +
       (x.health && x.health.mem_total ? ' · ' + t('mem') + ' ' + Math.round(x.health.mem_used * 100 / x.health.mem_total) + '%' : '') +
-      (x.last_ok ? ' · ' + t('last_sync') + ' ' + fmt.ago(x.last_ok) : '') + (x.version ? ' · v' + x.version : '')),
+      (x.last_ok ? ' · ' + t('last_sync') + ' ' + fmt.ago(x.last_ok) : '') + (x.version ? ' · v' + x.version : '') + ' · ' + t('rate') + ' ×' + x.rate),
     h('span', {class: 'tl-acts'}, x.error ? chip('bad', x.error.slice(0, 60)) : x.enabled ? chip('ok', t('running')) : chip('off', t('off')),
+      h('button', {class: 'btn sm', title: t('rate_set'), onclick: async e => { const b = e.currentTarget;
+        const v = await modal({title: t('rate_set') + ' · ' + x.name, text: t('rate_tip'), input: true, type: 'number', value: String(x.rate), confirm: t('save')});
+        if (v != null) act(b, x.id, 'save', {rate: Number(v)}); }}, '×' + x.rate),
       h('button', {class: 'btn sm', onclick: e => act(e.currentTarget, x.id, 'sync')}, icon('refresh')),
       h('button', {class: 'btn sm', onclick: e => act(e.currentTarget, x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
       h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x')))));
@@ -969,7 +1024,11 @@ async function drawServers() {
     sv.node_master ? h('div', {class: 'alert'}, icon('server'), t('managed_by') + sv.node_master) : null,
     panel(t('servers'), null, null, tip(t('servers_tip')), h('div', {class: 'stack'},
       h('div', {class: 'tl'}, ...(rows.length ? rows : [h('div', {class: 'empty', style: 'padding:18px'}, t('no_servers'))])),
-      h('div', {class: 'form-grid'}, field(t('paste_code'), code), field(t('server_name'), name)), h('div', null, add))),
+      h('div', {class: 'form-grid'}, field(t('paste_code'), code), field(t('server_name'), name)), h('div', null, add),
+      (() => { const r = h('input', {type: 'number', min: '0', max: '100', step: '0.1', value: s.traffic_rate ?? 1});
+        return h('div', {class: 'form-grid'}, field(t('rate_this'), r), h('div', {style: 'display:flex;align-items:flex-end;gap:8px'},
+          h('button', {class: 'btn', onclick: () => saveSettings({traffic_rate: Number(r.value)}, drawServers)}, icon('check'), t('save')),
+          h('small', {class: 'muted'}, t('rate_tip')))); })())),
     h('div', {class: 'grid g-2'},
       panel(t('server_month'), null, null, tip(t('cap_tip')), h('div', {class: 'usage-hero'}, ring, h('div', {class: 'stack'},
         h('div', {class: 'mini-stats'}, h('div', null, h('small', null, '↓ ' + t('down')), h('b', null, fmt.bytes(sm.tx || 0))), h('div', null, h('small', null, '↑ ' + t('up_')), h('b', null, fmt.bytes(sm.rx || 0)))),
@@ -1134,7 +1193,8 @@ const DOC = {   // id -> [zh name, zh fix]; English falls back to the server's o
   internet: ['服务器能上外网', '服务器自己连不上外网，检查云服务商的网络/DNS 设置'],
   disk: ['磁盘空间', '清理磁盘空间'], memory: ['内存', '关掉服务器上其它占内存的程序，或升级套餐'],
   xray_version: ['内核版本', '在服务器上重新运行一次安装命令'], rules: ['分流规则', '点「立即更新分流规则」；服务器要能访问 github.com'],
-  address: ['服务器地址', 'IP 变了：vps2vpn 一天内会自动改好；着急的话去设置里把服务器地址改成新 IP']
+  address: ['服务器地址', 'IP 变了：vps2vpn 一天内会自动改好；着急的话去设置里把服务器地址改成新 IP'],
+  speed_limits: ['按账号限速', '在服务器上重新运行一次安装命令（让内核服务可以给限速账号打标记）；容器 VPS 不支持限速，账号会按全速使用']
 };
 async function runDoctor(btn, box) {
   btn.disabled = true; box.replaceChildren(h('div', {class: 'skeleton', style: 'height:120px'}));
