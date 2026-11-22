@@ -629,7 +629,10 @@ function fallbackCopy(t,done){const a=document.createElement('textarea');a.value
 function copy(t,b){const done=()=>{if(!b.dataset.orig)b.dataset.orig=b.textContent;b.textContent='已复制';clearTimeout(b._tm);b._tm=setTimeout(()=>{b.textContent=b.dataset.orig},1500)};
  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done).catch(()=>fallbackCopy(t,done))}else fallbackCopy(t,done)}
 function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceChildren();
- box.append(el('h2',{text:'✅ 部署成功'}));
+ const blocked=(s.ports||[]).filter(c=>!c.ok).length;
+ // "success" only when it can actually be used; a blocked firewall is the most common beginner trap
+ box.append(el('h2',{text:blocked?'⚠️ 装好了，还差一步':'✅ 部署成功'}));
+ if(blocked)box.append(el('p',{class:'bad',text:'现在还连不上：有 '+blocked+' 个端口被云服务商的防火墙挡住了。按下面「防火墙检查」里说的放行，再点「我已放行，再检查一次」。'}));
  if(r.main){const m={ok:['ok','已加入主服务器 '+r.main+'：你在那边的订阅里会自动多出这台服务器（在 Clash / Shadowrocket 里点一下“更新订阅”）。'],
   totp:['bad','主服务器开了两步验证，没法自动加入。请打开主服务器面板 → 多服务器 → 粘贴下面的加入码。'],
   wait:['bad',s.join_msg],fail:['bad','没能自动加入主服务器：'+(s.join_msg||'')+' 你可以打开主服务器面板 → 多服务器 → 粘贴下面的加入码。']}[s.join]||['mute',''];
@@ -637,7 +640,7 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
   if(s.join==='totp'||s.join==='fail'){const b=el('button',{class:'ghost',text:'复制加入码'});b.onclick=()=>copy(r.join_code,b);box.append(b)}}
  if(r.ai&&r.ai.summary){const a=r.ai;box.append(el('div',{class:'note'},el('b',{text:'AI 可用性（从服务器测试）：'+a.summary}),
   el('div',{class:'mute',text:[a.place,a.org,a.kind].filter(Boolean).join(' · ')}),...(a.advice||[]).map(x=>el('div',{text:x})),
-  el('div',{class:'mute',style:'font-size:13px',text:'结果只作参考；以后可以在管理面板 → 系统里重新检测。'})))}
+  el('div',{class:'mute',style:'font-size:13px',text:'结果只作参考；以后可以在管理面板 →「体检与维护」里重新检测。'})))}
  const subUrl=safeHref(r.sub_url,['http','https']);
  if(!r.main&&subUrl){box.append(el('h3',{text:'① 把 VPN 装到你的设备上'}));
   const c=s.client;
@@ -669,7 +672,11 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
   const cp=el('button',{class:'ghost',text:'复制'});cp.onclick=()=>copy(pw,cp);const cu=el('button',{class:'ghost',text:'打开'});cu.onclick=()=>window.open(panelUrl,'_blank','noopener,noreferrer');
   box.append(el('div',{class:'kv'},el('span',{class:'mute',text:'地址'}),el('code',{text:panelUrl}),cu,el('span',{class:'mute',text:'用户名'}),el('code',{text:r.admin_user||'admin'}),el('span'),
    el('span',{class:'mute',text:'密码'}),pv,pw?el('div',{class:'btns'},show,cp):el('span')));
-  box.append(el('p',{class:'mute',style:'font-size:13px',text:'浏览器若提示“不安全”，点“高级 → 继续访问”即可（照样加密）。这些信息已保存在：'+(s.record_file||'')}))}}
+  box.append(el('p',{class:'mute',style:'font-size:13px',text:'浏览器若提示“不安全”，点“高级 → 继续访问”即可（照样加密）。这些信息已保存在：'+(s.record_file||'')}))}
+ box.append(el('h3',{text:'接下来可以做什么'}),el('div',{class:'mute'},...NEXT_STEPS.map(t=>el('div',{text:'· '+t}))))}
+const NEXT_STEPS=['给家人朋友开账号：打开管理面板 →「使用者」添加，每人有自己的订阅链接、流量和到期时间。',
+ '再加一台服务器：买好后再运行一次部署工具，在「这台服务器怎么用」里选「加到 … 下面」，大家的订阅里会自动多出它。',
+ '以后想升级：再运行一次部署工具、填同一个 IP 就行，账号和设置都会保留。'];
 $('#go').onclick=async()=>{
  const host=$('#host').value.trim();if(!host)return alert('先填服务器 IP');if(!key&&!$('#pw').value)return alert('拖入密钥文件，或者填密码');
  $('#go').disabled=true;$('#out').hidden=false;$('#res').hidden=true;$('#status').textContent='正在部署，大约 1-3 分钟，别关这个页面…';
