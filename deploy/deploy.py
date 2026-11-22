@@ -22,6 +22,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import ssl
@@ -31,6 +32,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.parse
 import webbrowser
 
@@ -455,7 +457,7 @@ def run_job(job):
         if job.get('password') and not ssh_supports_askpass():
             raise RuntimeError(OLD_SSH_MSG)
         cmd, env = ssh_base(job)
-        say('正在连接 %s …' % job['host'])
+        say('正在连接 %s（用户名 %s，SSH 端口 %d）…' % (job['host'], job['user'], job['port']))
         r = probe(cmd, env, job['user'])
         wanted = login_as_hint(r.stdout + r.stderr)
         if 'connected' not in r.stdout and wanted and wanted != job['user']:
@@ -471,7 +473,12 @@ def run_job(job):
                 msg += '\n-> 服务器要求用 %s 登录：把用户名改成 %s 再试。' % (wanted, wanted)
             if 'Permission denied' in msg:
                 msg += '\n-> 密钥或密码不对，或者用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）。'
-            if 'timed out' in msg or 'Connection refused' in msg:
+            if re.search(r'Connection (closed|reset)|kex_exchange_identification', msg):
+                msg += ('\n-> 连接被断开了：检查 SSH 端口是否填对；服务器刚开机就等一两分钟再试；'
+                        '电脑上开着 VPN 或代理软件（尤其是 TUN / 虚拟网卡模式）的话，先关掉再部署。')
+            if 'Could not resolve' in msg:
+                msg += '\n-> 服务器地址写错了：只填 IP（例如 203.0.113.10）或域名。'
+            if 'timed out' in msg or 'Connection refused' in msg or 'No route to host' in msg or 'unreachable' in msg:
                 msg += '\n-> 连不上服务器的 %s 端口。检查 IP 是否写对、服务器是否开机、云厂商防火墙是否放行 SSH。' % job['port']
             if 'sudo' in msg:
                 msg += '\n-> 这个用户不能免密码使用 sudo，请改用 root 登录。'
@@ -610,7 +617,8 @@ details>summary{cursor:pointer;font-size:12.5px;color:var(--muted);margin:2px 0 
 <div class="points"><span id="p1"></span><span id="p2"></span><span id="p3"></span></div></div><canvas id="lineArt" aria-hidden="true"></canvas></section>
 <section class="login-form"><div class="login-card">
 <div id="form"><div class="kicker">ONE-CLICK DEPLOY</div><h1>一键部署</h1><p class="intro">大约 1-3 分钟。密钥和密码只用这一次，用完立刻删除。</p>
-<label class="field"><span>服务器 IP</span><input id="host" type="text" placeholder="例如 203.0.113.10" autocomplete="off"></label>
+<label class="field"><span>服务器 IP</span><input id="host" type="text" placeholder="例如 203.0.113.10" autocomplete="off">
+<em>带用户名和端口也行，比如 ubuntu@203.0.113.10:2222；也可以直接粘贴云服务商给的整条 ssh 命令。</em></label>
 <div class="field"><span>SSH 密钥文件</span><div id="drop">把密钥文件拖到这里，或<b>点击选择</b><div id="fname"></div></div>
 <em>.pem / .key / id_ed25519 都可以</em><button type="button" id="clearKey" class="btn sm" hidden>清除已选密钥</button></div>
 <input type="file" id="file" hidden>
@@ -806,10 +814,59 @@ class H(http.server.BaseHTTPRequestHandler):
         self.reply(200, json.dumps({'id': jid}))
 
 
+BAD_HOST_MSG = 'IP 地址格式不对：只填服务器的 IP（例如 203.0.113.10）或域名，不要带 http:// 或路径。'
+
+
+def parse_target(text):
+    """What a beginner pastes into the IP box -> (host, user or '', port or ''). Takes a bare IP or name,
+    "203.0.113.10:22", "root@203.0.113.10", "[v6]:2222", a whole "ssh -i key.pem -p 2222 ubuntu@203.0.113.10" copied from a
+    cloud console, http://203.0.113.10/, and dots or digits typed by a Chinese input method (。．１２３)."""
+    t = unicodedata.normalize('NFKC', text or '').replace('。', '.').replace('｡', '.').strip().strip('\'"').strip()
+    user = port = ''
+    words = t.split()
+    if words and words[0].lower() in ('ssh', 'ssh.exe'):
+        try:
+            words = shlex.split(t)                    # -i "My Key.pem"
+        except ValueError:
+            pass
+        dest, i = '', 1
+        while i < len(words):
+            w = words[i]
+            if w in ('-p', '-l') and i + 1 < len(words):
+                if w == '-p':
+                    port = words[i + 1]
+                else:
+                    user = words[i + 1]
+                i += 2
+                continue
+            if re.fullmatch(r'-p\d+', w):
+                port = w[2:]
+            elif w in ('-i', '-o', '-F', '-J', '-L', '-R', '-D', '-b', '-c', '-m', '-E', '-W'):
+                i += 1                                # an option with a value: skip both
+            elif not w.startswith('-') and not dest:
+                dest = w
+            i += 1
+        t = dest
+    elif len(words) > 1:
+        return '', '', ''
+    t = re.sub(r'^[A-Za-z][A-Za-z0-9+.-]*://', '', t).split('/')[0]
+    if '@' in t:
+        u, t = t.rsplit('@', 1)
+        user = user or u.lower()
+    m = re.fullmatch(r'\[([0-9A-Fa-f:.]+)\](?::(\d+))?', t)
+    if m:
+        t, port = m.group(1), m.group(2) or port
+    elif t.count(':') == 1:                           # IPv4 or a name with a port; IPv6 has more colons
+        t, p = t.split(':')
+        port = p or port
+    return t, user, port
+
+
 def new_job(host, user, port, main=''):
-    host, user, port = host.strip().strip('[]'), user.strip(), port.strip()
+    h, u, p = parse_target(host)
+    host, user, port = h, (u or user).strip(), (p or port).strip()
     if not re.fullmatch(r'[A-Za-z0-9.:\-]{3,255}', host) or host.startswith('-'):
-        return None, 'IP 地址格式不对'
+        return None, BAD_HOST_MSG
     if not re.fullmatch(r'[a-z_][a-z0-9_.-]{0,31}', user) or not port.isdigit() or not 1 <= int(port) <= 65535:
         return None, '用户名或端口格式不对'
     if main and (main == host or not load_record(main).get('admin_password')):

@@ -41,8 +41,43 @@ function Test-SafeUrl([string]$url, [string[]]$schemes) {
   return $true
 }
 
+function Parse-Target([string]$text) {
+  # Same as parse_target() in deploy.py: what a beginner pastes into the IP box -> @(host, user or '', port or '').
+  # Takes "203.0.113.10:22", "root@203.0.113.10", "[v6]:2222", a whole "ssh -i key.pem -p 2222 ubuntu@203.0.113.10" from a cloud
+  # console, http://203.0.113.10/, and dots or digits typed by a Chinese input method.
+  $t = "$text".Normalize([Text.NormalizationForm]::FormKC).Replace([string][char]0x3002, '.').Replace([string][char]0xFF61, '.')
+  $t = $t.Trim().Trim('''', '"').Trim()
+  $user = ''; $port = ''
+  $words = @($t -split '\s+' | Where-Object { $_ })
+  if ($words.Count -and $words[0] -in 'ssh', 'ssh.exe') {
+    $words = @([regex]::Matches($t, '"[^"]*"|''[^'']*''|\S+') | ForEach-Object { $_.Value.Trim('"', '''') })
+    $dest = ''; $i = 1
+    while ($i -lt $words.Count) {
+      $w = $words[$i]
+      if (($w -ceq '-p' -or $w -ceq '-l') -and $i + 1 -lt $words.Count) {
+        if ($w -ceq '-p') { $port = $words[$i + 1] } else { $user = $words[$i + 1] }
+        $i += 2; continue
+      }
+      if ($w -cmatch '^-p(\d+)$') { $port = $Matches[1] }
+      elseif ($w -cin '-i', '-o', '-F', '-J', '-L', '-R', '-D', '-b', '-c', '-m', '-E', '-W') { $i++ }
+      elseif (-not $w.StartsWith('-') -and -not $dest) { $dest = $w }
+      $i++
+    }
+    $t = $dest
+  } elseif ($words.Count -gt 1) { return @('', '', '') }
+  $t = ($t -replace '^[A-Za-z][A-Za-z0-9+.-]*://', '').Split('/')[0]
+  $at = $t.LastIndexOf('@')
+  if ($at -ge 0) { if (-not $user) { $user = $t.Substring(0, $at).ToLowerInvariant() }; $t = $t.Substring($at + 1) }
+  if ($t -match '^\[([0-9A-Fa-f:.]+)\](?::(\d+))?$') { $t = $Matches[1]; if ($Matches[2]) { $port = $Matches[2] } }
+  elseif (@($t.ToCharArray() | Where-Object { $_ -eq ':' }).Count -eq 1) {
+    $parts = $t.Split(':'); $t = $parts[0]; if ($parts[1]) { $port = $parts[1] }
+  }
+  return @($t, $user, $port)
+}
+
 function Assert-Target([string]$h, [string]$u, [int]$p) {
-  if ($h -notmatch '^[A-Za-z0-9.:-]{3,255}$' -or $h.StartsWith('-')) { throw '先填服务器 IP（只能是 IP 或域名）。' }
+  if (-not $h) { throw '先填服务器 IP。' }
+  if ($h -notmatch '^[A-Za-z0-9.:-]{3,255}$' -or $h.StartsWith('-')) { throw 'IP 地址格式不对：只填服务器的 IP（例如 203.0.113.10）或域名，不要带 http:// 或路径。' }
   if ($u -notmatch '^[a-z_][a-z0-9_.-]{0,31}$') { throw '用户名不对。' }
   if ($p -lt 1 -or $p -gt 65535) { throw 'SSH 端口必须在 1 到 65535 之间。' }
 }
@@ -272,7 +307,10 @@ function Explain([string]$msg) {
   }
   if ($msg -match 'Permission denied') { $msg += "`r`n→ 密钥或密码不对，或者用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）。" }
   if ($msg -match 'timed out|Connection refused|No route') { $msg += "`r`n→ 连不上服务器的 $Port 端口：检查 IP 是否写对、服务器是否开机、云厂商防火墙是否放行 SSH。" }
-  if ($msg -match 'Could not resolve') { $msg += "`r`n→ 服务器地址写错了。" }
+  if ($msg -match 'Connection (closed|reset)|kex_exchange_identification') {
+    $msg += "`r`n→ 连接被断开了：检查 SSH 端口是否填对；服务器刚开机就等一两分钟再试；电脑上开着 VPN 或代理软件（尤其是 TUN / 虚拟网卡模式）的话，先关掉再部署。"
+  }
+  if ($msg -match 'Could not resolve') { $msg += "`r`n→ 服务器地址写错了：只填 IP（例如 203.0.113.10）或域名。" }
   if ($msg -match 'sudo') { $msg += "`r`n→ 这个用户不能免密码使用 sudo，请改用 root 登录。" }
   if ($msg -match 'bad permissions|UNPROTECTED') { $msg += "`r`n→ 密钥文件权限问题，请把密钥文件复制到桌面再拖进来。" }
   if ($msg -match 'IDENTIFICATION HAS CHANGED|Host key verification failed') {
@@ -535,8 +573,10 @@ if ($PackageOnly) {
 }
 if ($Headless) {
   try {
-    $Server = $Server.Trim().Trim('[', ']')
-    $User = $User.Trim()
+    $tg = Parse-Target $Server
+    $Server = $tg[0]
+    $User = $(if ($tg[1]) { $tg[1] } else { $User.Trim() })
+    if ($tg[2]) { $p = 0; if (-not [int]::TryParse($tg[2], [ref]$p)) { throw 'SSH 端口必须是数字。' }; $Port = $p }
     Assert-Target $Server $User $Port
     Check-Prereqs
     if ($Main -and -not (Get-Record $Main).admin_password) { throw "no saved login for main server $Main" }
@@ -841,7 +881,12 @@ $timer.Add_Tick({
 
 $btn.Add_Click({
   try {
-    $script:Server = $tbHost.Text.Trim().Trim('[', ']')
+    # "ubuntu@203.0.113.10:2222" or a whole ssh command in the IP box: show what was taken from it
+    $tg = Parse-Target $tbHost.Text
+    $script:Server = $tg[0]
+    if ($tg[0] -and $tg[0] -ne $tbHost.Text.Trim()) { $tbHost.Text = $tg[0] }
+    if ($tg[1]) { $tbUser.Text = $tg[1] }
+    if ($tg[2]) { $tbPort.Text = $tg[2] }
     $script:User = $tbUser.Text.Trim()
     $p = 0
     if (-not [int]::TryParse($tbPort.Text.Trim(), [ref]$p)) { throw 'SSH 端口必须是数字。' }
@@ -865,7 +910,7 @@ $btn.Add_Click({
     $script:sshArgs = Get-SshArgs $kp (-not $kp)
     $log.Clear()
     $btn.Enabled = $false; $btn.Text = '正在部署…'; $status.Text = '正在连接服务器…'
-    Say "正在连接 $Server …`n"
+    Say "正在连接 $($Server)（用户名 $($User)，SSH 端口 $($Port)）…`n"
     $script:stage = 'probe'
     $script:job = Start-Ssh $script:sshArgs (& $ProbeCmd) $null
     $timer.Start()

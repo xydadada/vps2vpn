@@ -21,12 +21,48 @@ safe_url() {
   [[ "$u" =~ $re ]]
 }
 
+# What a beginner pastes into the IP prompt -> HOST, T_USER, T_PORT (same as parse_target() in deploy.py):
+# "203.0.113.10:22", "root@203.0.113.10", "[v6]:2222", a whole "ssh -i key.pem -p 2222 ubuntu@203.0.113.10" from a cloud
+# console, http://203.0.113.10/, and dots or digits typed by a Chinese input method (。．１２３).
+parse_target() {
+  local t="$1" n dest="" u re6='^\[([0-9A-Fa-f:.]+)\](:([0-9]+))?$' re4='^([^:]*):([0-9]*)$'
+  T_USER=""; T_PORT=""
+  n=$(printf '%s' "$t" | perl -CS -MUnicode::Normalize -pe '$_ = NFKC($_); s/\x{3002}|\x{FF61}/./g' 2>/dev/null) && t="$n"
+  t=$(printf '%s' "$t" | sed -e 's/"[^"]*"/x/g' -e "s/'[^']*'/x/g")      # -i "My Key.pem" is one word
+  set -f; set -- $t; set +f
+  if [ "${1:-}" = ssh ]; then
+    shift
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -p|-l) if [ $# -ge 2 ]; then if [ "$1" = -p ]; then T_PORT="$2"; else T_USER="$2"; fi; shift; fi ;;
+        -p[0-9]*) T_PORT="${1#-p}" ;;
+        -i|-o|-F|-J|-L|-R|-D|-b|-c|-m|-E|-W) [ $# -lt 2 ] || shift ;;
+        -*) ;;
+        *) [ -n "$dest" ] || dest="$1" ;;
+      esac
+      shift
+    done
+    t="$dest"
+  elif [ $# -gt 1 ]; then
+    t=""
+  else
+    t="${1:-}"
+  fi
+  t="${t#*://}"; t="${t%%/*}"
+  case "$t" in *@*) u="${t%@*}"; t="${t##*@}"; [ -n "$T_USER" ] || T_USER=$(printf '%s' "$u" | tr 'A-Z' 'a-z') ;; esac
+  if [[ "$t" =~ $re6 ]]; then t="${BASH_REMATCH[1]}"; [ -z "${BASH_REMATCH[3]}" ] || T_PORT="${BASH_REMATCH[3]}"
+  elif [[ "$t" =~ $re4 ]]; then t="${BASH_REMATCH[1]}"; [ -z "${BASH_REMATCH[2]}" ] || T_PORT="${BASH_REMATCH[2]}"; fi
+  HOST="$t"
+}
+
 say "vps2vpn 一键部署 / one-click deploy"
-read -r -p "服务器 IP / server IP: " HOST
-HOST=$(printf '%s' "$HOST" | tr -d '[] ')
-if ! [[ "$HOST" =~ ^[A-Za-z0-9.:-]{3,255}$ ]] || [[ "$HOST" == -* ]]; then
-  echo "IP 地址格式不对 / invalid server IP: $HOST"; exit 1
-fi
+while :; do
+  read -r -p "服务器 IP / server IP: " HOST || exit 1
+  parse_target "$HOST"
+  if [[ "$HOST" =~ ^[A-Za-z0-9.:-]{3,255}$ ]] && [[ "$HOST" != -* ]]; then break; fi
+  echo "IP 地址格式不对：只填服务器的 IP（例如 203.0.113.10）或域名。请再输入一次。/ Type just the server's IP or name."
+done
+[ -z "$T_USER$T_PORT" ] || echo "服务器 $HOST，用户名 ${T_USER:-（下面再问）}，端口 ${T_PORT:-22}"
 echo
 echo "把 SSH 密钥文件（.pem / id_ed25519）拖进这个窗口然后按回车；没有密钥就直接按回车，稍后输入密码。"
 echo "Drag your SSH key file into this window and press Enter; no key? just press Enter and type the password later."
@@ -38,13 +74,15 @@ fi
 USER_DEF=root
 # AWS key names only: a .pem from another cloud usually logs in as root
 case "$(basename "$KEY")" in *[Ll]ightsail*|*[Ee][Cc]2*|*[Aa][Ww][Ss]*) USER_DEF=ubuntu ;; esac
+[ -z "$T_USER" ] || USER_DEF="$T_USER"
 read -r -p "登录用户名 / login user [$USER_DEF]: " LUSER
 LUSER=${LUSER:-$USER_DEF}
 if ! [[ "$LUSER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]]; then
   echo "用户名格式不对 / invalid user: $LUSER"; exit 1
 fi
-read -r -p "SSH 端口 / port [22]: " PORT
-PORT=${PORT:-22}
+PORT_DEF=${T_PORT:-22}
+read -r -p "SSH 端口 / port [$PORT_DEF]: " PORT
+PORT=${PORT:-$PORT_DEF}
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
   echo "SSH 端口不对 / invalid port: $PORT"; exit 1
 fi
@@ -94,6 +132,7 @@ if [ "$rc" -ne 0 ] || [ -z "$B64" ]; then
   fi
   echo "Permission denied -> 密钥/密码/用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）"
   echo "timed out / refused -> IP 写错、服务器没开机，或云厂商防火墙没放行 SSH 端口"
+  echo "Connection closed / reset -> SSH 端口不对、服务器刚开机（等一两分钟），或这台电脑开着 VPN / 代理（尤其是 TUN 模式），先关掉再试"
   echo "Host key verification failed -> 服务器身份和上次不一样。刚重装过系统就运行  ssh-keygen -R '$KH_NAME' -f '$KH'  再部署；没重装过先别继续，可能有人冒充你的服务器"
   read -r -p "按回车关闭 / press Enter to close" _
   exit 1

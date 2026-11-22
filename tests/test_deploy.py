@@ -940,6 +940,15 @@ class LoginAsRetry(unittest.TestCase):
         self.assertEqual(job['user'], 'root')
         self.assertIn('ubuntu / ec2-user', job['error'])
 
+    def test_closed_connection_and_bad_name_are_explained(self):
+        # a wrong port, a server still booting, or the computer's own VPN in TUN mode catching the ssh connection
+        job, _ = self.run_with([('Connection closed by 203.0.113.10 port 22', 255)])
+        self.assertIn('TUN', job['error'])
+        job, _ = self.run_with([('kex_exchange_identification: read: Connection reset by peer', 255)])
+        self.assertIn('SSH 端口是否填对', job['error'])
+        job, _ = self.run_with([('ssh: Could not resolve hostname x: No such host is known.', 255)])
+        self.assertIn('服务器地址写错了', job['error'])
+
 
 PS_KEY_HARNESS = r'''param([string]$Ps1, [string]$Dir)
 $ErrorActionPreference = 'Stop'
@@ -1173,6 +1182,106 @@ class DeployerSsh(unittest.TestCase):
         self.assertIn('https://github.com/PowerShell/Win32-OpenSSH/releases', job['error'])
         self.assertNotIn('可选功能', job['error'])          # Optional Features cannot update it
         self.assertNotIn('password', job)                   # never kept after the job
+
+
+# What beginners paste into the IP box -> (host, user, port) every deployer takes out of it ('' = not given)
+TARGETS = [
+    ('203.0.113.10', ('203.0.113.10', '', '')),
+    (' 203.0.113.10 ', ('203.0.113.10', '', '')),
+    ('203.0.113.10:22', ('203.0.113.10', '', '22')),
+    ('root@203.0.113.10', ('203.0.113.10', 'root', '')),
+    ('ROOT@203.0.113.10', ('203.0.113.10', 'root', '')),
+    ('ssh -i "My Key.pem" -p 2222 ubuntu@203.0.113.10', ('203.0.113.10', 'ubuntu', '2222')),
+    ('ssh -i k.pem -p2222 ubuntu@203.0.113.10', ('203.0.113.10', 'ubuntu', '2222')),
+    ('ssh -oProxyCommand=id 203.0.113.10', ('203.0.113.10', '', '')),
+    ('203。0。113。10', ('203.0.113.10', '', '')),             # 。 from a Chinese input method
+    ('２０３.0.113.10', ('203.0.113.10', '', '')),            # full-width digits
+    ('http://203.0.113.10/', ('203.0.113.10', '', '')),
+    ('[2001:db8::1]:2222', ('2001:db8::1', '', '2222')),
+    ('2001:db8::1', ('2001:db8::1', '', '')),
+    ('203.0.113.10 22', ('', '', '')),                                    # two words: refused, not guessed
+]
+
+PS_TARGET_HARNESS = r'''param([string]$Ps1, [string]$Cases)
+$ErrorActionPreference = 'Stop'
+$errs = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Ps1, [ref]$null, [ref]$errs)
+if ($errs.Count) { throw "deploy.ps1 does not parse: $($errs[0].Message)" }
+foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+  if ($f.Name -eq 'Parse-Target') { . ([scriptblock]::Create($f.Extent.Text)) }
+}
+$out = foreach ($c in ([IO.File]::ReadAllText($Cases, [Text.Encoding]::UTF8) | ConvertFrom-Json)) { ,@(Parse-Target $c) }
+[Console]::Out.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject @($out) -Compress))))
+'''
+
+
+class DeployerTarget(unittest.TestCase):
+    """An IP with a port, user@ip or a whole ssh command from a cloud console used to be refused as a bad IP, or
+    worse taken as a host name ("203.0.113.10:22") that only failed when connecting."""
+
+    def test_python_deployer(self):
+        for text, want in TARGETS:
+            self.assertEqual(deploy.parse_target(text), want, text)
+        job, err = deploy.new_job('ssh -i k.pem -p 2222 ubuntu@203.0.113.10', 'root', '22')
+        self.assertEqual((job['host'], job['user'], job['port'], err), ('203.0.113.10', 'ubuntu', 2222, ''))
+        job, err = deploy.new_job('203.0.113.10 22', 'root', '22')
+        self.assertIsNone(job)
+        self.assertIn('只填服务器的 IP', err)
+        self.assertIsNone(deploy.new_job('-oProxyCommand=id', 'root', '22')[0])
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('powershell'), 'needs Windows PowerShell')
+    def test_windows_deployer(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        harness, cases = os.path.join(tmp, 'harness.ps1'), os.path.join(tmp, 'cases.json')
+        with open(harness, 'w', encoding='utf-8-sig') as f:
+            f.write(PS_TARGET_HARNESS)
+        with open(cases, 'w', encoding='utf-8') as f:
+            json.dump([t for t, _ in TARGETS], f)
+        p = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', harness,
+                            '-Ps1', os.path.join(ROOT_DIR, 'deploy', 'deploy.ps1'), '-Cases', cases],
+                           capture_output=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        got = json.loads(base64.b64decode(p.stdout.decode('ascii', 'replace').strip().splitlines()[-1]))
+        for (text, want), g in zip(TARGETS, got):
+            self.assertEqual(tuple(g), want, text)
+
+    @unittest.skipUnless(TEST_BASH, 'needs bash (on Windows set V2V_TEST_BASH to Git bash)')
+    def test_mac_deployer(self):
+        with open(os.path.join(ROOT_DIR, 'deploy-mac.command'), encoding='utf-8') as f:
+            fn = re.search(r'(?ms)^parse_target\(\) \{.*?^\}$', f.read()).group(0)
+        script = 'set -u\n' + fn + '\nfor t in "$@"; do parse_target "$t"; printf "%s|%s|%s\\n" "$HOST" "$T_USER" "$T_PORT"; done\n'
+        p = subprocess.run([TEST_BASH, '-c', script, 'x'] + [t for t, _ in TARGETS], capture_output=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        lines = p.stdout.decode('utf-8').splitlines()
+        for (text, want), line in zip(TARGETS, lines):
+            self.assertEqual(tuple(line.split('|')), want, text)
+
+    @unittest.skipUnless(TEST_BASH, 'needs bash (on Windows set V2V_TEST_BASH to Git bash)')
+    def test_mac_deployer_asks_again_and_takes_user_and_port(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        stubs, fix, home = (os.path.join(tmp, d) for d in ('stubs', 'fix', 'home'))
+        for d in (stubs, fix, home):
+            os.makedirs(d)
+        for name, body in {'ssh': '#!/bin/sh\nfor a; do printf "%s\\n" "$a"; done > "$FIX/ssh.args"\n'
+                                  'cat >/dev/null\nexit 255\n',
+                           'python3': '#!/bin/sh\nexit 1\n'}.items():
+            with open(os.path.join(stubs, name), 'w', encoding='utf-8', newline='\n') as f:
+                f.write(body)
+            os.chmod(os.path.join(stubs, name), 0o755)
+        env = dict(os.environ, HOME=_posix(home), FIX=_posix(fix), STUBS=_posix(stubs))
+        # a bad answer first, then a whole ssh command; Enter keeps the user and port taken from it
+        answers = 'my server\nssh -i k.pem -p 2222 ubuntu@203.0.113.10\n\n\n\n'.encode()
+        p = subprocess.run([TEST_BASH, '-c', 'export PATH="$STUBS:$PATH"; exec bash "$1"', 'x',
+                            _posix(os.path.join(ROOT_DIR, 'deploy-mac.command'))],
+                           input=answers, env=env, capture_output=True, timeout=120)
+        out = (p.stdout + p.stderr).decode('utf-8', 'replace')
+        self.assertIn('只填服务器的 IP', out)
+        with open(os.path.join(fix, 'ssh.args'), encoding='utf-8') as f:
+            args = f.read().splitlines()
+        self.assertIn('ubuntu@203.0.113.10', args)
+        self.assertEqual(args[args.index('-p') + 1], '2222')
 
 
 if __name__ == '__main__':
