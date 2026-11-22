@@ -835,8 +835,11 @@ class Scheduler:
         if paths.LIVE and self.due('cert', 3600) and time.monotonic() >= self.cert_backoff_until:
             self.in_background('cert-renewal', self.renew_cert, s)
         if paths.LIVE and s.get('client_auto_update', True) and self.due('client', 6 * 3600):
-            threading.Thread(target=client_sync, args=(s,), daemon=True, name='clientsync').start()
-        if self.due('rules', 86400) or (rules.mirror_age() is None and self.due('rules-missing', 600)):
+            self.in_background('clientsync', client_sync, s)     # one at a time: a slow one must not overlap
+        # None at all: every 10 minutes. Only some (one failed on a first install): hourly, not the next day,
+        # and not every 10 minutes for ever in case an upstream list is gone for good.
+        if self.due('rules', 86400) or (rules.mirror_age() is None and self.due('rules-missing', 600)) \
+                or (rules.incomplete() and self.due('rules-incomplete', 3600)):
             rules.refresh_in_background(log)
         if self.due('renew', 3600):
             renew_reminder(s)
@@ -848,7 +851,7 @@ class Scheduler:
             # One at a time, so IpWatch's state has a single writer; cores.apply takes its own lock.
             self.in_background('ipwatch', self.ipwatch.check, s)
         if paths.LIVE and self.due('aicheck', 86400):
-            threading.Thread(target=ai_recheck, args=(s, log), daemon=True, name='aicheck').start()
+            self.in_background('aicheck', ai_recheck, s, log)
         if self.due('backup', 86400):
             name = backup()
             if s['tg_backup'] and s['tg_token'] and s['tg_chat']:

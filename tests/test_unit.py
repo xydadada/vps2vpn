@@ -49,6 +49,12 @@ class Secure(unittest.TestCase):
         self.assertFalse(secure.check_password('wrong', h))
         self.assertFalse(secure.check_password('x', 'garbage'))
         self.assertFalse(secure.hmac_eq('', ''))
+        # A lone surrogate is a wrong answer (or a password like any other), never an exception.
+        odd = 'pass' + chr(0xd800) + 'word'
+        self.assertTrue(secure.check_password(odd, secure.hash_password(odd)))
+        self.assertFalse(secure.check_password(odd, h))
+        self.assertFalse(secure.hmac_eq(chr(0xdfff), 'token'))
+        self.assertEqual(secure.hash_password('ascii')[:14], 'pbkdf2_sha256$')   # same scheme as before
 
 
 class AdminEnabledValues(unittest.TestCase):
@@ -1160,6 +1166,19 @@ class Web(Base):
             self.assertEqual(st, 403)
         st, _, _ = self.req('POST', self.pp + '/api/login', {'username': 'admin', 'password': 'rightpassword'})
         self.assertEqual(st, 429)
+
+
+class CliPasswordReset(Base):
+    def test_cli_password_reset_cannot_lock_the_admin_out(self):
+        from vps2vpn import __main__ as cli
+        before = db.settings()['admin_hash']
+        for pw, user in (('x' * 129, None), ('short', None), ('goodpassword', '   '), ('goodpassword', 'a\nb')):
+            with self.assertRaises(SystemExit):
+                cli.cmd_reset_password(mock.Mock(password=pw, username=user))
+        self.assertEqual(db.settings()['admin_hash'], before)
+        cli.cmd_reset_password(mock.Mock(password='x' * 128, username=' boss '))
+        self.assertEqual(db.settings()['admin_user'], 'boss')
+        self.assertTrue(secure.check_password('x' * 128, db.settings()['admin_hash']))
 
 
 if __name__ == '__main__':

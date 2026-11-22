@@ -136,6 +136,7 @@ def _download(url, dest_dir, name, timeout=60):
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'vps2vpn-panel', 'Accept': 'application/octet-stream'})
         with os.fdopen(fd, 'wb') as out, urllib.request.urlopen(req, timeout=timeout) as r:
+            declared = (getattr(r, 'headers', None) or {}).get('Content-Length')
             while True:
                 chunk = r.read(1 << 16)
                 if not chunk:
@@ -147,6 +148,8 @@ def _download(url, dest_dir, name, timeout=60):
                 out.write(chunk)
         if not size:
             raise ValueError('%s is empty' % name)
+        if declared is not None and declared.strip().isdigit() and int(declared) != size:
+            raise ValueError('%s was cut short (%d of %s bytes)' % (name, size, declared.strip()))
         return tmp, digest.hexdigest(), size
     except BaseException:
         try:
@@ -233,10 +236,22 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
                 log('client update %s: the signature does not match; not published' % name)
                 continue
             # Private like the rest of /var/lib/vps2vpn (the panel serves them as root): 0600, not the umask's.
-            paths.write_atomic(os.path.join(folder, name + '.sig.tmp'), sig.strip() + '\n')
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, os.path.join(folder, name))
-            os.replace(os.path.join(folder, name + '.sig.tmp'), os.path.join(folder, name + '.sig'))
+            sig_tmp = os.path.join(folder, name + '.sig.tmp')
+            try:
+                paths.write_atomic(sig_tmp, sig.strip() + '\n')
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, os.path.join(folder, name))
+                os.replace(sig_tmp, os.path.join(folder, name + '.sig'))
+            except OSError as e:
+                # A full disk must not leave a half-published platform or stray temp files behind.
+                for left in (tmp, sig_tmp):
+                    try:
+                        os.unlink(left)
+                    except OSError:
+                        pass
+                failed = True
+                log('client update %s: could not be saved (%s); tried again later' % (name, e))
+                continue
             published.append(name)
             # Recorded at once: if anything stops this round later, the file is still known as ours (not one
             # put there by hand) and is cleaned up once superseded (PR #118).

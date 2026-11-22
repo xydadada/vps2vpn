@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.16
+
+**Telegram**
+- Pairing the bot works while the panel's command bot is already polling the same token: the panel remembers `/bind` messages it has seen for 15 minutes, so the pairing step no longer loses them to the other poller (Telegram's 409 "conflict"). `/bind@yourbot <code>` (the form Telegram fills in from the command menu) is accepted too.
+
+**Subscriptions**
+- Shadowrocket rules built from an upstream list skip domain entries with commas, spaces or other odd characters, which could otherwise add a rule of their own or an empty one.
+- When only part of the rule lists could be fetched on first start, the rest are tried again every hour instead of waiting a day.
+
+**Backup and restore**
+- A restore checks every invite field that sign-up and the quota maths read (code, kind, quota, uses, valid until, status) and refuses a backup with a bad or duplicate code before anything is replaced. A good restore also forgets the old install's alert history.
+
+**Abuse watch**
+- Dozens of different hosts on one remote-login, file-share or database port (SSH, RDP, SMB, MySQL …) now count as a wide scan, not only hundreds of targets on many ports. Ordinary browsing on 443 does not. The Hysteria stream list is read with a 16 MB limit.
+
+**App downloads**
+- An installer shorter than its announced size is treated as a failed download, and a full disk while publishing leaves neither a half-published platform nor temp files behind; it is tried again later.
+
+**Admin**
+- `vps2vpn reset-password` refuses passwords over 128 characters and a blank or control-character username, so it cannot leave an admin that the sign-in page then refuses.
+- Passwords and tokens with a lone surrogate character are a wrong answer, not an internal error.
+- The client-update and IP-recheck jobs cannot run twice at once; the certificate-name cache also notices a certificate replaced on another disk.
+
 ## 0.2.15
 
 **Telegram alerts**

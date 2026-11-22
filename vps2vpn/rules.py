@@ -182,6 +182,10 @@ def branch(fmt):
     return 'sing' if fmt == 'singbox' else 'meta'
 
 
+def _plain_domain(v):
+    return bool(v) and not v.startswith('.') and all(c.isalnum() or c in '.-_' for c in v)
+
+
 def to_shadowrocket(data, kind):
     """meta-rules-dat .list text -> Shadowrocket rule-set lines."""
     out = []
@@ -195,11 +199,11 @@ def to_shadowrocket(data, kind):
             except ValueError:
                 continue
             out.append('%s,%s' % ('IP-CIDR' if net.version == 4 else 'IP-CIDR6', net))
-        elif v.startswith('+.'):
-            out.append('DOMAIN-SUFFIX,' + v[2:])
-        elif v.startswith('.'):
-            out.append('DOMAIN-SUFFIX,' + v[1:])
-        elif all(c.isalnum() or c in '.-_' for c in v):
+        elif v.startswith('+.') or v.startswith('.'):
+            name = v[2:] if v.startswith('+.') else v[1:]
+            if _plain_domain(name):          # a comma would add a policy field to the Shadowrocket rule
+                out.append('DOMAIN-SUFFIX,' + name)
+        elif _plain_domain(v):
             out.append('DOMAIN,' + v)
         # anything else (regex/keyword forms) has no safe Shadowrocket equivalent and is skipped
     return ('\n'.join(out) + '\n').encode()
@@ -291,6 +295,11 @@ def mirror_age():
         except OSError:
             continue
     return int(time.time() - min(mtimes)) if mtimes else None
+
+
+def incomplete():
+    """True while some rule file was never fetched (a first download that got only part of them)."""
+    return any(not os.path.exists(local_file(name, fmt)) for name in SETS for fmt in FORMATS)
 
 
 _refresh_lock = threading.Lock()

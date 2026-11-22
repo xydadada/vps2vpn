@@ -333,6 +333,21 @@ class AdminWeb(tu.Base):
         self.assertEqual(status, 400, body)
         self.assertEqual(db.export_all(), before)
         self.assertEqual(self.req('GET', '/adm/api/invites')[0], 200)
+        # every field redemption and the quota maths read, not only the history
+        for field, value in (('code', ''), ('code', 7), ('kind', 'root'), ('quota_gb', '5'), ('quota_gb', -1),
+                             ('valid_until', None), ('max_uses', 0), ('reset_day', 40), ('status', 'odd')):
+            damaged = json.loads(json.dumps(before))
+            damaged['invites'][0][field] = value
+            status, body, _ = self.req('POST', '/adm/api/restore', damaged)
+            self.assertEqual(status, 400, (field, value, body))
+        damaged = json.loads(json.dumps(before))
+        damaged['invites'].append(dict(damaged['invites'][0], id=damaged['invites'][0]['id'] + 1))
+        self.assertEqual(self.req('POST', '/adm/api/restore', damaged)[0], 400)    # duplicate code
+        self.assertEqual(db.export_all(), before)
+        # a good restore forgets the old install's alert history (its keys name other users)
+        db.x('INSERT OR REPLACE INTO alerts_sent(key, at) VALUES(?, ?)', ('old-key', int(time.time())))
+        self.assertEqual(self.req('POST', '/adm/api/restore', before)[0], 200)
+        self.assertEqual(db.q('SELECT COUNT(*) AS n FROM alerts_sent')[0]['n'], 0)
 
     def test_batch_bulk_and_export(self):
         self.login()

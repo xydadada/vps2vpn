@@ -157,6 +157,34 @@ class TelegramPairing(unittest.TestCase):
         self.assertEqual(offsets, [None, None, 9])
         self.assertEqual([c.args[0] for c in handle.call_args_list], ['/status', '/help'])
 
+    def test_pairing_works_while_the_command_bot_is_polling_the_same_token(self):
+        # The bot loop takes (and so confirms) every new message, the pairing code too: the pairing check
+        # must still find it, whether Telegram then answers it with 409 or with an empty list.
+        notify._bind_seen.clear()
+        settings = {'tg_token': 'bot-token', 'tg_chat': '42', 'tg_verified': True,
+                    'tg_bot': True, 'setup_done': True}
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        with patch.object(notify.db, 'settings', return_value=settings), \
+             patch.object(notify, '_bot_binding_active', return_value=True), \
+             patch.object(notify, '_call', side_effect=[
+                 {'ok': True, 'result': []},
+                 {'ok': True, 'result': [message(77, '/bind@my_bot ' + CODE, update_id=9),
+                                         message(78, '/bind ' + OTHER_CODE, chat_type='group', update_id=10)]},
+             ]):
+            notify.bot_loop(stop, Mock(return_value=None), lambda line: None)
+        conflict = urllib.error.HTTPError('https://api.telegram.org', 409, 'Conflict', {}, None)
+        with patch.object(notify, '_call', side_effect=conflict) as call:
+            self.assertEqual(notify.find_chat('other-token', CODE), (None, None))     # another bot's code
+            self.assertEqual(notify.find_chat('bot-token', CODE), ('77', 'Owner'))
+            self.assertEqual(call.call_count, 1)                                     # found without asking
+            self.assertEqual(notify.find_chat('bot-token', CODE), (None, None))       # used once
+            self.assertEqual(notify.find_chat('bot-token', OTHER_CODE), (None, None))  # a group never pairs
+        with patch.object(notify, '_call', side_effect=urllib.error.HTTPError(
+                'https://api.telegram.org', 401, 'Unauthorized', {}, None)):
+            with self.assertRaises(urllib.error.HTTPError):                         # other errors still surface
+                notify.find_chat('bot-token', CODE)
+
     def test_rejected_offset_reprimes_without_replaying_commands(self):
         bad_request = urllib.error.HTTPError('https://api.telegram.org', 400, 'Bad Request', {}, None)
         offsets, handle = self._poll([

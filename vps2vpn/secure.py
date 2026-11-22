@@ -26,9 +26,15 @@ def b64url_decode(text):
     return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
 
 
+def _utf8(text):
+    # 'surrogatepass': a lone surrogate (a password typed on a non-UTF-8 terminal, say) is still bytes, the
+    # same bytes every time, instead of an exception halfway through a sign-in.
+    return text.encode('utf-8', 'surrogatepass')
+
+
 def hash_password(password):
     salt = os.urandom(16)
-    digest = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, PBKDF2_ROUNDS)
+    digest = hashlib.pbkdf2_hmac('sha256', _utf8(password), salt, PBKDF2_ROUNDS)
     return 'pbkdf2_sha256$%d$%s$%s' % (PBKDF2_ROUNDS, b64url(salt), b64url(digest))
 
 
@@ -42,7 +48,7 @@ def check_password(password, stored):
         n = int(rounds)
         if not 1 <= n <= MAX_PBKDF2_ROUNDS:
             return False
-        calc = hashlib.pbkdf2_hmac('sha256', password.encode(), b64url_decode(salt), n)
+        calc = hashlib.pbkdf2_hmac('sha256', _utf8(password), b64url_decode(salt), n)
         return hmac.compare_digest(calc, b64url_decode(digest))
     except (ValueError, AttributeError):
         return False
@@ -111,7 +117,7 @@ def hmac_eq(a, b):
     """Constant-time string compare; non-strings or an empty expected value never match."""
     if not isinstance(a, str) or not isinstance(b, str) or not b:
         return False
-    return hmac.compare_digest(a.encode(), b.encode())
+    return hmac.compare_digest(_utf8(a), _utf8(b))
 
 
 # --- TOTP (RFC 6238) for the admin's optional second factor ---------------------

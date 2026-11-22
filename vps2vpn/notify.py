@@ -151,7 +151,22 @@ def find_chat(token, challenge):
     """
     if not re.fullmatch(r'[0-9a-f]{32}', str(challenge or '')):
         return None, None
-    res = _call(token, 'getUpdates', {'limit': 100, 'offset': -100, 'allowed_updates': '["message"]'})
+    seen = _bind_seen_take(token, challenge)
+    if seen:
+        return seen
+    try:
+        res = _call(token, 'getUpdates', {'limit': 100, 'offset': -100, 'allowed_updates': '["message"]'})
+    except urllib.error.HTTPError as e:
+        if e.code != 409:
+            raise
+        # 409: the command bot is long-polling this token right now. It takes every new message (the
+        # pairing one too) and notes a /bind for us: give it a moment to hand that over.
+        for _ in range(30):
+            time.sleep(0.1)
+            seen = _bind_seen_take(token, challenge)
+            if seen:
+                return seen
+        return None, None
     if not isinstance(res, dict) or not res.get('ok', True):
         return None, None
     updates = res.get('result')
@@ -160,17 +175,57 @@ def find_chat(token, challenge):
     for upd in reversed(updates):
         if not isinstance(upd, dict):
             continue
-        msg = upd.get('message')
-        if not isinstance(msg, dict) or msg.get('text') != '/bind ' + challenge:
-            continue
-        chat, sender = msg.get('chat') or {}, msg.get('from') or {}
-        if not isinstance(chat, dict) or not isinstance(sender, dict):
-            continue
-        if (chat.get('type') != 'private' or not chat.get('id')
-                or str(sender.get('id')) != str(chat['id']) or sender.get('is_bot')):
-            continue
-        return str(chat['id']), chat.get('username') or chat.get('first_name') or ''
-    return None, None
+        found = _bind_message(upd.get('message'))
+        if found and found[0] == challenge:
+            return found[1], found[2]
+    # The command bot may have taken (and confirmed) it between the two looks.
+    return _bind_seen_take(token, challenge) or (None, None)
+
+
+_BIND_RE = re.compile(r'/bind(?:@[A-Za-z0-9_]{1,64})?\s+([0-9a-f]{32})')
+_bind_seen = {}           # (token digest, challenge) -> (chat id, name, monotonic time): /bind the bot loop took
+_bind_lock = threading.Lock()
+BIND_KEEP = 900
+
+
+def _bind_message(msg):
+    """(challenge, chat id, name) for a '/bind <code>' a person sent the bot in a private chat, else None."""
+    if not isinstance(msg, dict) or not isinstance(msg.get('text'), str):
+        return None
+    m = _BIND_RE.fullmatch(msg['text'].strip())
+    if not m:
+        return None
+    chat, sender = msg.get('chat') or {}, msg.get('from') or {}
+    if not isinstance(chat, dict) or not isinstance(sender, dict):
+        return None
+    if (chat.get('type') != 'private' or not chat.get('id')
+            or str(sender.get('id')) != str(chat['id']) or sender.get('is_bot')):
+        return None
+    return m.group(1), str(chat['id']), chat.get('username') or chat.get('first_name') or ''
+
+
+def _bind_key(token, challenge):
+    return hashlib.sha256(str(token).encode('utf-8')).hexdigest(), challenge
+
+
+def _bind_seen_note(token, msg):
+    found = _bind_message(msg)
+    if not found:
+        return
+    now = time.monotonic()
+    with _bind_lock:
+        for k in [k for k, v in _bind_seen.items() if now - v[2] > BIND_KEEP]:
+            del _bind_seen[k]
+        if len(_bind_seen) < 64:
+            _bind_seen[_bind_key(token, found[0])] = (found[1], found[2], now)
+
+
+def _bind_seen_take(token, challenge):
+    with _bind_lock:
+        v = _bind_seen.pop(_bind_key(token, challenge), None)
+    if v and time.monotonic() - v[2] <= BIND_KEEP:
+        return v[0], v[1]
+    return None
 
 
 def send_file(name, data, caption='', s=None):
@@ -284,6 +339,9 @@ def bot_loop(stop, handle, log):
                 continue                  # never replay or rewind on out-of-order data
             offset = update_id + 1
             advanced = True
+            # Taking an update confirms it, so the panel's pairing check (find_chat) can no longer read it:
+            # a pairing code is noted for that check, from anyone (knowing the code is what pairing proves).
+            _bind_seen_note(token, upd.get('message'))
             if first:
                 continue                  # never act on pre-start commands
             msg = upd.get('message')

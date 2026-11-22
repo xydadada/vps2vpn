@@ -773,6 +773,38 @@ def _check_import_request(r, i):
             raise ValueError('request %d: invalid %s' % (i, k))
 
 
+def _check_import_invite(inv, i, codes):
+    """Invite rows as redemption and the quota maths read them: a text quota or a missing valid_until would make
+    every later sign-up with any code fail, and a duplicate code aborts the restore half-way."""
+    if not isinstance(inv, dict):
+        raise ValueError('invite %d: not an object' % i)
+    used_by = inv.get('used_by', '')
+    if not isinstance(used_by, str) or not re.fullmatch(r'(?:[1-9][0-9]{0,18}(?:,[1-9][0-9]{0,18})*)?', used_by):
+        raise ValueError('invite %d: invalid usage history' % i)
+    code = inv.get('code')
+    if not isinstance(code, str) or not 1 <= len(code) <= 128 or re.search(r'[\x00-\x20\x7f]', code) or code in codes:
+        raise ValueError('invite %d: invalid code' % i)
+    codes.add(code)
+    if inv.get('kind') not in ('admin', 'member'):
+        raise ValueError('invite %d: invalid kind' % i)
+    if 'status' in inv and inv['status'] not in ('unused', 'used', 'revoked'):
+        raise ValueError('invite %d: invalid status' % i)
+    if type(inv.get('valid_until')) is not int:
+        raise ValueError('invite %d: invalid valid_until' % i)
+    for k in ('id', 'inviter', 'expire_days', 'reset_day', 'max_uses', 'uses', 'valid_until', 'created_at'):
+        if k in inv and (type(inv[k]) is not int or not 0 <= inv[k] <= MAX_SQLITE_INT):
+            raise ValueError('invite %d: invalid %s' % (i, k))
+    if 'id' in inv and inv['id'] == 0:
+        raise ValueError('invite %d: invalid id' % i)
+    if not 0 <= inv.get('reset_day', 0) <= 28 or inv.get('max_uses', 1) < 1:
+        raise ValueError('invite %d: invalid reset_day or max_uses' % i)
+    gb = inv.get('quota_gb', 0)
+    if type(gb) not in (int, float) or not 0 <= gb <= 1e9 or not math.isfinite(gb):
+        raise ValueError('invite %d: invalid quota_gb' % i)
+    if 'note' in inv and not isinstance(inv['note'], str):
+        raise ValueError('invite %d: invalid note' % i)
+
+
 def _check_import_servers(servers):
     """Joined servers as subscriptions read them: the same checks a sync makes before saving (#111)."""
     from . import cluster              # cluster imports db
@@ -855,11 +887,9 @@ def import_all(data):
         _check_import_request(r, i)
     if 'invites' in data and not isinstance(data['invites'], list):
         raise ValueError('backup invites must be a list')
+    codes = set()
     for i, invite in enumerate(data.get('invites', []), 1):
-        used_by = invite.get('used_by', '') if isinstance(invite, dict) else None
-        if not isinstance(used_by, str) or not re.fullmatch(
-                r'(?:[1-9][0-9]{0,18}(?:,[1-9][0-9]{0,18})*)?', used_by):
-            raise ValueError('invite %d: invalid usage history' % i)
+        _check_import_invite(invite, i, codes)
     # A backup can be old, copied from another install, or edited: it is never
     # evidence that this bot/chat was verified on the restored installation.
     keep['tg_verified'] = False
@@ -873,6 +903,7 @@ def import_all(data):
         c.execute('DELETE FROM traffic')
         c.execute('DELETE FROM events')
         c.execute('DELETE FROM member_sessions')
+        c.execute('DELETE FROM alerts_sent')    # keys name the old install's users/servers: stale after a restore
         c.execute('DELETE FROM invites')
         c.execute('DELETE FROM requests')
         c.execute('DELETE FROM users')

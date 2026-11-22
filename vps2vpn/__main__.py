@@ -199,9 +199,12 @@ def cmd_info(a):
 
 def cmd_reset_password(a):
     pw = a.password or getpass.getpass('new admin password: ')
-    if len(pw) < 8:
-        sys.exit('password must be at least 8 characters')
-    db.set_settings(admin_hash=secure.hash_password(pw), admin_user=a.username or db.settings()['admin_user'])
+    if not 8 <= len(pw) <= 128:            # sign-in refuses longer ones: that would lock the admin out
+        sys.exit('password must be 8 to 128 characters')
+    user = (a.username or db.settings()['admin_user']).strip()[:32]
+    if not user or any(ord(c) < 32 or ord(c) == 127 for c in user):
+        sys.exit('invalid username')
+    db.set_settings(admin_hash=secure.hash_password(pw), admin_user=user)
     db.end_all_sessions()
     print('password changed, all sessions logged out')
 

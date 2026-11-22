@@ -153,7 +153,7 @@ def acme_names():
         st = os.stat(paths.ACME_CRT)
     except OSError:
         return []                 # no certificate (openssl would only fail on the missing file)
-    stamp = (st.st_mtime_ns, st.st_size, st.st_ino)
+    stamp = (paths.ACME_CRT, st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)   # the path too: it can be repointed
     with _names_lock:
         if _names_cache.get('stamp') == stamp:
             return list(_names_cache['names'])

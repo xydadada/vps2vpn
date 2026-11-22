@@ -19,6 +19,11 @@ FANOUT_PORTS = 20          # ...on many different ports...
 FANOUT_STREAMS = 200       # ...with many streams at once: looks like scanning or a proxy for a botnet
 SHARED_IPS = 8             # this many client addresses on one account at once: the link has probably spread
 MAIL_PORTS = {25, 465, 587}
+# Remote-login, file-share and database ports: a member's browser never opens these to dozens of different hosts
+# at once, a worm or a credential sprayer does. One port is enough here, unlike the many-port rule above.
+SCAN_PORTS = {22, 23, 135, 139, 445, 1433, 2375, 3306, 3389, 5432, 5900, 6379, 9200, 27017}
+SCAN_TARGETS = 50
+STREAMS_MAX = 16 << 20     # the stream dump of a busy Hysteria core is a few MB; never buffer an unbounded body
 
 _last = {'at': 0, 'accounts': {}, 'coverage': []}
 _last_lock = threading.Lock()
@@ -29,7 +34,10 @@ def _hy2_streams(s):
     req = urllib.request.Request('http://127.0.0.1:%d/dump/streams' % s['hy2_stats_port'],
                                  headers={'Authorization': s['stats_secret']})
     with urllib.request.urlopen(req, timeout=4) as r:
-        payload = json.loads(r.read())
+        body = r.read(STREAMS_MAX + 1)
+    if len(body) > STREAMS_MAX:
+        raise ValueError('Hysteria streams response too large')
+    payload = json.loads(body)
     if not isinstance(payload, dict):
         raise ValueError('invalid Hysteria streams response')
     streams = payload.get('streams')
@@ -44,14 +52,16 @@ def aggregate(flows, online=None):
     """flows: iterable of (uid, host, port). online: {uid: {'ips': [...], 'devices': n}}. Returns {uid: report}."""
     acc = {}
     for uid, host, port in flows:
-        a = acc.setdefault(uid, {'streams': 0, 'targets': set(), 'ports': set(), 'mail': 0})
+        a = acc.setdefault(uid, {'streams': 0, 'targets': set(), 'ports': set(), 'mail': 0, 'sweep': {}})
         a['streams'] += 1
         a['targets'].add((host or '').lower())
         a['ports'].add(port)
+        if port in SCAN_PORTS:
+            a['sweep'].setdefault(port, set()).add((host or '').lower())
         if port in MAIL_PORTS:
             a['mail'] += 1
     for uid in (online or {}):
-        acc.setdefault(uid, {'streams': 0, 'targets': set(), 'ports': set(), 'mail': 0})
+        acc.setdefault(uid, {'streams': 0, 'targets': set(), 'ports': set(), 'mail': 0, 'sweep': {}})
     out = {}
     for uid, a in acc.items():
         info = (online or {}).get(uid, {})
@@ -60,7 +70,8 @@ def aggregate(flows, online=None):
         # one device; the raw address count would flag a single phone as a shared link.
         devices = int(info['devices'] or 0) if 'devices' in info else ips
         flags = []
-        if len(a['targets']) >= FANOUT_TARGETS and len(a['ports']) >= FANOUT_PORTS and a['streams'] >= FANOUT_STREAMS:
+        if ((len(a['targets']) >= FANOUT_TARGETS and len(a['ports']) >= FANOUT_PORTS and a['streams'] >= FANOUT_STREAMS)
+                or any(len(hosts) >= SCAN_TARGETS for hosts in a['sweep'].values())):
             flags.append('fanout')
         if devices >= SHARED_IPS:
             flags.append('shared')
@@ -168,7 +179,7 @@ def check(s=None, log=print):
             return {}
         rep = scan(s)
         names = db.user_names()
-        words = {'fanout': ('connects to hundreds of targets on many ports (scanner or relay?)', '短时间连了几百个目标和端口（像扫描或被当跳板）'),
+        words = {'fanout': ('connects to hundreds of targets on many ports, or to dozens of hosts on one login/database port (scanner or relay?)', '短时间连了几百个目标和端口，或在同一个登录/数据库端口连了几十台主机（像扫描或被当跳板）'),
                  'shared': ('used from many addresses at once (link shared?)', '同时有很多个 IP 在用（链接可能被转发了）'),
                  'mail': ('sends lots of mail traffic (spam?)', '大量发邮件端口连接（可能在发垃圾邮件）')}
         day = time.strftime('%Y-%m-%d')

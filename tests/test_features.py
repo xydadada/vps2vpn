@@ -664,6 +664,13 @@ class Abuse(tu.Base):
         self.assertEqual(rep[2]['flags'], [])                  # many streams to one site is normal
         self.assertEqual(rep[3]['flags'], ['mail'])
         self.assertEqual(rep[4]['flags'], ['shared'])
+        # a sweep of one login port is a scan too; dozens of sites on 443 are just browsing
+        sweep = [(6, '10.9.%d.%d' % (i // 250, i % 250), 22) for i in range(60)]
+        browse = [(7, 'site%d.example' % i, 443) for i in range(120)]
+        rep = abuse.aggregate(sweep + browse)
+        self.assertEqual(rep[6]['flags'], ['fanout'])
+        self.assertEqual(rep[7]['flags'], [])
+        self.assertEqual(abuse.aggregate([(8, 'h%d' % i, 3389) for i in range(49)])[8]['flags'], [])
         # one phone rotating IPv6 privacy addresses (the cores count it as one device) is not a shared link
         v6 = ['2001:db8:5:6::%x' % i for i in range(1, 12)]
         self.assertEqual(abuse.aggregate([], {5: {'ips': v6, 'devices': cores.device_estimate(v6)}})[5]['flags'], [])
@@ -1316,6 +1323,10 @@ class Shadowrocket(tu.Base):
     def test_rule_conversion(self):
         out = rules.to_shadowrocket(b'+.google.com\nexample.org\n# c\nregexp:^x\n', 'geosite').decode().splitlines()
         self.assertEqual(out, ['DOMAIN-SUFFIX,google.com', 'DOMAIN,example.org'])
+        # A line from the upstream list must not become a rule with its own policy (or an empty one).
+        bad = b'+.evil.com,DIRECT\n.x.com,REJECT\n+.\n.\n+. spaced.com\n+..double.com\n.ok.net\n'
+        out = rules.to_shadowrocket(bad, 'geosite').decode().splitlines()
+        self.assertEqual(out, ['DOMAIN-SUFFIX,ok.net'])
         out = rules.to_shadowrocket(b'1.0.1.0/24\n2001:db8::/32\nbad\n', 'geoip').decode().splitlines()
         self.assertEqual(out, ['IP-CIDR,1.0.1.0/24', 'IP-CIDR6,2001:db8::/32'])
 
@@ -2652,6 +2663,19 @@ class ClientSync(unittest.TestCase):
         self.assertEqual(self._sync(), '1.0.9')
         self.assertTrue(os.path.isfile(os.path.join(self.dir, windows)))
         self.assertEqual(clientsync._manifest(self.dir), [windows])   # so a later sync can clean it up
+        self.assertEqual([n for n in os.listdir(self.dir) if n.endswith('.part')], [])
+        # a full disk while publishing: nothing half-published, no temp files, tried again next round
+        self._release('1.0.10', {'vps2vpn-1.0.10-windows-amd64-setup.exe': b'w10'})
+        with mock.patch.object(clientsync.os, 'replace', side_effect=OSError(28, 'No space left on device')):
+            with self.assertRaises(OSError):
+                self._sync()
+        self.assertEqual([n for n in os.listdir(self.dir) if '1.0.10' in n or n.endswith(('.part', '.tmp'))], [])
+        # a body shorter than its Content-Length is a failed download, not an installer
+        cut = io.BytesIO(b'w1')
+        cut.headers = {'Content-Length': '3'}
+        with mock.patch.object(clientsync.urllib.request, 'urlopen', return_value=cut):
+            with self.assertRaisesRegex(ValueError, 'cut short'):
+                clientsync._download('https://dl.example/x', self.dir, 'x')
         self.assertEqual([n for n in os.listdir(self.dir) if n.endswith('.part')], [])
         # nothing at all could be fetched: the scheduler sees a failure, not "up to date"
         self._release('1.1.0', {'vps2vpn-1.1.0-windows-amd64-setup.exe': b'w'})
