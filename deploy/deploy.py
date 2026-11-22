@@ -241,7 +241,17 @@ LINK_FOR = {'vps2vpn': 'vps2vpn', 'clash': 'clash', 'hiddify': 'hiddify', 'sing-
 MAC_APPS = [('vps2vpn.app', 'vps2vpn'), ('Clash Verge.app', 'clash'), ('FlClash.app', 'clash'), ('Mihomo Party.app', 'clash'),
             ('Clash Nyanpasu.app', 'clash'), ('ClashX Meta.app', 'clash'), ('ClashX.app', 'clash'), ('Stash.app', 'clash'),
             ('Hiddify.app', 'hiddify'), ('SFM.app', 'sing-box')]
-CLIENT_DOWNLOAD = 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest'
+# our own client is Windows only for now; Mac users get Clash Verge Rev, which imports the same clash:// link
+CLIENT_DOWNLOAD = 'https://github.com/xydadada/vps2vpn-client/releases/latest'
+MAC_DOWNLOAD = 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest'
+
+
+def client_download():
+    """(url, how to pick the file) for the app we recommend on this computer."""
+    if sys.platform == 'darwin':
+        return MAC_DOWNLOAD, '推荐装免费开源的 Clash Verge Rev（下载 .dmg）。'
+    return CLIENT_DOWNLOAD, ('推荐装 vps2vpn 客户端（免费，下载名字里带 setup 的 .exe），'
+                             '能直接看到剩余流量、到期时间和 AI 可用情况。')
 
 
 def client_name(path):
@@ -560,7 +570,7 @@ def recheck(job):
 def page_view(job):
     """What the page shows. The page is local and token-protected, so it may show the password."""
     out = {k: job.get(k) for k in ('state', 'log', 'error', 'ports', 'join', 'join_msg', 'record_file', 'client', 'imported')}
-    out['download'] = CLIENT_DOWNLOAD
+    out['download'], out['download_tip'] = client_download()
     rec = job.get('rec') or {}
     out['rec'] = {k: rec.get(k) for k in ('host', 'panel', 'admin_user', 'admin_password', 'sub_url', 'qr_url',
                                           'links', 'join_code', 'main', 'cloud', 'cloud_firewall', 'ai', 'name')}
@@ -568,7 +578,7 @@ def page_view(job):
 
 
 PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>vps2vpn deploy</title><style>
+<title>vps2vpn 一键部署</title><style>[hidden]{display:none!important}
 :root{--bg:#f5f6f8;--card:#fff;--fg:#1b2130;--mute:#667085;--line:#e4e7ec;--acc:#2563eb;--bad:#d92d20;--ok:#079455;--warn:#b54708}
 @media (prefers-color-scheme:dark){:root{--bg:#0e1117;--card:#161a22;--fg:#e6e8ee;--mute:#98a2b3;--line:#283040;--acc:#5b8cff;--ok:#32d583;--bad:#f97066;--warn:#fdb022}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
@@ -648,14 +658,14 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
    el('div',{text:'在它弹出的窗口点“确定/导入”，然后在软件里选中这个配置、打开“系统代理”开关就能用了。分流规则（国内网站直连、国外走代理）已经写好在里面，不用自己设置。'})));
   else if(c)box.append(el('p',{text:'检测到你电脑上的 '+c.name+'。防火墙放行后会自动导入，也可以直接点下面的按钮。'}));
   else{const dl=safeHref(s.download,['https']);box.append(el('div',{class:'note'},el('b',{text:'没检测到电脑上的 VPN 软件。'}),
-   el('div',{text:'推荐装免费开源的 Clash Verge Rev（Windows 下载名字里带 setup 的 .exe，Mac 下载 .dmg）。装好后回来点“导入到 Clash（电脑）”。'}),
-   dl?el('a',{href:dl,target:'_blank',rel:'noopener noreferrer',text:'打开下载页'}):null))}
+   el('div',{text:(s.download_tip||'')+'装好后回来点下面的“一键导入（电脑）”。'}),
+   dl?el('p',{style:'margin:10px 0 0'},el('a',{class:'btn',href:dl,target:'_blank',rel:'noopener noreferrer',text:'打开下载页'})):null))}
   const L=r.links||{};const b3=el('button',{class:'ghost',text:'复制订阅链接'});b3.onclick=()=>copy(subUrl,b3);
   const mainLink=safeHref((c&&L[c.link])||L.clash,LINK_SCHEMES),srLink=safeHref(L.shadowrocket_conf,LINK_SCHEMES);
-  box.append(el('div',{class:'btns'},mainLink?el('a',{class:'btn',href:mainLink,text:c?(s.imported?'再导入一次到 ':'导入到 ')+c.name:'导入到 Clash（电脑）'}):null,
+  box.append(el('div',{class:'btns'},mainLink?el('a',{class:'btn',href:mainLink,text:c?(s.imported?'再导入一次到 ':'导入到 ')+c.name:'一键导入（电脑）'}):null,
    srLink?el('a',{class:'btn',href:srLink,text:'导入到 Shadowrocket'}):null,b3));
   const qrSrc=safeHref(r.qr_url,['http','https']);
-  box.append(el('div',{class:'qr'},qrSrc?el('img',{src:qrSrc,alt:'QR'}):null,el('div',{class:'mute',text:'手机打开 Shadowrocket 或 Clash，扫这个二维码就导入好了。电脑上没反应的话：先装好 Clash Verge / FlClash，再点上面的按钮；或者复制订阅链接，在软件里“新建订阅”粘贴。'})))}
+  box.append(el('div',{class:'qr'},qrSrc?el('img',{src:qrSrc,alt:'QR'}):null,el('div',{class:'mute',text:'手机打开 Shadowrocket 或 Clash，扫这个二维码就导入好了。电脑上没反应的话：先装好上面推荐的软件，再点上面的按钮；或者复制订阅链接，在软件里“新建订阅”粘贴。'})))}
  box.append(el('h3',{text:(r.main?'':'② ')+'防火墙检查（从你这台电脑测试）'}));
  const bad=(s.ports||[]).filter(c=>!c.ok);
  (s.ports||[]).forEach(c=>box.append(el('div',{class:'chk'},el('span',{text:c.name+'  '+c.proto.toUpperCase()+' '+c.port}),el('span',{class:c.ok?'ok':'bad',text:c.ok?'✓ 通了':'✗ 不通'}))));
