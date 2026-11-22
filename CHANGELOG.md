@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.15
+
+**Telegram alerts**
+- When Telegram does not answer (timeout, DNS, connection refused), alerts are held back for a minute instead of each one waiting out its own 10-second timeout in turn. Twenty accounts at 80% of their quota used to hold the 20-second quota and expiry pass for minutes. Held-back alerts are sent on a later round, like any failed one; a reply from Telegram (even a refusal or a rate limit) does not hold anything back.
+
+**App reports**
+- A line report from the app whose host has line breaks, spaces or control characters is refused: the host is quoted in the admin's alert, and such text could make it say something else.
+
 ## 0.2.14
 
 **Accounting**

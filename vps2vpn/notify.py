@@ -19,6 +19,8 @@ API = 'https://api.telegram.org/bot%s/%s'
 _recent = {}          # key -> (monotonic time sent, every), so one problem does not flood the chat
 _recent_lock = threading.Lock()
 _pending = set()          # alerts reserved during a blocking Telegram sendMessage request
+UNREACHABLE_PAUSE = 60
+_unreachable_until = [0.0]    # monotonic time before which alerts are not tried (Telegram did not answer)
 MAX_TEXT = 4000
 # Telegram promises its large integers fit a double (53 bits). Anything beyond is a corrupt response and
 # would push the getUpdates cursor past every real update, so it is never used as an offset.
@@ -48,6 +50,10 @@ def send(text, key=None, every=6 * 3600, s=None):
     if not (s.get('tg_token') and s.get('tg_chat') and s.get('tg_verified') is True):
         return False
     now = time.monotonic()            # wall-clock jumps (NTP, manual set) must not mute or unmute alerts
+    if now < _unreachable_until[0]:
+        # Telegram did not answer a moment ago: every alert would wait out its own timeout, one after the
+        # other inside the 20-second quota pass. Not sent (so tried again later, like any failed send).
+        return False
     # A fresh verified owner binding must receive its first warning even when
     # the previous owner was sent an alert with the same key minutes ago.
     # A digest distinguishes bot credentials without keeping retired raw tokens
@@ -101,7 +107,12 @@ def send(text, key=None, every=6 * 3600, s=None):
                         for k in oldest[:overflow]:
                             _recent.pop(k, None)
         return True
-    except (OSError, ValueError):
+    except urllib.error.HTTPError:    # Telegram answered (a refusal, a rate limit): reachable
+        return False
+    except OSError:                   # no answer (timeout, DNS, refused): hold the next ones back a minute
+        _unreachable_until[0] = time.monotonic() + UNREACHABLE_PAUSE
+        return False
+    except ValueError:
         return False
     finally:
         if recent_key is not None:

@@ -171,6 +171,10 @@ class LineReports(tu.Base):
         self.assertEqual(jobs.line_trouble(db.settings(), now + 2 * 86400), {})
         with self.assertRaises(ValueError):
             jobs.report_line(a['id'], 'ssh', False)
+        for fake in ('1.2.3.4\nserver is fine', 'a b', 'x\x7fy'):         # quoted in the admin's alert
+            with self.assertRaises(ValueError):
+                jobs.report_line(a['id'], 'hy2', False, fake, now + 240)
+        jobs.report_line(a['id'], 'hy2', False, 'vpn.example.com', now + 240)
 
     def test_change_port_moves_and_clears(self):
         u = tf.mk('c')

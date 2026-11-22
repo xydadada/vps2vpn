@@ -348,6 +348,9 @@ def report_line(uid, line, ok, host='', now=None):
     host = _norm_host(host)
     if len(host) > 253:
         raise ValueError('host too long')
+    if any(ord(c) < 33 or ord(c) == 127 for c in host):
+        # A member sends it, and it is quoted in the admin's alert: no line breaks or spaces to fake text with.
+        raise ValueError('host must be a host name or address')
     owner = str(uid)
     first = False
     with _report_lock:

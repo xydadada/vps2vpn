@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+import urllib.error
 import urllib.parse
 
 ROOT = tempfile.mkdtemp(prefix='v2v-test-')
@@ -169,6 +170,7 @@ class Base(unittest.TestCase):
         monitor._hist = None
         abuse._last = {'at': 0, 'accounts': {}, 'coverage': []}
         notify._recent.clear()
+        notify._unreachable_until[0] = 0.0
         jobs._device_events.clear()
         db.ensure_secrets()
         db.set_settings(public_host='203.0.113.7', panel_port=54321)
@@ -727,9 +729,28 @@ class Ops(Base):
         with mock.patch.object(notify, '_call', side_effect=OSError('offline')):
             self.assertFalse(notify.send('down', key='retry-after-failure'))
         self.assertEqual(len(notify._pending), 0)
+        notify._unreachable_until[0] = 0.0          # the minute without tries is over
         with mock.patch.object(notify, '_call', return_value={'ok': True}) as sender:
             self.assertTrue(notify.send('down', key='retry-after-failure'))
             sender.assert_called_once()
+
+    def test_unreachable_telegram_costs_one_timeout_not_one_per_alert(self):
+        db.set_settings(tg_token='1234567:' + 'e' * 35, tg_chat='890', tg_verified=True)
+        clock = [5000.0]
+        with mock.patch.object(notify.time, 'monotonic', side_effect=lambda: clock[0]), \
+                mock.patch.object(notify, '_call', side_effect=OSError('timed out')) as call:
+            for n in range(20):                       # twenty accounts at 80% in one quota pass
+                self.assertFalse(notify.send('80%', key='quota-%d' % n))
+            self.assertEqual(call.call_count, 1)
+            clock[0] += notify.UNREACHABLE_PAUSE + 1
+            self.assertFalse(notify.send('80%', key='quota-0'))
+            self.assertEqual(call.call_count, 2)      # tried again after the minute
+        clock[0] += notify.UNREACHABLE_PAUSE + 1
+        err = urllib.error.HTTPError('https://api.telegram.org', 429, 'Too Many Requests', {}, None)
+        with mock.patch.object(notify.time, 'monotonic', side_effect=lambda: clock[0]), \
+                mock.patch.object(notify, '_call', side_effect=[err, {'ok': True}]):
+            self.assertFalse(notify.send('80%', key='quota-1'))
+            self.assertTrue(notify.send('80%', key='quota-1'))     # an answer, even a refusal: not held back
 
     def test_failed_telegram_ack_must_not_suppress_next_notification(self):
         db.set_settings(tg_token='1234567:' + 'f' * 35, tg_chat='891', tg_verified=True)
