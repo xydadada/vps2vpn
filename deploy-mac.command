@@ -36,7 +36,8 @@ if [ -n "$KEY" ] && [ -d "$KEY" ]; then
   for n in id_ed25519 id_ecdsa id_rsa; do [ -f "$KEY/$n" ] && KEY="$KEY/$n" && break; done
 fi
 USER_DEF=root
-case "$KEY" in *[Ll]ightsail*|*.pem) USER_DEF=ubuntu ;; esac
+# AWS key names only: a .pem from another cloud usually logs in as root
+case "$(basename "$KEY")" in *[Ll]ightsail*|*[Ee][Cc]2*|*[Aa][Ww][Ss]*) USER_DEF=ubuntu ;; esac
 read -r -p "登录用户名 / login user [$USER_DEF]: " LUSER
 LUSER=${LUSER:-$USER_DEF}
 if ! [[ "$LUSER" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]]; then
@@ -59,7 +60,19 @@ OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsF
       -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
 if [ -n "$KEY" ]; then
   [ -f "$KEY" ] || { echo "找不到这个文件 / file not found: $KEY"; exit 1; }
-  cp "$KEY" "$WORK/key" && chmod 600 "$WORK/key"
+  # a key saved on Windows may have CRLF line ends, which ssh rejects
+  (umask 077; tr -d '\r' < "$KEY" > "$WORK/key") || exit 1
+  if head -c 20 "$WORK/key" | grep -q '^PuTTY-User-Key-File'; then
+    echo "这是 PuTTY 格式的密钥（.ppk），ssh 不能直接用：先用 puttygen 转成 OpenSSH 格式再拖进来。"
+    echo "This is a PuTTY .ppk key; convert it first:  puttygen key.ppk -O private-openssh -o key.pem"; exit 1
+  fi
+  if ! grep -q 'PRIVATE KEY' "$WORK/key"; then
+    echo "这不是私钥文件（.pub 是公钥，要用不带 .pub 的那个）/ not a private key file"; exit 1
+  fi
+  if grep -q 'ENCRYPTED' "$WORK/key" || ! ssh-keygen -y -P '' -f "$WORK/key" >/dev/null 2>&1; then
+    echo "这个私钥设了密码保护或已损坏：换一个没有密码的密钥，或先复制一份再运行  ssh-keygen -p -f 复制出的文件  去掉密码。"
+    echo "This key is passphrase-protected (or damaged); use a key without a passphrase."; exit 1
+  fi
   OPTS+=(-i "$WORK/key" -o IdentitiesOnly=yes)
 fi
 RUNAS=""; [ "$LUSER" = root ] || RUNAS="sudo -n env "
@@ -71,9 +84,14 @@ REMOTE='set -e; T=$(mktemp -d); trap '\''rm -rf "$T"'\'' EXIT; base64 -d > "$T/v
 ssh "${OPTS[@]}" -- "$LUSER@$HOST" "$REMOTE" < "$WORK/v.b64" | tee "$WORK/log" | grep -v '^V2V_RESULT:'
 rc=${PIPESTATUS[0]}
 B64=$(grep '^V2V_RESULT:' "$WORK/log" | tail -1 | cut -d: -f2 | tr -d '\r\n ')
+# cloud images (AWS and others) answer root logins with: Please login as the user "ubuntu" rather than ...
+WANT=$(grep -o 'login as the user "[a-z_][a-z0-9_.-]*"' "$WORK/log" | head -1 | cut -d'"' -f2)
 rm -f "$WORK/log"
 if [ "$rc" -ne 0 ] || [ -z "$B64" ]; then
   say "出错了 / something went wrong (exit $rc)."
+  if [ -n "$WANT" ] && [ "$WANT" != "$LUSER" ]; then
+    echo "-> 服务器要求用 $WANT 登录：重新运行，用户名填 $WANT / log in as \"$WANT\" instead of \"$LUSER\""
+  fi
   echo "Permission denied -> 密钥/密码/用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）"
   echo "timed out / refused -> IP 写错、服务器没开机，或云厂商防火墙没放行 SSH 端口"
   echo "Host key verification failed -> 服务器身份和上次不一样。刚重装过系统就运行  ssh-keygen -R '$KH_NAME' -f '$KH'  再部署；没重装过先别继续，可能有人冒充你的服务器"

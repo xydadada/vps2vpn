@@ -352,7 +352,12 @@ install_cores() {
 }
 
 install_app() {
-  local here; here=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)
+  # Only a real script file has code "next to it". Piped in (curl ... | bash) BASH_SOURCE is just "bash" and
+  # dirname would be the current directory, so a stray ./vps2vpn there would replace the verified download.
+  local here=/nonexistent
+  if [ -f "${BASH_SOURCE[0]:-}" ]; then
+    here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo /nonexistent)
+  fi
   local tmp; tmp=$(mktemp -d)
   _TMPDIRS+=("$tmp")
   if [ -n "${V2V_SRC:-}" ] && [ -f "$V2V_SRC" ]; then

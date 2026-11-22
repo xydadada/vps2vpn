@@ -54,6 +54,8 @@ Buy a VPS, click once, get your own private VPN. ([English below](#english))
 2. **Windows**：双击 `deploy-windows.bat`，弹出一个窗口。**什么都不用另外装**（用的是 Windows 10/11 自带的 PowerShell、tar 和 ssh）。
    **macOS**：双击 `deploy-mac.command`（第一次可能要右键 → 打开）。Linux：`bash deploy-mac.command`。
 3. 填服务器 IP，把云厂商给你的 **SSH 密钥文件拖进窗口**（整个 `.ssh` 文件夹拖进去也行，会自动找到私钥），或者填 root 密码，点「一键部署」。
+   - 用户名一般不用改：亚马逊等服务器不让 root 登录、要求用 `ubuntu` 之类的用户时，部署工具会自动换成它（Mac 上没有 Python 时只会提示你改成什么）。
+   - PuTTY 的 `.ppk` 密钥要先用 PuTTYgen 转成 OpenSSH 格式；设了密码保护的密钥不能用，部署工具会直接告诉你。
 4. 等一两分钟，**剩下的全自动**：
    - 管理员账号和你的第一个 VPN 账号自动建好（不用再走设置向导）；
    - 自动检测你电脑上的 VPN 软件（Clash Verge、FlClash、Mihomo Party 等），**自动打开它并导入**，分流规则（国内直连、国外走代理）已经写好；没装的话给你下载链接；手机扫窗口里的二维码导入；
