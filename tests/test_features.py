@@ -226,8 +226,12 @@ class Invites(tu.Base):
             members.request_more(u['id'], 5, 'again')                       # one at a time
         members.decide(rid, True, add_gb=15)
         u = db.user(u['id'])
-        self.assertEqual((u['quota_gb'], u['enabled']), (25, 1))
+        self.assertEqual((u['quota_gb'] + u['extra_gb'], u['enabled']), (25, 1))
         self.assertEqual(db.requests(u['id'])[0]['add_gb'], 15)
+        self.assertEqual((u['quota_gb'], u['extra_gb']), (10, 15))         # a top-up, not a bigger plan
+        self.assertEqual(members.effective_quota(u), 25)
+        db.update_user(u['id'], used_up=0, used_down=0, extra_gb=0)          # what every reset does
+        self.assertEqual(members.effective_quota(db.user(u['id'])), 10)
         rid = members.request_more(u['id'], 5, '')
         members.decide(rid, False, answer='not now')
         self.assertEqual(db.requests(u['id'])[0]['status'], 'rejected')
@@ -239,7 +243,7 @@ class Invites(tu.Base):
         rid = members.request_more(u['id'], 2, '')
         members.decide(rid, True)                                          # 12 GB < 14 GB used
         u = db.user(u['id'])
-        self.assertEqual((u['quota_gb'], u['enabled'], u['disabled_reason']), (12, 0, 'quota'))
+        self.assertEqual((u['quota_gb'] + u['extra_gb'], u['enabled'], u['disabled_reason']), (12, 0, 'quota'))
         rid = members.request_more(u['id'], 5, '')
         members.decide(rid, True)                                          # 17 GB covers it
         self.assertEqual(db.user(u['id'])['enabled'], 1)
@@ -250,7 +254,7 @@ class Invites(tu.Base):
         rid = members.request_more(u['id'], 20, '')
         members.decide(rid, True)
         u = db.user(u['id'])
-        self.assertEqual((u['quota_gb'], u['enabled']), (30, 0))           # the quota is still granted
+        self.assertEqual((u['quota_gb'] + u['extra_gb'], u['enabled']), (30, 0))           # the quota is still granted
         unlimited = mk('gwen', 0)
         with self.assertRaises(members.Refused):
             members.request_more(unlimited['id'], 10, '')                 # nothing to add to
@@ -1763,6 +1767,7 @@ class MemberWeb(tu.Base):
         st, body, _ = self.req('POST', '/mem/api/invite', {'quota_gb': 5, 'max_uses': 2, 'valid_days': 3})
         self.assertEqual(st, 200, body)
         code = json.loads(body)['code']
+        self.assertTrue(json.loads(body)['register_url'].endswith('/mem/#register=' + code))   # ready to send
         st, body, _ = self.req('POST', '/mem/api/request', {'add_gb': 20, 'reason': 'more'})
         self.assertEqual(st, 200, body)
         st, body, _ = self.req('GET', '/mem/api/qr')
@@ -1788,10 +1793,10 @@ class MemberWeb(tu.Base):
         self.assertEqual(len(reqs), 1)
         st, body, _ = self.req('POST', '/adm/api/requests/%d/approve' % reqs[0]['id'], {'add_gb': 10})
         self.assertEqual(st, 200, body)
-        self.assertEqual(db.user_by_name('zoe')['quota_gb'], 40)
+        self.assertEqual((lambda z: z['quota_gb'] + z['extra_gb'])(db.user_by_name('zoe')), 40)
         st, body, _ = self.req('GET', '/adm/api/state')
         z = next(u for u in json.loads(body)['users'] if u['name'] == 'zoe')
-        self.assertEqual((z['quota_eff'], z['shared_gb'], z['has_login']), (35, 5, True))
+        self.assertEqual((z['quota_eff'], z['shared_gb'], z['has_login'], z['quota_gb'], z['extra_gb']), (35, 5, True, 30, 10))
         self.assertNotIn(b'node_key', body)
         st, body, _ = self.req('POST', '/adm/api/invites', {'kind': 'admin', 'quota_gb': 0, 'valid_days': 5})
         self.assertEqual(json.loads(body)['invite']['register_url'][-17:-11], 'ister=')
@@ -1801,6 +1806,23 @@ class MemberWeb(tu.Base):
         db.set_settings(member_enabled=False)
         st, _, _ = self.req('GET', '/mem/')
         self.assertEqual(st, 404)
+
+    def test_no_invite_codes_without_a_sign_up_page(self):
+        u = mk('lee', 10)
+        base = '/s/%s/' % u['sub_token']
+        db.set_settings(member_enabled=False, member_invites=True)
+        hello = json.loads(self.req('GET', base + 'api/hello')[1])
+        self.assertFalse(hello['invites'])
+        st, _, _ = self.req('POST', base + 'api/invite', {'quota_gb': 1})
+        self.assertNotEqual(st, 200)
+        self.assertEqual(db.invites(u['id']), [])
+
+    def test_paused_account_app_header_matches_the_page(self):
+        u = mk('ann', 100, enabled=0, disabled_reason='quota', used_down=60 * GIB)
+        mk('pal', 40, invited_by=u['id'], invite_deduct=40)
+        st, _, headers = self.req('GET', '/s/%s?format=clash' % u['sub_token'])
+        info = dict(x.split('=') for x in headers.getheader('Subscription-Userinfo').replace(' ', '').split(';'))
+        self.assertEqual(int(info['total']), 60 * GIB)       # 100 GB less the 40 GB given away
 
     def test_link_page(self):
         u = mk('lee', 10)

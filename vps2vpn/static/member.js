@@ -18,7 +18,7 @@ const T = {
     sr_full: '小火箭（完整配置：节点+分流+DNS）', sr_nodes: '小火箭（只导入节点）', scan: '手机扫码导入',
     apps: '装哪个 App', apps_list: [['Windows / macOS', 'Clash Verge Rev 或 FlClash（免费）'], ['Android', 'FlClash 或 Hiddify（免费）'], ['iPhone / iPad', 'Shadowrocket 小火箭（付费）、Stash 或 Karing（免费）']],
     apps_tip: '导入后打开 App 里的「系统代理」或「VPN / TUN 模式」开关就行。',
-    history: '每日用量', history_sub: '近 30 天', more: '申请增加流量', more_tip: '流量不够用时，告诉管理员你需要多少、为什么，批准后立刻生效。',
+    history: '每日用量', history_sub: '近 30 天', more: '申请增加流量', more_tip: '流量不够用时，告诉管理员你需要多少、为什么。批准后立刻生效，只在本期有效，到下次重置日自动取消。',
     add_gb: '需要增加多少 GB', reason: '说明（可选）', send: '提交申请', sent: '已提交，等管理员批准',
     pending: '等待批准', approved: '已批准', rejected: '未批准', req_none: '还没有申请记录。',
     invites: '邀请朋友', invites_tip: '从你自己的额度里分一部分给朋友：他用多少都从你分出去的那份里扣，你自己至少保留 1 GB。',
@@ -27,8 +27,9 @@ const T = {
     st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', used_by: '已注册', send_link: '复制注册链接',
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心（忘了订阅链接也不怕）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
-    notice: '管理员公告', paused_quota: '这个月的流量用完了，所以暂时停用。可以在下面「申请增加流量」，或者等到下次重置日自动恢复。',
-    paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限，已自动暂停 10 分钟，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
+    notice: '管理员公告', paused_quota: '这一期的流量用完了，所以暂时停用。', q_ask: '可以在下面「申请增加流量」。', q_wait: '到 {date} 重置后会自动恢复。', q_admin: '这个账号不会自动重置，请联系管理员。',
+    extra: '本期临时加量', first_use: '首次使用后 {n} 天', inv_copied: '注册链接已复制，发给朋友打开就能注册', dev_limit: '（最多同时 {n} 台）',
+    paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限{lim}，已自动暂停 10 分钟。关掉多余的设备，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
     expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或加流量后恢复。', capped: '这个账号限速 {mbps} Mbps。',
     security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不小心发给了别人？换一个新的，旧链接立刻失效。换完后每台设备都要重新导入一次。',
     rotate_q: '更换后旧链接马上不能用了，所有设备都要重新导入。确定吗？', rotated: '已更换，请重新导入到 App'
@@ -48,7 +49,7 @@ const T = {
     sr_full: 'Shadowrocket (full config: nodes + routing + DNS)', sr_nodes: 'Shadowrocket (nodes only)', scan: 'Scan with your phone',
     apps: 'Which app', apps_list: [['Windows / macOS', 'Clash Verge Rev or FlClash (free)'], ['Android', 'FlClash or Hiddify (free)'], ['iPhone / iPad', 'Shadowrocket (paid), Stash or Karing (free)']],
     apps_tip: 'After importing, switch on "System proxy" or "VPN / TUN mode" in the app.',
-    history: 'Daily usage', history_sub: 'last 30 days', more: 'Ask for more', more_tip: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved.',
+    history: 'Daily usage', history_sub: 'last 30 days', more: 'Ask for more', more_tip: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved, for this period only (until the next reset).',
     add_gb: 'Extra GB', reason: 'Why (optional)', send: 'Send request', sent: 'Sent; waiting for the admin',
     pending: 'waiting', approved: 'approved', rejected: 'declined', req_none: 'No requests yet.',
     invites: 'Invite friends', invites_tip: 'Share part of your quota: what a friend uses comes out of the share you gave them. You always keep at least 1 GB.',
@@ -57,8 +58,9 @@ const T = {
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', used_by: 'Registered', send_link: 'Copy sign-up link',
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can log in to the member centre by name (handy if you lose the link).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
-    notice: 'Notice from the admin', paused_quota: 'This month\u2019s quota is used up, so the account is paused. Ask for more below, or wait for the next reset day.',
-    paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once; the account is paused for 10 minutes and will resume automatically.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
+    notice: 'Notice from the admin', paused_quota: 'This period\u2019s quota is used up, so the account is paused. ', q_ask: 'You can ask for more below. ', q_wait: 'It resumes by itself after the reset on {date}.', q_admin: 'This account does not reset by itself; ask the admin.',
+    extra: 'Top-up this period', first_use: '{n} days after first use', inv_copied: 'Sign-up link copied; your friend just opens it', dev_limit: ' (at most {n} at once)',
+    paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once{lim}; the account is paused for 10 minutes. Close the extra ones and it resumes by itself.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
     expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.', slowed: 'This period\'s data is used up: slowed down to {mbps} Mbps until the next reset or more data.', capped: 'This account is limited to {mbps} Mbps.',
     security: 'Account security', rotate: 'New subscription link', rotate_tip: 'Shared your link by mistake? Get a new one; the old link stops working at once. Re-import it on every device.',
     rotate_q: 'The old link stops working immediately and every device must re-import. Continue?', rotated: 'Done. Import the new link into your apps.'
@@ -158,7 +160,8 @@ async function renderHome() {
       on ? chip('info', t('online_now') + (dev ? ' · ' + dev + ' ' + t('devices') : '')) : chip('off', t('offline'))),
     h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats m-stats'},
       stat(t('used'), fmt.bytes(used)), stat(t('quota'), q ? fmt.bytes(q) : t('unlimited')),
-      stat(t('left'), q ? fmt.bytes(Math.max(0, q - used)) : t('unlimited')), stat(t('expires'), dateStr(me.expire_at)),
+      stat(t('left'), q ? fmt.bytes(Math.max(0, q - used)) : t('unlimited')), stat(t('expires'), !me.expire_at && me.expire_after_days ? t('first_use').replace('{n}', me.expire_after_days) : dateStr(me.expire_at)),
+      me.extra_gb ? stat(t('extra'), '+' + me.extra_gb + ' GB') : null,
       stat('↓ ' + t('down'), fmt.bytes(me.used_down)), stat('↑ ' + t('up_'), fmt.bytes(me.used_up)),
       stat(t('reset'), me.next_reset ? dateStr(me.next_reset) : t('none')),
       me.shared_gb ? stat(t('shared'), me.shared_gb + ' GB') : me.invited_by ? stat(t('invited_by'), me.invited_by) : stat(t('status'), me.enabled ? t('ok') : t('paused'))))));
@@ -177,9 +180,9 @@ async function renderHome() {
   const apps = panel(t('apps'), null, null, h('ul', {class: 'm-apps'}, t('apps_list').map(([a, b]) => h('li', null, h('b', null, a), h('span', null, b)))),
     h('p', {class: 'muted m-tip'}, t('apps_tip')));
   const blocks = [];
-  if (M.hello.requests) blocks.push(requestsPanel());
+  if (M.hello.requests && me.quota_gb) blocks.push(requestsPanel());   // unlimited: nothing to ask for
   if (M.hello.invites) blocks.push(invitesPanel());
-  blocks.push(passwordPanel());
+  if (M.hello.member_url || M.hello.mode !== 'link') blocks.push(passwordPanel());   // no member centre: no login to use it on
   const colon = L === 'zh' ? '：' : ': ';
   document.body.replaceChildren(h('div', {class: 'm-wrap'}, top,
     h('section', {class: 'page'},
@@ -198,8 +201,12 @@ async function renderHome() {
 
 function statusAlerts(me, used, q) {
   const out = [], fill = (s, o) => s.replace(/\{(\w+)\}/g, (_, k) => o[k]);
-  if (!me.enabled) out.push(h('div', {class: 'alert ' + (me.disabled_reason === 'devices' ? 'warn' : 'bad')}, icon('alert'),
-    t(me.disabled_reason === 'quota' ? 'paused_quota' : me.disabled_reason === 'expired' ? 'paused_expired' : me.disabled_reason === 'devices' ? 'paused_devices' : 'paused_other')));
+  const r = me.disabled_reason;
+  const msg = r === 'quota' ? t('paused_quota') + (M.hello.requests && me.quota_gb ? t('q_ask') : '') +
+      (me.next_reset ? fill(t('q_wait'), {date: dateStr(me.next_reset)}) : t('q_admin'))
+    : r === 'devices' ? fill(t('paused_devices'), {lim: me.max_ips ? fill(t('dev_limit'), {n: me.max_ips}) : ''})
+    : t(r === 'expired' ? 'paused_expired' : 'paused_other');
+  if (!me.enabled) out.push(h('div', {class: 'alert ' + (r === 'devices' ? 'warn' : 'bad')}, icon('alert'), msg));
   else {
     const d = me.expire_at ? Math.ceil((me.expire_at * 1000 - Date.now()) / 864e5) : 0;
     if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: dateStr(me.expire_at)})));
@@ -225,7 +232,7 @@ function requestsPanel() {
 function invitesPanel() {
   const me = M.me;
   if (me.capacity == null) return panel(t('invites'), null, null, h('p', {class: 'muted m-tip'}, t('no_share')), invList());
-  const f = {gb: h('input', {type: 'number', min: '0.1', step: '0.5', value: String(Math.min(10, Math.max(1, Math.floor(me.capacity))))}),
+  const f = {gb: h('input', {type: 'number', min: '0.1', step: '0.5', value: String(Math.min(10, me.capacity >= 1 ? Math.floor(me.capacity) : me.capacity))}),
     uses: h('input', {type: 'number', min: '1', max: '20', value: '1'}), days: h('input', {type: 'number', min: '1', max: '30', value: '7'}),
     note: h('input', {type: 'text', maxlength: '100'})};
   const b = h('button', {class: 'btn primary'}, icon('key'), t('make'));
@@ -233,7 +240,8 @@ function invitesPanel() {
     b.disabled = true;
     try {
       const r = await api('invite', {quota_gb: Number(f.gb.value), max_uses: Number(f.uses.value), valid_days: Number(f.days.value), note: f.note.value});
-      await copyText(r.code, t('code')); await renderHome();
+      if (r.register_url) await copyText(r.register_url, t('inv_copied')); else await copyText(r.code, t('code'));
+      await renderHome();
     } catch (e) { err(e); b.disabled = false; }
   };
   return panel(t('invites'), null, chip('info plain', t('can_share') + ' ' + me.capacity + ' GB'), h('div', {class: 'stack'},

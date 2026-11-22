@@ -115,7 +115,15 @@ def effective_quota(u, users=None, now=None, index=None):
     """Quota in GB after what the user shares with invitees (0 = unlimited)."""
     if not u['quota_gb']:
         return 0
-    return max(0.0, u['quota_gb'] - given_away(u['id'], users, now, index))
+    return max(0.0, u['quota_gb'] + extra(u) - given_away(u['id'], users, now, index))
+
+
+def extra(u):
+    """GB added by approved requests for the current period (cleared at the next traffic reset)."""
+    try:
+        return max(0.0, float(u.get('extra_gb') or 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
 
 
 def _live(inv, now):
@@ -351,7 +359,9 @@ def decide(rid, approve, add_gb=None, answer=''):
     gb = r['add_gb'] if add_gb in (None, '') else _num(add_gb, 0.1, 100000, 'extra quota (GB)')
     with db.transaction():
         if u['quota_gb']:                         # unlimited stays unlimited
-            db.update_user(u['id'], quota_gb=u['quota_gb'] + gb)
+            # A request is "more for now" ("exams this month"): a top-up for the current period, dropped at the
+            # account's next traffic reset. Raising the plan itself is the owner's edit, not an approval.
+            db.update_user(u['id'], extra_gb=extra(u) + gb)
         if u['disabled_reason'] == 'quota':
             # Switch it back on only if the new quota really covers what was used; otherwise the next
             # enforce pass would pause it again and tell the owner a second time.

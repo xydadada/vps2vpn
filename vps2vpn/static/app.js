@@ -55,10 +55,10 @@ const T = {
     no_users: '还没有使用者，点右上角添加。', proto_one: '至少要开一种协议',
     copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
     tab_home: '总览', tab_users: '用户', tab_members: '会员', tab_servers: '服务器', tab_monitor: '监控', tab_settings: '设置', tab_system: '体检',
-    online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', invited_by: '邀请人', eff_quota: '实际可用额度', history: '每日用量', history_sub: '近 30 天',
+    online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', extra_now: '本期临时加量（下次重置取消）', invited_by: '邀请人', eff_quota: '实际可用额度', history: '每日用量', history_sub: '近 30 天',
     member_login: '会员中心登录', member_login_tip: '设置密码后，他可以用名字 + 密码登录会员中心（看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
     login_on: '已设置密码', login_off: '未设置密码', set_pw: '设置 / 重置密码', clear_pw: '取消密码登录', pw_cleared: '已取消',
-    requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', answer: '回复（可选）',
+    requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '只加到本期，下次重置日自动取消；想长期提高额度，请在用户编辑里改「流量额度」。', answer: '回复（可选）',
     pending: '待处理', approved: '已批准', rejected: '已拒绝',
     invites: '邀请码', inv_tip: '管理员邀请码：自定义额度和有效期，不扣任何人的流量。会员也可以在会员中心用自己的额度生成邀请码。',
     inv_make: '生成邀请码', inv_quota: '每个账号的流量 (GB，0 = 不限)', inv_life: '账号有效期（天，0 = 永久）', inv_uses: '可以用几次', inv_valid: '邀请码几天内有效', inv_reset: '每月几号重置（0 = 不重置）',
@@ -164,10 +164,10 @@ const T = {
     no_users: 'No users yet. Add one with the button above.', proto_one: 'Turn on at least one protocol',
     copy_btn: 'Copy', nav_members: 'Members & invites', nav_servers: 'Servers', nav_monitor: 'Monitor & abuse', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
     tab_home: 'Home', tab_users: 'Users', tab_members: 'Members', tab_servers: 'Servers', tab_monitor: 'Monitor', tab_settings: 'Settings', tab_system: 'Health',
-    online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', invited_by: 'Invited by', eff_quota: 'Effective quota', history: 'Daily usage', history_sub: 'last 30 days',
+    online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset)', invited_by: 'Invited by', eff_quota: 'Effective quota', history: 'Daily usage', history_sub: 'last 30 days',
     member_login: 'Member centre login', member_login_tip: 'With a password they can log in to the member centre by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
     login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password login', pw_cleared: 'Removed',
-    requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', answer: 'Reply (optional)',
+    requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'Added for the current period only and dropped at the next reset; to raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)',
     pending: 'pending', approved: 'approved', rejected: 'declined',
     invites: 'Invite codes', inv_tip: 'Admin codes: any quota and lifetime, nobody is charged. Members can also make codes from their own quota in the member centre.',
     inv_make: 'Create code', inv_quota: 'Quota per account (GB, 0 = unlimited)', inv_life: 'Account lifetime (days, 0 = forever)', inv_uses: 'Uses', inv_valid: 'Code valid for (days)', inv_reset: 'Monthly reset day (0 = never)',
@@ -822,6 +822,7 @@ async function openUser(id, first) {
           u.sub_ua ? h('div', {style: 'grid-column:1/-1'}, h('small', null, t('sub_app')), h('b', {style: 'font-size:12px;word-break:break-all'}, u.sub_ua)) : null,
           u.max_ips ? h('div', null, h('small', null, t('dev_limit')), h('b', null, (u.online ? (u.online.devices ?? u.online.ips.length) + ' / ' : '') + u.max_ips)) : null,
           u.shared_gb ? h('div', null, h('small', null, t('shared_out')), h('b', null, u.shared_gb + ' GB')) : null,
+          u.extra_gb ? h('div', null, h('small', null, t('extra_now')), h('b', null, '+' + u.extra_gb + ' GB')) : null,
           u.invited_by_name ? h('div', null, h('small', null, t('invited_by')), h('b', null, u.invited_by_name)) : null,
           u.online && u.online.ips.length ? h('div', {style: 'grid-column:1/-1'}, h('small', null, t('online_now') + ' · ' + u.online.ips.length + ' ' + t('devices')), h('b', {style: 'font-size:12px'}, u.online.ips.join('  '))) : null))),
       h('div', {class: 'dr-sec'}, h('h4', null, t('history'), h('span', {class: 'right muted', style: 'font-weight:500'}, t('history_sub'))), histBox),
@@ -929,7 +930,7 @@ async function drawMembers() {
   const decide = async (r, ok) => {
     let body = {};
     if (ok) {
-      const gb = await modal({title: t('approve') + ' · ' + r.name, text: r.reason || '', input: true, type: 'number', value: String(r.add_gb), confirm: t('approve')});
+      const gb = await modal({title: t('approve') + ' · ' + r.name, text: (r.reason ? r.reason + ' · ' : '') + t('approve_tip'), input: true, type: 'number', value: String(r.add_gb), confirm: t('approve')});
       if (gb == null) return; body = {add_gb: Number(gb)};
     } else {
       const ans = await modal({title: t('reject') + ' · ' + r.name, input: true, placeholder: t('answer'), confirm: t('reject'), danger: true});

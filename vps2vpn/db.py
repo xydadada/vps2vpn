@@ -87,7 +87,8 @@ MIGRATIONS = {
               ('servers', "TEXT NOT NULL DEFAULT ''"),               # servers it may use: '' = all, else ids
               ('speed_mbps', 'REAL NOT NULL DEFAULT 0'),             # speed cap at all times (0 = none)
               ('throttle_mbps', 'REAL NOT NULL DEFAULT 0'),          # quota used up: slow down to this (0 = stop)
-              ('throttled', 'INTEGER NOT NULL DEFAULT 0')],          # ...and it is slowed down right now
+              ('throttled', 'INTEGER NOT NULL DEFAULT 0'),           # ...and it is slowed down right now
+              ('extra_gb', 'REAL NOT NULL DEFAULT 0')],              # approved top-up for the current period only
     'invites': [('servers', "TEXT NOT NULL DEFAULT ''"),           # what accounts made with the code get
                 ('speed_mbps', 'REAL NOT NULL DEFAULT 0'),
                 ('throttle_mbps', 'REAL NOT NULL DEFAULT 0')],
@@ -469,7 +470,7 @@ def update_user(uid, **kv):
     sets, args = [], []
     for k, v in kv.items():
         if k not in USER_FIELDS + ('disabled_reason', 'used_up', 'used_down', 'last_reset', 'last_seen', 'login_hash',
-                                   'invited_by', 'invite_deduct', 'remote_id', 'uuid', 'hy2_pass', 'paused_until',
+                                   'invited_by', 'invite_deduct', 'remote_id', 'uuid', 'hy2_pass', 'paused_until', 'extra_gb',
                                    'throttled'):
             raise KeyError(k)
         sets.append(k + '=?')
@@ -780,10 +781,10 @@ def export_all():
 
 
 IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': '', 'sub_ua': '',
-                   'servers': ''}
+                   'servers': '', 'extra_gb': 0}
 _IMPORT_INT = ('expire_at', 'reset_day', 'used_up', 'used_down', 'enabled', 'last_seen', 'created_at', 'invited_by',
                'remote_id', 'max_ips', 'paused_until', 'expire_after_days', 'sub_fetched_at', 'throttled')
-_IMPORT_REAL = ('quota_gb', 'invite_deduct', 'speed_mbps', 'throttle_mbps')
+_IMPORT_REAL = ('quota_gb', 'invite_deduct', 'speed_mbps', 'throttle_mbps', 'extra_gb')
 _IMPORT_TEXT = ('name', 'uuid', 'hy2_pass', 'sub_token', 'disabled_reason', 'note', 'last_reset', 'login_hash',
                 'sub_ua', 'servers')
 _SQLITE_MAX = (1 << 63) - 1

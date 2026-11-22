@@ -99,8 +99,8 @@ def enforce(now=None):
                 device_due = not u['enabled'] and u['disabled_reason'] == 'devices' and t_now >= u['paused_until']
                 due, month = monthly_reset(u, now)
                 if due:
-                    db.update_user(u['id'], used_up=0, used_down=0, last_reset=month)
-                    u.update(used_up=0, used_down=0, last_reset=month)
+                    db.update_user(u['id'], used_up=0, used_down=0, last_reset=month, extra_gb=0)
+                    u.update(used_up=0, used_down=0, last_reset=month, extra_gb=0)
                     log('monthly reset: %s' % u['name'])
                 quota = members.effective_quota(u, now=now, index=invitees)
                 reason = over_limit(u, now, quota)

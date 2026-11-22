@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.18
+
+A walk through the member page and the owner's request queue, as a member and as the owner would use them.
+
+**Traffic requests**
+- Approving a member's request for more traffic is now a top-up for the current period. It ends at the account's next traffic reset (the monthly one, or a reset by hand). Before, it raised the monthly plan for good, which neither side expected. The approve dialog says so; to raise a plan for good, change the quota under Edit. The member page and the account's details both show "+X GB this period", and backups carry it. A slowed-down account speeds up again as soon as the top-up covers what it used.
+
+**Member page**
+- A paused account's usage bar in the app now shows the same total as the member page. It used to show the plan without taking off the share given to invitees.
+- Members can only make invite codes while the member centre (the sign-up page) is on. The password section is hidden when there is no login page to use it on.
+- "Create code" copies the ready sign-up link instead of the bare code, and the suggested amount never exceeds what can still be shared.
+- The "quota used up" notice only suggests asking for more when requests are on. It gives the reset date, or says to ask the admin when the account never resets.
+- "Too many devices" names the limit and says to close the extra devices. An account that expires N days after first use says so instead of "never". Unlimited accounts no longer see a request form they cannot use.
+
 ## 0.2.17
 
 **Airport features**

@@ -812,7 +812,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not u['enabled']:
             s = dict(s, reality_enabled=False, hy2_enabled=False, tuic_enabled=False, servers=[])   # usage header still sent
         try:
-            quota_eff = members.effective_quota(u) if u['enabled'] else None
+            quota_eff = members.effective_quota(u)   # also when paused: the app's usage bar must match the page
         except Exception as e:          # only for the heads-up text: never fail the subscription over it
             jobs.log('could not work out the effective quota: %r' % e)
             quota_eff = None
@@ -1241,7 +1241,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             row = {k: u[k] for k in ('id', 'name', 'quota_gb', 'expire_at', 'reset_day', 'used_up', 'used_down',
                                      'enabled', 'disabled_reason', 'note', 'last_seen', 'created_at', 'invited_by',
                                      'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
-                                     'sub_fetched_at', 'sub_ua', 'speed_mbps', 'throttle_mbps', 'throttled')}
+                                     'sub_fetched_at', 'sub_ua', 'speed_mbps', 'throttle_mbps', 'throttled', 'extra_gb')}
             row['servers'] = db.server_list(u)
             row['limit_mbps'] = db.limit_mbps(u)
             row['sub_url'] = sub
@@ -1427,7 +1427,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif action == 'disable':
                 db.update_user(uid, enabled=0, disabled_reason='manual')
             elif action == 'reset':
-                db.update_user(uid, used_up=0, used_down=0)
+                db.update_user(uid, used_up=0, used_down=0, extra_gb=0)   # a new period: last one's top-up ends
                 jobs.forget_quota_alerts(uid)
                 if u['disabled_reason'] == 'quota':
                     db.update_user(uid, enabled=1, disabled_reason='')
@@ -1481,7 +1481,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif action == 'rotate':
             db.rotate_user(uid)
         elif action == 'reset':
-            db.update_user(uid, used_up=0, used_down=0)
+            db.update_user(uid, used_up=0, used_down=0, extra_gb=0)   # a new period: last one's top-up ends
             jobs.forget_quota_alerts(uid)
             if u['disabled_reason'] == 'quota':
                 db.update_user(uid, enabled=1, disabled_reason='')
@@ -1648,7 +1648,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if api == 'hello':
             return self.json({'mode': 'link' if by_link else 'login', 'logged_in': u is not None,
                               'language': s['language'], 'node_name': s['node_name'],
-                              'invites': s['member_invites'], 'requests': s['member_requests'],
+                              'invites': s['member_invites'] and s['member_enabled'], 'requests': s['member_requests'],
                               'notice': s['member_notice'] if u is not None else '',
                               'member_url': '%s/%s/' % (self.base_url(s), s['member_path']) if s['member_enabled'] else ''})
         if not by_link and method == 'POST' and api in ('login', 'register'):
@@ -1728,10 +1728,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 notify.send('%s asks for +%s GB / %s 申请增加 %s GB 流量' % (u['name'], d.get('add_gb'), u['name'], d.get('add_gb')),
                             key='req-%d' % u['id'], every=600)
             return self.refused(ask)
-        if api == 'invite' and s['member_invites']:
-            return self.refused(lambda: {'code': members.create_invite('member', d.get('quota_gb'), d.get('valid_days', 7),
-                                                                         d.get('max_uses', 1), inviter=u['id'],
-                                                                         note=d.get('note', ''), by_member=True)['code']})
+        if api == 'invite' and s['member_invites'] and s['member_enabled']:   # a code needs a sign-up page
+            def make():
+                code = members.create_invite('member', d.get('quota_gb'), d.get('valid_days', 7), d.get('max_uses', 1), inviter=u['id'], note=d.get('note', ''), by_member=True)['code']
+                # The friend needs somewhere to type the code: hand back the ready sign-up link too.
+                return {'code': code, 'register_url': '%s/%s/#register=%s' % (self.base_url(s), s['member_path'], code)}
+            return self.refused(make)
         if api == 'rotate':
             # New link and credentials (the old link stops working at once), e.g. after it leaked.
             db.rotate_user(u['id'])
@@ -1815,6 +1817,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {
             'name': u['name'], 'enabled': bool(u['enabled']), 'disabled_reason': u['disabled_reason'],
             'used_up': u['used_up'], 'used_down': u['used_down'], 'quota_gb': u['quota_gb'],
+            'extra_gb': members.extra(u), 'expire_after_days': u['expire_after_days'], 'max_ips': u['max_ips'],
             'quota_eff': members.effective_quota(u, index=invitees),
             'shared_gb': round(members.given_away(u['id'], index=invitees), 2),
             'capacity': members.capacity(u) if s['member_invites'] else None,
