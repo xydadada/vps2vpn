@@ -241,7 +241,17 @@ LINK_FOR = {'vps2vpn': 'vps2vpn', 'clash': 'clash', 'hiddify': 'hiddify', 'sing-
 MAC_APPS = [('vps2vpn.app', 'vps2vpn'), ('Clash Verge.app', 'clash'), ('FlClash.app', 'clash'), ('Mihomo Party.app', 'clash'),
             ('Clash Nyanpasu.app', 'clash'), ('ClashX Meta.app', 'clash'), ('ClashX.app', 'clash'), ('Stash.app', 'clash'),
             ('Hiddify.app', 'hiddify'), ('SFM.app', 'sing-box')]
-CLIENT_DOWNLOAD = 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest'
+# our own client is Windows only for now; Mac users get Clash Verge Rev, which imports the same clash:// link
+CLIENT_DOWNLOAD = 'https://github.com/xydadada/vps2vpn-client/releases/latest'
+MAC_DOWNLOAD = 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest'
+
+
+def client_download():
+    """(url, how to pick the file) for the app we recommend on this computer."""
+    if sys.platform == 'darwin':
+        return MAC_DOWNLOAD, '推荐装免费开源的 Clash Verge Rev（下载 .dmg）。'
+    return CLIENT_DOWNLOAD, ('推荐装 vps2vpn 客户端（免费，下载名字里带 setup 的 .exe），'
+                             '能直接看到剩余流量、到期时间和 AI 可用情况。')
 
 
 def client_name(path):
@@ -560,75 +570,84 @@ def recheck(job):
 def page_view(job):
     """What the page shows. The page is local and token-protected, so it may show the password."""
     out = {k: job.get(k) for k in ('state', 'log', 'error', 'ports', 'join', 'join_msg', 'record_file', 'client', 'imported')}
-    out['download'] = CLIENT_DOWNLOAD
+    out['download'], out['download_tip'] = client_download()
+    out['link_key'] = 'clash' if sys.platform == 'darwin' else 'vps2vpn'     # our app opens vps2vpn:// links
     rec = job.get('rec') or {}
     out['rec'] = {k: rec.get(k) for k in ('host', 'panel', 'admin_user', 'admin_password', 'sub_url', 'qr_url',
                                           'links', 'join_code', 'main', 'cloud', 'cloud_firewall', 'ai', 'name')}
     return out
 
 
-PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>vps2vpn deploy</title><style>
-:root{--bg:#f5f6f8;--card:#fff;--fg:#1b2130;--mute:#667085;--line:#e4e7ec;--acc:#2563eb;--bad:#d92d20;--ok:#079455;--warn:#b54708}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1117;--card:#161a22;--fg:#e6e8ee;--mute:#98a2b3;--line:#283040;--acc:#5b8cff;--ok:#32d583;--bad:#f97066;--warn:#fdb022}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
-main{max-width:640px;margin:0 auto;padding:28px 16px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:14px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:19px;margin:0 0 6px}h3{font-size:15px;margin:18px 0 6px}.mute{color:var(--mute)}
-label{display:block;margin:12px 0 4px;font-size:13px;color:var(--mute)}
-input,select{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:inherit}
-.row{display:flex;gap:10px;flex-wrap:wrap}.row>div{flex:1;min-width:140px}
-#drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;cursor:pointer;margin-top:6px}
-#drop.on{border-color:var(--acc);background:rgba(37,99,235,.06)}#drop b{color:var(--acc)}
-button,.btn{display:inline-block;padding:10px 14px;border:0;border-radius:10px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer;text-decoration:none;text-align:center}
-button.ghost,.btn.ghost{background:transparent;color:var(--acc);border:1px solid var(--line)}
-#go{width:100%;margin-top:16px;padding:13px}button:disabled{opacity:.6}
-pre{white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Consolas,monospace;max-height:260px;overflow:auto;background:var(--bg);padding:10px;border-radius:8px}
-.err{color:var(--bad)}details summary{cursor:pointer;color:var(--mute);margin-top:12px}
-.btns{display:flex;gap:8px;flex-wrap:wrap}.qr{display:flex;gap:14px;align-items:center;margin-top:10px}.qr img{width:150px;height:150px;background:#fff;border-radius:8px;padding:6px}
-.chk{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)}.chk:last-child{border:0}
-.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}.note{background:var(--bg);border-radius:10px;padding:10px 12px;margin-top:8px}
-.kv{display:grid;grid-template-columns:70px 1fr auto;gap:6px 10px;align-items:center}.kv code{word-break:break-all;font:13px ui-monospace,Consolas,monospace}
-a{color:var(--acc)}
-</style></head><body><main>
-<h1>vps2vpn 一键部署</h1><p class="mute">把你买的服务器变成自己的 VPN。填 IP、拖入密钥文件（或填密码），点按钮，剩下的全自动。</p>
-<div class="card" id="form">
-<label>服务器 IP</label><input id="host" placeholder="例如 203.0.113.10" autocomplete="off">
-<label>SSH 密钥文件（.pem / .key / id_ed25519）——拖到下面的框里，或点击选择</label>
-<div id="drop">把密钥文件拖到这里，或<b>点击选择文件</b><div id="fname" class="mute"></div></div>
-<button type="button" id="clearKey" class="ghost" hidden style="margin-top:6px;padding:4px 10px;font-size:12px">清除已选密钥</button>
+SHARED_STATIC = {'/static/style.css': 'text/css', '/static/kit.js': 'application/javascript'}
+
+PAGE = r'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>vps2vpn 一键部署</title>
+<link rel="stylesheet" href="/static/style.css?t=__TOKEN__">
+<style>/* the panel's own design (vps2vpn/static/style.css) plus the few pieces only this page has */
+[hidden]{display:none!important}
+.login-card{max-width:440px}
+.login-card .btn.sm{width:auto;margin-top:8px;padding:5px 10px;font-size:12px}
+.login-card .row{gap:10px}.login-card .row>.field{flex:1;min-width:0}
+#drop{border:1.5px dashed var(--line-2);border-radius:var(--r-sm);padding:20px 14px;text-align:center;cursor:pointer;font-size:13px;color:var(--text-2);background:var(--panel-2);transition:border-color .15s,background .15s}
+#drop:hover,#drop.on{border-color:var(--accent);background:var(--accent-soft)}#drop b{color:var(--accent)}
+#fname{font-size:12px;color:var(--ok);font-weight:700}#fname:not(:empty){margin-top:6px}
+details>summary{cursor:pointer;font-size:12.5px;color:var(--muted);margin:2px 0 12px}
+.mute{color:var(--muted)}.ok{color:var(--ok);font-weight:700}.bad{color:var(--danger);font-weight:700}.err{color:var(--danger)}
+#out{margin-top:20px}#status{font-size:13px;font-weight:600}
+#res{margin-top:22px;padding-top:20px;border-top:1px solid var(--line)}
+#res h2{font-size:22px;font-weight:800;margin:0 0 8px}#res h3{font-size:13px;font-weight:700;margin:24px 0 8px}
+#res p{font-size:13px;line-height:1.75;margin:6px 0}
+#res .btn{width:auto;margin-top:0;padding:8px 14px;font-size:13px}
+.note{background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;margin:10px 0;font-size:13px;line-height:1.75}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.qrbox{display:flex;gap:14px;align-items:center;margin-top:14px;font-size:12.5px;line-height:1.7}.qrbox img{width:128px;height:128px;flex:none;background:#fff;border-radius:10px;padding:6px}
+.chk{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}.chk:last-of-type{border:0}
+.cred{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:8px 10px;align-items:center;font-size:13px}.cred code{overflow-wrap:anywhere;font:12.5px var(--mono)}
+.login-foot{line-height:1.7}
+@media (min-width:821px){.login-art{position:sticky;top:0;height:100vh}}
+</style></head><body>
+<div class="login"><section class="login-art"><div class="brand"><span class="seal">V</span><div><b>vps2vpn</b><small>SELF-HOSTED VPN</small></div></div>
+<div><h2>买好服务器，<br>点一下就是你的 VPN。</h2><p>填 IP、拖入密钥，剩下的全自动：装好三种线路、建好账号、从你电脑检查防火墙，再导入到电脑上的 VPN 软件。</p>
+<div class="points"><span id="p1"></span><span id="p2"></span><span id="p3"></span></div></div><canvas id="lineArt" aria-hidden="true"></canvas></section>
+<section class="login-form"><div class="login-card">
+<div id="form"><div class="kicker">ONE-CLICK DEPLOY</div><h1>一键部署</h1><p class="intro">大约 1-3 分钟。密钥和密码只用这一次，用完立刻删除。</p>
+<label class="field"><span>服务器 IP</span><input id="host" type="text" placeholder="例如 203.0.113.10" autocomplete="off"></label>
+<div class="field"><span>SSH 密钥文件</span><div id="drop">把密钥文件拖到这里，或<b>点击选择</b><div id="fname"></div></div>
+<em>.pem / .key / id_ed25519 都可以</em><button type="button" id="clearKey" class="btn sm" hidden>清除已选密钥</button></div>
 <input type="file" id="file" hidden>
-<label>没有密钥文件？填服务器的 root 密码</label><input id="pw" type="password" autocomplete="off">
-<div id="mainbox" hidden><label>这台服务器怎么用</label><select id="main"></select>
-<p class="mute" style="font-size:13px;margin:4px 0 0">选“加到…下面”：两台共用同一套账号，你原来的订阅里会自动多出这台，不用重新导入。</p></div>
+<label class="field"><span>没有密钥文件？填服务器的 root 密码</span><input id="pw" type="password" autocomplete="off"></label>
+<div id="mainbox" hidden><label class="field"><span>这台服务器怎么用</span><select id="main"></select>
+<em>选“加到…下面”：两台共用同一套账号，你原来的订阅里会自动多出这台，不用重新导入。</em></label></div>
 <details><summary>其它选项（一般不用改）</summary><div class="row">
-<div><label>登录用户名</label><input id="user" value="root"></div><div><label>SSH 端口</label><input id="port" value="22"></div></div>
-<p class="mute" style="font-size:13px">亚马逊 Lightsail/EC2 的用户名一般是 ubuntu、admin 或 ec2-user。</p></details>
-<button id="go">一键部署</button></div>
-<div class="card" id="res" hidden></div>
-<div class="card" id="out" hidden><div id="status"></div><details id="logbox"><summary>安装日志</summary><pre id="log"></pre></details></div>
-<p class="mute" style="font-size:12px">密钥和密码只用于这一次连接，用完立刻删除。面板登录信息只保存在你这台电脑的用户文件夹里（vps2vpn 文件夹）。</p>
-</main><script>
-const T='__TOKEN__';let key=null,jobId='';const $=s=>document.querySelector(s);
+<label class="field"><span>登录用户名</span><input id="user" type="text" value="root"></label><label class="field"><span>SSH 端口</span><input id="port" type="text" value="22"></label></div>
+<p class="mute" style="font-size:12px;margin:0 0 6px">亚马逊 Lightsail/EC2 的用户名一般是 ubuntu、admin 或 ec2-user。</p></details>
+<button id="go" class="btn primary">一键部署</button></div>
+<div id="out" hidden><div id="status"></div><details id="logbox"><summary>安装日志</summary><pre id="log" class="log"></pre></details></div>
+<div id="res" hidden></div>
+<p class="login-foot">面板登录信息只保存在你这台电脑的用户文件夹里（vps2vpn 文件夹）。</p>
+</div></section></div>
+<script src="/static/kit.js?t=__TOKEN__"></script><script>
+const T='__TOKEN__';let key=null,jobId='';const q=s=>document.querySelector(s);
 const el=(tag,attrs,...kids)=>{const e=document.createElement(tag);for(const k in attrs||{}){if(k==='text')e.textContent=attrs[k];else if(k.startsWith('on'))e[k]=attrs[k];else e.setAttribute(k,attrs[k])}kids.filter(Boolean).forEach(c=>e.append(c));return e};
 const LINK_SCHEMES=['vps2vpn','clash','hiddify','sing-box','shadowrocket'];
 function safeHref(u,schemes){if(typeof u!=='string'||!u||/^-|[\x00-\x20\x7f]/.test(u))return '';try{const p=new URL(u);return schemes.includes(p.protocol.slice(0,-1).toLowerCase())?u:''}catch{return ''}}
-const drop=$('#drop'),file=$('#file'),clearKey=$('#clearKey');
+const drop=q('#drop'),file=q('#file'),clearKey=q('#clearKey');
 function take(f){if(!f)return;if(f.size>32768){alert('这不像密钥文件（太大了）');return}
- const r=new FileReader();r.onload=()=>{key=r.result;$('#fname').textContent='已选：'+f.name;clearKey.hidden=false;
- if(/\.pem$/i.test(f.name)&&/LightsailDefaultKey|ec2|aws/i.test(f.name)&&$('#user').value==='root'){$('#user').value='ubuntu'}};r.readAsText(f)}
-clearKey.onclick=()=>{key=null;file.value='';$('#fname').textContent='';clearKey.hidden=true};
+ const r=new FileReader();r.onload=()=>{key=r.result;q('#fname').textContent='已选：'+f.name;clearKey.hidden=false;
+ if(/\.pem$/i.test(f.name)&&/LightsailDefaultKey|ec2|aws/i.test(f.name)&&q('#user').value==='root'){q('#user').value='ubuntu'}};r.readAsText(f)}
+clearKey.onclick=()=>{key=null;file.value='';q('#fname').textContent='';clearKey.hidden=true};
 drop.onclick=()=>file.click();file.onchange=()=>take(file.files[0]);
 ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('on')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('on')}));
 drop.addEventListener('drop',ev=>take(ev.dataTransfer.files[0]));
-(async()=>{try{const r=await fetch('/records?t='+T);if(!r.ok)return;const list=await r.json();if(!list.length)return;const s=$('#main');
+(async()=>{try{const r=await fetch('/records?t='+T);if(!r.ok)return;const list=await r.json();if(!list.length)return;const s=q('#main');
  s.append(el('option',{value:'',text:'单独使用（第一台，或不想和别的服务器共用账号）'}));
  list.forEach(x=>{const o=el('option',{value:x.host,text:'加到 '+x.host+' 下面（共用账号和订阅）'+(x.can?'':' —— 没保存它的面板密码，不能自动加')});if(!x.can)o.disabled=true;s.append(o)});
- $('#mainbox').hidden=false}catch{}})();
+ q('#mainbox').hidden=false}catch{}})();
 function fallbackCopy(t,done){const a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.append(a);a.select();try{document.execCommand('copy');done()}catch{}finally{a.remove()}}
 function copy(t,b){const done=()=>{if(!b.dataset.orig)b.dataset.orig=b.textContent;b.textContent='已复制';clearTimeout(b._tm);b._tm=setTimeout(()=>{b.textContent=b.dataset.orig},1500)};
  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done).catch(()=>fallbackCopy(t,done))}else fallbackCopy(t,done)}
-function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceChildren();
+function render(s){const r=s.rec||{},box=q('#res');box.hidden=false;box.replaceChildren();
  const blocked=(s.ports||[]).filter(c=>!c.ok).length;
  // "success" only when it can actually be used; a blocked firewall is the most common beginner trap
  box.append(el('h2',{text:blocked?'⚠️ 装好了，还差一步':'✅ 部署成功'}));
@@ -637,7 +656,7 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
   totp:['bad','主服务器开了两步验证，没法自动加入。请打开主服务器面板 → 多服务器 → 粘贴下面的加入码。'],
   wait:['bad',s.join_msg],fail:['bad','没能自动加入主服务器：'+(s.join_msg||'')+' 你可以打开主服务器面板 → 多服务器 → 粘贴下面的加入码。']}[s.join]||['mute',''];
   box.append(el('p',{class:m[0],text:m[1]}));
-  if(s.join==='totp'||s.join==='fail'){const b=el('button',{class:'ghost',text:'复制加入码'});b.onclick=()=>copy(r.join_code,b);box.append(b)}}
+  if(s.join==='totp'||s.join==='fail'){const b=el('button',{class:'btn',text:'复制加入码'});b.onclick=()=>copy(r.join_code,b);box.append(b)}}
  if(r.ai&&r.ai.summary){const a=r.ai;box.append(el('div',{class:'note'},el('b',{text:'AI 可用性（从服务器测试）：'+a.summary}),
   el('div',{class:'mute',text:[a.place,a.org,a.kind].filter(Boolean).join(' · ')}),...(a.advice||[]).map(x=>el('div',{text:x})),
   el('div',{class:'mute',style:'font-size:13px',text:'结果只作参考；以后可以在管理面板 →「体检与维护」里重新检测。'})))}
@@ -648,47 +667,56 @@ function render(s){const r=s.rec||{},box=$('#res');box.hidden=false;box.replaceC
    el('div',{text:'在它弹出的窗口点“确定/导入”，然后在软件里选中这个配置、打开“系统代理”开关就能用了。分流规则（国内网站直连、国外走代理）已经写好在里面，不用自己设置。'})));
   else if(c)box.append(el('p',{text:'检测到你电脑上的 '+c.name+'。防火墙放行后会自动导入，也可以直接点下面的按钮。'}));
   else{const dl=safeHref(s.download,['https']);box.append(el('div',{class:'note'},el('b',{text:'没检测到电脑上的 VPN 软件。'}),
-   el('div',{text:'推荐装免费开源的 Clash Verge Rev（Windows 下载名字里带 setup 的 .exe，Mac 下载 .dmg）。装好后回来点“导入到 Clash（电脑）”。'}),
-   dl?el('a',{href:dl,target:'_blank',rel:'noopener noreferrer',text:'打开下载页'}):null))}
-  const L=r.links||{};const b3=el('button',{class:'ghost',text:'复制订阅链接'});b3.onclick=()=>copy(subUrl,b3);
-  const mainLink=safeHref((c&&L[c.link])||L.clash,LINK_SCHEMES),srLink=safeHref(L.shadowrocket_conf,LINK_SCHEMES);
-  box.append(el('div',{class:'btns'},mainLink?el('a',{class:'btn',href:mainLink,text:c?(s.imported?'再导入一次到 ':'导入到 ')+c.name:'导入到 Clash（电脑）'}):null,
+   el('div',{text:(s.download_tip||'')+'装好后回来点下面的红色按钮，它会打开软件并导入。'}),
+   dl?el('p',{style:'margin:10px 0 0'},el('a',{class:'btn',href:dl,target:'_blank',rel:'noopener noreferrer',text:'打开下载页'})):null))}
+  const L=r.links||{};const b3=el('button',{class:'btn',text:'复制订阅链接'});b3.onclick=()=>copy(subUrl,b3);
+  const mainLink=safeHref((c&&L[c.link])||L[s.link_key]||L.clash,LINK_SCHEMES),srLink=safeHref(L.shadowrocket_conf,LINK_SCHEMES);
+  box.append(el('div',{class:'btns'},mainLink?el('a',{class:'btn primary',href:mainLink,text:c?(s.imported?'再导入一次到 ':'在 ')+c.name+(s.imported?'':' 中打开'):s.link_key==='vps2vpn'&&L.vps2vpn?'在 vps2vpn 客户端中打开':'一键导入（电脑）'}):null,
    srLink?el('a',{class:'btn',href:srLink,text:'导入到 Shadowrocket'}):null,b3));
   const qrSrc=safeHref(r.qr_url,['http','https']);
-  box.append(el('div',{class:'qr'},qrSrc?el('img',{src:qrSrc,alt:'QR'}):null,el('div',{class:'mute',text:'手机打开 Shadowrocket 或 Clash，扫这个二维码就导入好了。电脑上没反应的话：先装好 Clash Verge / FlClash，再点上面的按钮；或者复制订阅链接，在软件里“新建订阅”粘贴。'})))}
+  box.append(el('div',{class:'qrbox'},qrSrc?el('img',{src:qrSrc,alt:'QR'}):null,el('div',{class:'mute',text:'手机打开 Shadowrocket 或 Clash，扫这个二维码就导入好了。电脑上没反应的话：先装好上面推荐的软件，再点上面的按钮；或者复制订阅链接，在软件里“新建订阅”粘贴。'})))}
  box.append(el('h3',{text:(r.main?'':'② ')+'防火墙检查（从你这台电脑测试）'}));
  const bad=(s.ports||[]).filter(c=>!c.ok);
  (s.ports||[]).forEach(c=>box.append(el('div',{class:'chk'},el('span',{text:c.name+'  '+c.proto.toUpperCase()+' '+c.port}),el('span',{class:c.ok?'ok':'bad',text:c.ok?'✓ 通了':'✗ 不通'}))));
  if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商的网页控制台，找“防火墙 / 安全组”，添加一条规则：协议选“全部/所有”，来源 0.0.0.0/0。'}),
   el('div',{class:'mute',text:'需要放行：'+bad.map(c=>c.proto.toUpperCase()+' '+c.port).join('、')})));
-  const rb=el('button',{text:'我已放行，再检查一次'});rb.onclick=async()=>{rb.disabled=true;rb.textContent='正在检查…';
+  const rb=el('button',{class:'btn primary',text:'我已放行，再检查一次'});rb.onclick=async()=>{rb.disabled=true;rb.textContent='正在检查…';
    try{const res=await fetch('/recheck?t='+T+'&id='+encodeURIComponent(jobId),{method:'POST'});if(!res.ok)throw new Error('HTTP '+res.status);const x=await res.json();render(x)}
    catch(e){rb.disabled=false;rb.textContent='我已放行，再检查一次';alert('检查失败：'+(e.message||e))}};box.append(el('p',{},rb))}
  else if(s.ports&&s.ports.length)box.append(el('p',{class:'ok',text:'全部通了，可以用了。'}));
  box.append(el('h3',{text:(r.main?'':'③ ')+'管理面板（加用户、看流量）'}));
  const panelUrl=safeHref(r.panel,['https']);
  if(panelUrl){const pw=r.admin_password||'';const pv=el('code',{text:pw?'••••••••••••':'（用你自己设置的密码）'});
-  const show=el('button',{class:'ghost',text:'显示'});show.onclick=()=>{pv.textContent=pv.textContent===pw?'••••••••••••':pw;show.textContent=pv.textContent===pw?'隐藏':'显示'};
-  const cp=el('button',{class:'ghost',text:'复制'});cp.onclick=()=>copy(pw,cp);const cu=el('button',{class:'ghost',text:'打开'});cu.onclick=()=>window.open(panelUrl,'_blank','noopener,noreferrer');
-  box.append(el('div',{class:'kv'},el('span',{class:'mute',text:'地址'}),el('code',{text:panelUrl}),cu,el('span',{class:'mute',text:'用户名'}),el('code',{text:r.admin_user||'admin'}),el('span'),
+  const show=el('button',{class:'btn',text:'显示'});show.onclick=()=>{pv.textContent=pv.textContent===pw?'••••••••••••':pw;show.textContent=pv.textContent===pw?'隐藏':'显示'};
+  const cp=el('button',{class:'btn',text:'复制'});cp.onclick=()=>copy(pw,cp);const cu=el('button',{class:'btn',text:'打开'});cu.onclick=()=>window.open(panelUrl,'_blank','noopener,noreferrer');
+  box.append(el('div',{class:'cred'},el('span',{class:'mute',text:'地址'}),el('code',{text:panelUrl}),cu,el('span',{class:'mute',text:'用户名'}),el('code',{text:r.admin_user||'admin'}),el('span'),
    el('span',{class:'mute',text:'密码'}),pv,pw?el('div',{class:'btns'},show,cp):el('span')));
   box.append(el('p',{class:'mute',style:'font-size:13px',text:'浏览器若提示“不安全”，点“高级 → 继续访问”即可（照样加密）。这些信息已保存在：'+(s.record_file||'')}))}
  box.append(el('h3',{text:'接下来可以做什么'}),el('div',{class:'mute'},...NEXT_STEPS.map(t=>el('div',{text:'· '+t}))))}
 const NEXT_STEPS=['给家人朋友开账号：打开管理面板 →「使用者」添加，每人有自己的订阅链接、流量和到期时间。',
  '再加一台服务器：买好后再运行一次部署工具，在「这台服务器怎么用」里选「加到 … 下面」，大家的订阅里会自动多出它。',
  '以后想升级：再运行一次部署工具、填同一个 IP 就行，账号和设置都会保留。'];
-$('#go').onclick=async()=>{
- const host=$('#host').value.trim();if(!host)return alert('先填服务器 IP');if(!key&&!$('#pw').value)return alert('拖入密钥文件，或者填密码');
- $('#go').disabled=true;$('#out').hidden=false;$('#res').hidden=true;$('#status').textContent='正在部署，大约 1-3 分钟，别关这个页面…';
- let r,j;try{r=await fetch('/start?t='+T,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host,key,pw:$('#pw').value,user:$('#user').value.trim()||'root',port:$('#port').value.trim()||'22',main:$('#main').value||''})});
-  j=await r.json()}catch(e){$('#status').replaceChildren(el('span',{class:'err',text:'无法连接本地部署服务：'+(e.message||e)}));$('#go').disabled=false;return}
- if(!r.ok){$('#status').replaceChildren(el('span',{class:'err',text:j.error||'启动失败'}));$('#go').disabled=false;return}
+q('#go').onclick=async()=>{
+ const host=q('#host').value.trim();if(!host)return alert('先填服务器 IP');if(!key&&!q('#pw').value)return alert('拖入密钥文件，或者填密码');
+ q('#go').disabled=true;q('#out').hidden=false;q('#res').hidden=true;q('#status').textContent='正在部署，大约 1-3 分钟，别关这个页面…';
+ let r,j;try{r=await fetch('/start?t='+T,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host,key,pw:q('#pw').value,user:q('#user').value.trim()||'root',port:q('#port').value.trim()||'22',main:q('#main').value||''})});
+  j=await r.json()}catch(e){q('#status').replaceChildren(el('span',{class:'err',text:'无法连接本地部署服务：'+(e.message||e)}));q('#go').disabled=false;return}
+ if(!r.ok){q('#status').replaceChildren(el('span',{class:'err',text:j.error||'启动失败'}));q('#go').disabled=false;return}
  jobId=j.id;
- const poll=async()=>{let s;try{const pr=await fetch('/job?t='+T+'&id='+encodeURIComponent(j.id));if(!pr.ok)throw new Error('HTTP '+pr.status);s=await pr.json()}catch(e){$('#status').replaceChildren(el('span',{class:'err',text:'获取进度失败：'+(e.message||e)}));$('#go').disabled=false;return}
-  $('#log').textContent=(s.log||[]).join('\n');$('#log').scrollTop=1e9;
-  if(s.state==='running')return setTimeout(poll,1000);$('#go').disabled=false;
-  if(s.state==='done'){$('#status').textContent='部署完成。';render(s);$('#res').scrollIntoView({behavior:'smooth'})}
-  else{$('#logbox').open=true;$('#status').replaceChildren(el('span',{class:'err',text:'失败：'+(s.error||'未知错误')}))}};poll()}
+ const poll=async()=>{let s;try{const pr=await fetch('/job?t='+T+'&id='+encodeURIComponent(j.id));if(!pr.ok)throw new Error('HTTP '+pr.status);s=await pr.json()}catch(e){q('#status').replaceChildren(el('span',{class:'err',text:'获取进度失败：'+(e.message||e)}));q('#go').disabled=false;return}
+  q('#log').textContent=(s.log||[]).join('\n');q('#log').scrollTop=1e9;
+  if(s.state==='running')return setTimeout(poll,1000);q('#go').disabled=false;
+  if(s.state==='done'){q('#status').textContent='部署完成。';render(s);q('#res').scrollIntoView({behavior:'smooth'})}
+  else{q('#logbox').open=true;q('#status').replaceChildren(el('span',{class:'err',text:'失败：'+(s.error||'未知错误')}))}};poll()}
+
+for(const [id,ic,tx] of [['p1','shield','自动装好 REALITY · Hysteria 2 · TUIC 三种线路'],['p2','bolt','从你电脑检查防火墙，挡住了告诉你怎么放行'],['p3','check','自动导入到电脑上的 VPN 软件，手机扫码就行']])q('#'+id).append(icon(ic),tx);
+(()=>{const cv=q('#lineArt');Ticker.add({el:cv,tick(tm){const {ctx,w,h:hh}=setupCanvas(cv);ctx.clearRect(0,0,w,hh);
+ [['#ff6b4a',.62],['#7b93ff',.74],['#3fe0c5',.86]].forEach(([c,y0],k)=>{const pts=[];for(let i=0;i<=40;i++)pts.push([i/40*w,hh*y0+Math.sin(i/6+k*2)*hh*.05]);
+  ctx.strokeStyle=alpha(c,.35);ctx.lineWidth=2;ctx.beginPath();traceMonotone(ctx,pts,true);ctx.stroke();
+  for(let j=0;j<5;j++){const p=((tm/9000+j/5+k*.13)%1),i=Math.floor(p*40),f=p*40-i,a=pts[i],b=pts[Math.min(40,i+1)];
+   const x=a[0]+(b[0]-a[0])*f,y=a[1]+(b[1]-a[1])*f,g=ctx.createRadialGradient(x,y,0,x,y,14);
+   g.addColorStop(0,alpha(c,.9));g.addColorStop(1,alpha(c,0));ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,14,0,7);ctx.fill()}});
+ return !matchMedia('(prefers-reduced-motion: reduce)').matches}})})();
 </script></body></html>'''
 
 
@@ -726,6 +754,9 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(404, '{}')
         if path == '/':
             return self.reply(200, PAGE.replace('__TOKEN__', TOKEN), 'text/html')
+        if path in SHARED_STATIC:       # the panel's own look, so this page matches it
+            with open(os.path.join(REPO, 'vps2vpn', 'static', path.rsplit('/', 1)[1]), 'rb') as f:
+                return self.reply(200, f.read(), SHARED_STATIC[path])
         if path == '/records':        # which servers can be the main one (no passwords sent)
             return self.reply(200, json.dumps([{'host': r['host'], 'can': bool(r.get('admin_password') and r.get('panel'))}
                                                for r in load_records()]))

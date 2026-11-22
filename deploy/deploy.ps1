@@ -51,7 +51,7 @@ $Work = Join-Path ([IO.Path]::GetTempPath()) ('v2v-deploy-' + [Guid]::NewGuid().
 New-Item -ItemType Directory -Force $Work | Out-Null
 Restrict-Path $Work
 $Records = if ($env:V2V_RECORDS) { $env:V2V_RECORDS } else { Join-Path $env:USERPROFILE 'vps2vpn' }
-$ClientDownload = 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest'
+$ClientDownload = 'https://github.com/xydadada/vps2vpn-client/releases/latest'
 # Windows' own tools (Git and other toolkits put different tar/ssh builds on PATH)
 function Find-Tool([string]$name, [string[]]$candidates) {
   foreach ($c in $candidates) { if (Test-Path -LiteralPath $c) { return $c } }
@@ -687,16 +687,16 @@ function Fill-Result($p, $st) {
     } elseif ($st.Client) {
       Add-Label "检测到你电脑上的 $($st.Client.name)。防火墙放行后会自动导入，也可以直接点下面的按钮。" $y 44 $null $p | Out-Null; $y += 48
     } else {
-      Add-Label '没检测到电脑上的 VPN 软件。推荐装免费开源的 Clash Verge Rev（下载名字里带 setup 的 .exe），装好后回来点「导入到 Clash」。' $y 44 $red $p | Out-Null; $y += 48
-      $p.Controls.Add((New-Btn '打开 Clash Verge 下载页' 20 $y 220 { if (Test-SafeUrl $ClientDownload @('https')) { Start-Process $ClientDownload } })); $y += 42
+      Add-Label '没检测到电脑上的 VPN 软件。推荐装 vps2vpn 客户端（免费，下载名字里带 setup 的 .exe），能直接看到剩余流量和到期时间。装好后回来点「一键导入」。' $y 44 $red $p | Out-Null; $y += 48
+      $p.Controls.Add((New-Btn '打开 vps2vpn 客户端下载页' 20 $y 220 { if (Test-SafeUrl $ClientDownload @('https')) { Start-Process $ClientDownload } })); $y += 42
     }
-    $label = if ($st.Client) { $(if ($st.Imported) { '再导入一次到 ' } else { '导入到 ' }) + $st.Client.name } else { '导入到 Clash' }
+    $label = if ($st.Client) { $(if ($st.Imported) { '再导入一次到 ' } else { '导入到 ' }) + $st.Client.name } else { '一键导入' }
     $p.Controls.Add((New-Btn $label 20 $y 175 {
       $l = $script:st.Rec['links']; $k = if ($script:st.Client) { $script:st.Client.link } else { 'clash' }
       $target = [string]($l.$k)
       if (-not $target -and $k -eq 'vps2vpn') { $target = [string]($l.clash) }
       if (-not (Test-SafeUrl $target @('vps2vpn', 'clash', 'hiddify', 'sing-box'))) { [Windows.Forms.MessageBox]::Show('导入链接无效。') | Out-Null; return }
-      try { Start-Process $target } catch { [Windows.Forms.MessageBox]::Show('打不开。请先装好 Clash Verge 或 FlClash。') | Out-Null }
+      try { Start-Process $target } catch { [Windows.Forms.MessageBox]::Show('打不开。请先装好 vps2vpn 客户端（或 Clash Verge、FlClash）。') | Out-Null }
     } $true))
     $p.Controls.Add((New-Btn '手机扫码（打开订阅页）' 203 $y 190 {
       $u = "$($script:st.Rec['sub_url'])"

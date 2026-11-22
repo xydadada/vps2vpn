@@ -1057,6 +1057,37 @@ class DownloadedZip(unittest.TestCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn(b'Extract All', p.stdout)
 
+    def test_recommends_our_client_and_hides_what_should_be_hidden(self):
+        url, tip = deploy.client_download()
+        if sys.platform == 'darwin':
+            self.assertIn('clash-verge-rev', url)
+        else:
+            self.assertEqual(url, 'https://github.com/xydadada/vps2vpn-client/releases/latest')
+            self.assertIn('vps2vpn 客户端', tip)
+        with open(deploy.__file__, encoding='utf-8') as f:
+            src = f.read()
+        self.assertNotIn('Clash Verge Rev（Windows', src)
+        # button{display:inline-block} used to beat the hidden attribute: "清除已选密钥" showed with no key chosen
+        self.assertIn('[hidden]{display:none!important}', src)
+        self.assertIn('<title>vps2vpn 一键部署</title>', src)
+        with open(os.path.join(ROOT_DIR, 'deploy', 'deploy.ps1'), encoding='utf-8-sig') as f:
+            ps = f.read()
+        self.assertIn("$ClientDownload = 'https://github.com/xydadada/vps2vpn-client/releases/latest'", ps)
+        self.assertNotIn('打开 Clash Verge 下载页', ps)
+
+    def test_page_reuses_the_panel_look_and_opens_our_client(self):
+        page = deploy.PAGE
+        self.assertIn('/static/style.css?t=__TOKEN__', page)
+        self.assertIn('/static/kit.js?t=__TOKEN__', page)
+        self.assertIn('class="login"', page)
+        self.assertNotIn('const $=', page)         # kit.js already declares $ (by id)
+        self.assertIn("L[s.link_key]", page)
+        self.assertIn('在 vps2vpn 客户端中打开', page)
+        for path, ctype in deploy.SHARED_STATIC.items():
+            self.assertTrue(os.path.isfile(os.path.join(ROOT_DIR, 'vps2vpn', 'static', path.rsplit('/', 1)[1])), path)
+        v = deploy.page_view({'state': 'done', 'log': []})
+        self.assertEqual(v['link_key'], 'clash' if sys.platform == 'darwin' else 'vps2vpn')
+
     def test_progress_lines_are_in_chinese(self):
         # the install log opens by itself when a deploy fails: what we write there must be readable
         with open(os.path.join(ROOT_DIR, 'deploy', 'deploy.py'), encoding='utf-8') as f:

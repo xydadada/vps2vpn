@@ -16,7 +16,8 @@ const T = {
     shared: '分给邀请的人', invited_by: '邀请人', online: '在线', online_now: '正在使用', devices: '个设备', offline: '当前未连接',
     import: '导入到 App', import_tip: '手机上直接点按钮；电脑上复制链接，在 App 里「从 URL 导入」。订阅会自动更新。', copy: '复制订阅链接',
     sr_full: '小火箭（完整配置：节点+分流+DNS）', sr_nodes: '小火箭（只导入节点）', scan: '手机扫码导入',
-    apps: '装哪个 App', apps_list: [['Windows / macOS', 'Clash Verge Rev 或 FlClash（免费）'], ['Android', 'FlClash 或 Hiddify（免费）'], ['iPhone / iPad', 'Shadowrocket 小火箭或 Stash（都要付费），免费的用 Karing']],
+    apps: '装哪个 App', open_app: '在 vps2vpn 客户端中打开', get_app: '还没装 vps2vpn 客户端？点这里下载（免费）',
+    apps_list: [['Windows', 'vps2vpn 客户端（免费，推荐），或 Clash Verge Rev、FlClash'], ['macOS', 'Clash Verge Rev 或 FlClash（免费）'], ['Android', 'FlClash 或 Hiddify（免费）'], ['iPhone / iPad', 'Shadowrocket 小火箭或 Stash（都要付费），免费的用 Karing']],
     apps_tip: '导入后打开 App 里的「系统代理」或「VPN / TUN 模式」开关就行。',
     history: '每日用量', history_sub: '近 30 天', more: '申请增加流量', more_tip: '流量不够用时，告诉管理员你需要多少、为什么。批准后立刻生效，只在本期有效，到下次重置日自动取消。',
     add_gb: '需要增加多少 GB', reason: '说明（可选）', send: '提交申请', sent: '已提交，等管理员批准',
@@ -50,7 +51,8 @@ const T = {
     shared: 'Shared with invitees', invited_by: 'Invited by', online: 'Online', online_now: 'in use now', devices: 'device(s)', offline: 'not connected',
     import: 'Import into an app', import_tip: 'On a phone tap a button; on a computer copy the link and use "Import from URL". It updates itself.', copy: 'Copy subscription link',
     sr_full: 'Shadowrocket (full config: nodes + routing + DNS)', sr_nodes: 'Shadowrocket (nodes only)', scan: 'Scan with your phone',
-    apps: 'Which app', apps_list: [['Windows / macOS', 'Clash Verge Rev or FlClash (free)'], ['Android', 'FlClash or Hiddify (free)'], ['iPhone / iPad', 'Shadowrocket or Stash (both paid), or Karing (free)']],
+    apps: 'Which app', open_app: 'Open in the vps2vpn app', get_app: 'No vps2vpn app yet? Download it here (free)',
+    apps_list: [['Windows', 'the vps2vpn app (free, recommended), or Clash Verge Rev / FlClash'], ['macOS', 'Clash Verge Rev or FlClash (free)'], ['Android', 'FlClash or Hiddify (free)'], ['iPhone / iPad', 'Shadowrocket or Stash (both paid), or Karing (free)']],
     apps_tip: 'After importing, switch on "System proxy" or "VPN / TUN mode" in the app.',
     history: 'Daily usage', history_sub: 'last 30 days', more: 'Ask for more', more_tip: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved, for this period only (until the next reset).',
     add_gb: 'Extra GB', reason: 'Why (optional)', send: 'Send request', sent: 'Sent; waiting for the admin',
@@ -101,6 +103,7 @@ const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), 
 const dateStr = ts => ts ? new Date(ts * 1000).toLocaleDateString(KT.locale) : t('never');
 // WeChat and QQ open links in their own browser, which cannot hand clash:// etc. to an app
 const inChatApp = () => /MicroMessenger|QQ\//i.test(navigator.userAgent || '');
+const onWindows = () => /Windows/i.test(navigator.userAgent || '') && !inChatApp();
 const chatBanner = () => inChatApp() ? h('div', {class: 'alert warn', id: 'chat-app'}, icon('alert'), t('wx')) : null;
 
 /* ---------- sign in / register (the split layout of the console) ---------- */
@@ -180,7 +183,11 @@ async function renderHome() {
   const importP = panel(t('import'), null, null, h('div', {class: 'm-import'},
     h('div', null, h('p', {class: 'muted m-tip'}, t('import_tip')),
       h('div', {class: 'creds'}, me.sub_url),
-      h('div', {class: 'act-grid', style: 'margin:10px 0'}, h('button', {class: 'btn primary', onclick: () => copyText(me.sub_url, t('copy'))}, icon('copy'), t('copy')),
+      // on Windows the big button opens our own app and imports in one click
+      onWindows() && im.vps2vpn ? h('div', {class: 'stack', style: 'margin:10px 0 0;gap:6px'},
+        h('a', {class: 'btn primary', href: im.vps2vpn}, icon('bolt'), t('open_app')),
+        h('a', {class: 'muted', style: 'font-size:12px', href: 'https://github.com/xydadada/vps2vpn-client/releases/latest', target: '_blank', rel: 'noopener noreferrer'}, t('get_app'))) : null,
+      h('div', {class: 'act-grid', style: 'margin:10px 0'}, h('button', {class: onWindows() && im.vps2vpn ? 'btn' : 'btn primary', onclick: () => copyText(me.sub_url, t('copy'))}, icon('copy'), t('copy')),
         h('a', {class: 'btn', href: im.clash}, 'Clash / FlClash')),
       h('div', {class: 'import-grid'},
         h('a', {class: 'btn', href: im.shadowrocket_conf}, t('sr_full')), h('a', {class: 'btn', href: im.shadowrocket}, t('sr_nodes')),
