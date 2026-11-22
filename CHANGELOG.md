@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.13
+
+**Client app**
+- Clash profiles carry the panel's certificate pin (`x-vps2vpn-pin`), so the vps2vpn app (1.0.10+) checks the panel with it when it reports a line or downloads an update, also on a subscription that is paused or has no nodes.
+- The version the panel offers the apps is the newer of the one fetched from GitHub and one set by hand. A manual entry older than the fetched one no longer hides it (or its download link); a newer one wins without the fetched files.
+- When one platform's installer fails to download or check, the others are still published.
+
+**Connections and limits**
+- Per-client connection limits and login rate limits count an IPv4 client reaching a dual-stack panel (`::ffff:1.2.3.4`) or with an IPv6 zone as the same client, not as a separate one.
+- Addresses that embed a private IPv4 (IPv4-mapped, 6to4, Teredo, NAT64) count as private: they cannot be set as the Reality camouflage target or the Hysteria masquerade page, and are not taken for this server's public address when several servers join.
+- Port hopping redirects only traffic arriving from outside the server, not the server's own local UDP.
+- A request with a body the panel does not read gets its connection closed instead of the panel reading up to 8 MiB of it.
+- Device limits count Xray clients connecting over IPv6 or as an IPv4-mapped address, which Xray's online list showed but the panel skipped.
+
+**Accounts and invites**
+- Deleting an account hands its share to invitees that still count against it (live, or paused for quota or devices) before expired ones.
+- An expired account is not turned back on by approving a traffic request; an account without a traffic limit cannot request more.
+- The Telegram `/users` list shows the quota an account can really use after what it shares with its invitees.
+- Two admin 2FA enrollments at the same moment can no longer both pass the "2FA is already on" check: it is made under the 2FA lock.
+
+**Background jobs**
+- The public-IP check runs beside the 20-second traffic, quota and expiry pass instead of holding it up for its timeouts.
+- TUIC without DNS-over-HTTPS resolves with the system resolver explicitly, as sing-box 1.14 requires.
+
+**Subscriptions**
+- A support URL with emoji or other non-BMP characters is kept; Facebook's and Instagram's in-app browsers ("MetaIAB") are no longer taken for a Clash Meta client.
+
+**One-click deploy**
+- The deployers remember the server's SSH key between runs next to the saved logins (Windows, macOS and Linux, in the same file), so a server whose key changed is refused with a hint (`ssh-keygen -R`, with the port) instead of trusted again; a records folder with spaces or `%` in its path works. The local deploy page no longer drops the connection on a token with non-ASCII characters. On Linux the subscription page opens with `xdg-open`.
+
 ## 0.2.12
 
 **Sign-in**

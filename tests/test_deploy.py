@@ -3,7 +3,10 @@ check from the outside, and adding a second server to the first through the pane
 
     python -m unittest tests.test_deploy
 """
+import base64
 import hashlib
+import http.client
+import http.server
 import io
 import json
 import os
@@ -702,6 +705,128 @@ class ReleaseWorkflow(unittest.TestCase):
             sh = f.read()
         self.assertIn('releases/download/$tag/$name.sha256', sh)
         self.assertNotIn('archive/refs/heads/$BRANCH', sh)            # the tip of main is no longer the default
+
+
+# A records folder like "C:\Users\John Smith\vps2vpn": ssh splits UserKnownHostsFile on spaces (a list of files)
+# and expands %-tokens and a leading ~ in each file, so this name shows both a split and a missing %% at once.
+ODD_DIR = 'v2v ~/50%c'
+
+PS_HARNESS = r'''param([string]$Ps1, [string]$Echo)
+$ErrorActionPreference = 'Stop'
+$errs = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Ps1, [ref]$null, [ref]$errs)
+if ($errs.Count) { throw "deploy.ps1 does not parse: $($errs[0].Message)" }
+$want = 'Restrict-Path', 'Quote-Arg', 'Get-KnownHostsFile', 'Get-KnownHostName', 'Get-SshArgs', 'Explain'
+foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+  if ($want -contains $f.Name) { . ([scriptblock]::Create($f.Extent.Text)) }
+}
+$Records = $env:V2V_RECORDS; $Server = '203.0.113.10'; $User = 'root'; $Port = 2222
+# the same command line Start-Ssh hands to ssh.exe, read back by a program with the same argv rules
+$psi = New-Object Diagnostics.ProcessStartInfo
+$psi.FileName = $env:V2V_PY; $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true
+$psi.Arguments = (Quote-Arg $Echo) + ' ' + ((Get-SshArgs $null $false) -join ' ')
+$p = [Diagnostics.Process]::Start($psi); $argv = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
+[Console]::Out.WriteLine($argv.Trim())
+[Console]::Out.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Explain 'Host key verification failed.'))))
+'''
+
+
+class DeployerKnownHosts(unittest.TestCase):
+    """The server's SSH key is remembered between runs (a changed key is refused, not trusted again), in a file
+    path ssh reads as one file; the local page's token check never crashes on odd input."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.records = os.path.join(self.tmp, *ODD_DIR.split('/'))
+        self.kh = os.path.join(self.records, 'known_hosts')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_python_deployer_passes_one_quoted_file(self):
+        old = deploy.RECORDS
+        deploy.RECORDS = self.records
+        try:
+            cmd, _ = deploy.ssh_base({'host': '203.0.113.10', 'user': 'root', 'port': 2222, 'key': '/k'})
+        finally:
+            deploy.RECORDS = old
+        self.assertTrue(os.path.isdir(self.records))
+        opt = 'UserKnownHostsFile="%s"' % self.kh.replace('%', '%%')
+        self.assertIn(opt, cmd)
+        self.assertEqual(deploy.known_host_name('203.0.113.10', 22), '203.0.113.10')
+        self.assertEqual(deploy.known_host_name('2001:db8::1', 2222), '[2001:db8::1]:2222')
+        ssh = shutil.which('ssh')
+        if ssh:         # ssh itself reads it back as the one file, unchanged
+            r = subprocess.run([ssh, '-G', '-F', 'none', '-o', opt, 'h'], capture_output=True, timeout=30,
+                               stdin=subprocess.DEVNULL)
+            lines = [ln for ln in r.stdout.decode('utf-8', 'replace').splitlines()
+                     if ln.startswith('userknownhostsfile ')]
+            self.assertEqual(lines, ['userknownhostsfile ' + self.kh], r.stderr)
+
+    def test_token_check_takes_non_ascii(self):
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), deploy.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            def get(q):
+                c = http.client.HTTPConnection('127.0.0.1', srv.server_address[1], timeout=10)
+                try:
+                    c.request('GET', '/records?t=' + q)
+                    return c.getresponse().status
+                finally:
+                    c.close()
+            self.assertEqual(get('%E4%B8%AD%E6%96%87'), 404)        # was a TypeError and a dropped connection
+            self.assertEqual(get('%ff'), 404)
+            self.assertEqual(get(deploy.TOKEN), 200)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('powershell'), 'needs Windows PowerShell')
+    def test_windows_deployer_keeps_the_quotes_to_ssh(self):
+        with open(os.path.join(ROOT_DIR, 'deploy', 'deploy.ps1'), 'rb') as f:
+            self.assertEqual(f.read(3), b'\xef\xbb\xbf')          # PowerShell 5 reads it as UTF-8 only with the BOM
+        harness = os.path.join(self.tmp, 'harness.ps1')
+        echo = os.path.join(self.tmp, 'echo.py')
+        with open(harness, 'w', encoding='utf-8-sig') as f:
+            f.write(PS_HARNESS)
+        with open(echo, 'w', encoding='utf-8') as f:
+            f.write('import json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        p = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', harness,
+                            '-Ps1', os.path.join(ROOT_DIR, 'deploy', 'deploy.ps1'), '-Echo', echo],
+                           env=dict(os.environ, V2V_RECORDS=self.records, V2V_PY=sys.executable),
+                           capture_output=True, timeout=120)
+        out = p.stdout.decode('utf-8', 'replace').strip().splitlines()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        argv = json.loads(out[0])
+        self.assertEqual(argv[argv.index('StrictHostKeyChecking=accept-new') + 2],
+                         'UserKnownHostsFile="%s"' % self.kh.replace('%', '%%'))
+        self.assertTrue(os.path.isdir(self.records))         # next to the saved logins, not in the temp folder
+        hint = base64.b64decode(out[1]).decode('utf-8')
+        self.assertIn('ssh-keygen -R [203.0.113.10]:2222 -f "%s"' % self.kh, hint)
+
+    @unittest.skipUnless(TEST_BASH, 'needs bash (on Windows set V2V_TEST_BASH to Git bash)')
+    def test_mac_deployer_remembers_the_key_in_home(self):
+        stubs, fix, home = (os.path.join(self.tmp, d) for d in ('stubs', 'fix', 'h o%c'))
+        for d in (stubs, fix, home):
+            os.makedirs(d)
+        for name, body in {'ssh': '#!/bin/sh\nfor a; do printf "%s\\n" "$a"; done > "$FIX/ssh.args"\n'
+                                  'cat >/dev/null\nexit 255\n',
+                           'python3': '#!/bin/sh\nexit 1\n'}.items():         # no Python: the bash path runs
+            with open(os.path.join(stubs, name), 'w', encoding='utf-8', newline='\n') as f:
+                f.write(body)
+            os.chmod(os.path.join(stubs, name), 0o755)
+        env = dict(os.environ, HOME=_posix(home), FIX=_posix(fix), STUBS=_posix(stubs))
+        p = subprocess.run([TEST_BASH, '-c', 'export PATH="$STUBS:$PATH"; exec bash "$1"', 'x',
+                            _posix(os.path.join(ROOT_DIR, 'deploy-mac.command'))],
+                           input=b'203.0.113.10\n\n\n2222\n', env=env, capture_output=True, timeout=120)
+        out = (p.stdout + p.stderr).decode('utf-8', 'replace')
+        self.assertEqual(p.returncode, 1, out)
+        with open(os.path.join(fix, 'ssh.args'), encoding='utf-8') as f:
+            args = f.read().splitlines()
+        kh = _posix(home) + '/vps2vpn/known_hosts'
+        self.assertIn('UserKnownHostsFile="%s"' % kh.replace('%', '%%'), args)
+        self.assertTrue(os.path.isdir(os.path.join(home, 'vps2vpn')))
+        self.assertIn("ssh-keygen -R '[203.0.113.10]:2222' -f '%s'" % kh, out)
 
 
 if __name__ == '__main__':

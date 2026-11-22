@@ -100,9 +100,20 @@ function Copy-Key([string]$src) {
   return $dst
 }
 
+function Get-KnownHostsFile {
+  # Server keys are remembered next to the saved logins (the same file deploy.py uses), so a server whose
+  # key changed since the last deploy is refused instead of trusted again.
+  if (-not (Test-Path -LiteralPath $Records)) { New-Item -ItemType Directory -Force $Records | Out-Null; Restrict-Path $Records }
+  return (Join-Path $Records 'known_hosts')
+}
+
+function Get-KnownHostName { if ($Port -eq 22) { $Server } else { "[$Server]:$Port" } }
+
 function Get-SshArgs([string]$keyPath, [bool]$usePassword) {
-  $kh = Join-Path $Work 'known_hosts'
-  $a = @('-F', 'none', '-p', "$Port", '-o', 'StrictHostKeyChecking=accept-new', '-o', "UserKnownHostsFile=`"$kh`"",
+  # ssh splits this value on spaces (a list of files) and expands %-tokens in it: keep the quotes all the way
+  # to ssh (\" survives the Windows command line) and double every %.
+  $kh = (Get-KnownHostsFile) -replace '%', '%%'
+  $a = @('-F', 'none', '-p', "$Port", '-o', 'StrictHostKeyChecking=accept-new', '-o', (Quote-Arg "UserKnownHostsFile=`"$kh`""),
     '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8')
   if ($keyPath) { $a += @('-i', "`"$keyPath`"", '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes') }
   elseif ($usePassword) {
@@ -191,6 +202,9 @@ function Explain([string]$msg) {
   if ($msg -match 'Could not resolve') { $msg += "`r`n→ 服务器地址写错了。" }
   if ($msg -match 'sudo') { $msg += "`r`n→ 这个用户不能免密码使用 sudo，请改用 root 登录。" }
   if ($msg -match 'bad permissions|UNPROTECTED') { $msg += "`r`n→ 密钥文件权限问题，请把密钥文件复制到桌面再拖进来。" }
+  if ($msg -match 'IDENTIFICATION HAS CHANGED|Host key verification failed') {
+    $msg += "`r`n→ 这台服务器的身份和上次连接时不一样。如果你刚重装过系统或换了同一个 IP 的新服务器，这是正常的：运行  ssh-keygen -R $(Get-KnownHostName) -f `"$(Join-Path $Records 'known_hosts')`"  后再部署一次。没有重装过就先别继续，可能有人在冒充你的服务器。"
+  }
   return $msg
 }
 

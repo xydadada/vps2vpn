@@ -457,7 +457,16 @@ def delete_user(uid):
         parent = row['invited_by'] if row else 0
         if parent and c.execute('SELECT 1 FROM users WHERE id=?', (parent,)).fetchone():
             rem = max(0.0, float(row['invite_deduct'] or 0))
-            for ch in c.execute('SELECT id, invite_deduct FROM users WHERE invited_by=? ORDER BY id', (uid,)).fetchall():
+            now = time.time()
+            children = c.execute('SELECT id, invite_deduct, expire_at, enabled, disabled_reason FROM users '
+                                 'WHERE invited_by=? ORDER BY id', (uid,)).fetchall()
+
+            def charged(ch):
+                # As members.deducting: what is left to hand on goes first to accounts that still count,
+                # or an expired one would take it and leave a live one charged to nobody.
+                live = not (ch['expire_at'] and ch['expire_at'] <= now)
+                return live and (bool(ch['enabled']) or ch['disabled_reason'] in ('quota', 'devices'))
+            for ch in sorted(children, key=lambda ch: not charged(ch)):
                 ded = min(max(0.0, float(ch['invite_deduct'] or 0)), rem)
                 rem = max(0.0, rem - ded)
                 if ded > 0:

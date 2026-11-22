@@ -365,6 +365,13 @@ class OpsWeb(tf.MemberWeb):
         self.assertEqual(st, 200, body)
         c = json.loads(self.req('GET', base + 'api/me')[1])['client']
         self.assertEqual((c['version'], c['url'], c['notes']), ('2.0.1', 'https://example.com/a.exe', '修复'))
+        self.assertEqual(c['files'], {})          # the 1.10.0 files here would be refused as "not newer"
+        # a version typed in long ago does not hide the newer release the panel holds, nor point at its link
+        self.assertEqual(self.req('POST', '/adm/api/settings', {'client_version': '1.0.5'})[0], 200)
+        c = json.loads(self.req('GET', base + 'api/me')[1])['client']
+        self.assertEqual(c['version'], '1.10.0')
+        self.assertTrue(c['url'].endswith(base + 'download/vps2vpn-1.10.0-windows-setup.exe'), c['url'])
+        self.assertEqual(sorted(c['files']), ['android', 'windows'])
         state = json.loads(self.req('GET', '/adm/api/state')[1])
         self.assertEqual(state['client']['found']['version'], '1.10.0')
 

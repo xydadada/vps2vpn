@@ -142,7 +142,8 @@ def nft_rules(s):
             'table inet %s {\n'
             ' chain prerouting {\n'
             '  type nat hook prerouting priority dstnat; policy accept;\n'
-            '  iifname != "lo" udp dport %d-%d redirect to :%d\n'
+            # Only packets for this machine: a container's or VPN peer's own UDP to such a port passes on.
+            '  iifname != "lo" fib daddr type local udp dport %d-%d redirect to :%d\n'
             ' }\n'
             '}\n') % (NFT_TABLE, NFT_TABLE, NFT_TABLE, a, b, s['hy2_port'])
 

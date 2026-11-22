@@ -54,7 +54,10 @@ class _BadRequest(ValueError):
 def _rate_key(ip):
     """Aggregate IPv6 clients to /64 so a single host cannot rotate IIDs to bypass rate limits."""
     try:
-        addr = ipaddress.ip_address(ip)
+        addr = ipaddress.ip_address(ip.split('%', 1)[0])
+        # A dual-stack listener brings IPv4 clients as ::ffff:a.b.c.d, which would all fall into one /64.
+        if addr.version == 6 and addr.ipv4_mapped is not None:
+            addr = addr.ipv4_mapped
         if addr.version == 6:
             return str(ipaddress.ip_network((addr, 64), strict=False))
         return str(addr)
@@ -100,8 +103,15 @@ def _norm_host(host):
 
 
 def _is_private_ip(addr):
+    if addr.version == 6:
+        # An IPv4 address carried inside IPv6 (mapped, NAT64, 6to4, Teredo) is judged as that IPv4 address.
+        # (NAT64's 64:ff9b::/96 is already reserved.)
+        inner = addr.ipv4_mapped or addr.sixtofour or (addr.teredo[1] if addr.teredo else None)
+        if inner is not None and _is_private_ip(inner):
+            return True
     return (addr.is_private or addr.is_loopback or addr.is_link_local
             or addr.is_multicast or addr.is_reserved or addr.is_unspecified)
+
 
 
 def _is_private_host(host):
@@ -262,8 +272,21 @@ def client_info(s, link):
     `link` is the member's /s/<token> URL; installers in paths.CLIENT are downloaded through it."""
     found = client_files()
     files = {k: '%s/download/%s' % (link, n) for k, n in (found or {}).get('files', {}).items()}
-    version = s['client_version'] or (found or {}).get('version', '')
-    url = s['client_url'] or files.get('windows') or next(iter(files.values()), '')
+    held = (found or {}).get('version', '')
+    manual = (s['client_version'] or '').strip().lstrip('vV')
+    version, link_ok = held or manual, True
+    if manual and held and manual != held:
+        try:
+            newer = _ver(manual) > _ver(held)
+        except ValueError:          # not a version number: the files here decide
+            newer = False
+        if newer:
+            # Newer than the installers here: those would be refused as "not newer", so only the link is offered.
+            version, files = manual, {}
+        else:
+            # A version typed in long ago must not hide the newer release synced since, nor its link.
+            link_ok = False
+    url = (s['client_url'] if link_ok else '') or files.get('windows') or next(iter(files.values()), '')
     if not version or not url:
         return None
     return {'version': version, 'url': url, 'notes': s['client_notes'], 'files': files}
@@ -470,26 +493,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if isinstance(body, str):
             body = body.encode()
         if getattr(self, '_raw', b'') is None:
-            if code >= 400:
-                te_vals = self.headers.get_all('Transfer-Encoding') or []
-                cl_vals = self.headers.get_all('Content-Length') or []
-                if (not te_vals and len(cl_vals) == 1
-                        and re.fullmatch(r'\d{1,6}', cl_vals[0].strip())
-                        and int(cl_vals[0].strip()) <= 65536):
-                    try:
-                        self._read_body(65536)
-                    except (_BadRequest, ValueError, OSError):
-                        self.close_connection = True
-                elif te_vals or cl_vals:
-                    self.close_connection = True
-            else:
-                # Read what the client sent even if the endpoint did not need it: replying with unread request
-                # data still in the socket makes the kernel reset the connection, and the reply is lost on
-                # real networks (seen with "check now" buttons that POST an empty JSON body).
+            # Read what the client sent even if the endpoint did not need it: replying with unread request
+            # data still in the socket makes the kernel reset the connection, and the reply is lost on real
+            # networks (seen with "check now" buttons that POST an empty JSON body). Only a small body,
+            # though: endpoints that take a large one read it themselves, and buffering megabytes for any
+            # request (a subscription URL is public) would let a few clients use up the memory. A larger
+            # or chunked one closes the connection instead.
+            te_vals = self.headers.get_all('Transfer-Encoding') or []
+            cl_vals = self.headers.get_all('Content-Length') or []
+            if (not te_vals and len(cl_vals) == 1
+                    and re.fullmatch(r'\d{1,6}', cl_vals[0].strip())
+                    and int(cl_vals[0].strip()) <= 65536):
                 try:
-                    self._read_body(8 << 20)
+                    self._read_body(65536)
                 except (_BadRequest, ValueError, OSError):
                     self.close_connection = True
+            elif te_vals or cl_vals:
+                self.close_connection = True
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
@@ -1138,13 +1158,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Check and write atomically: simultaneous enrollments must not win
         # against each other using stale request-level settings.
         with _totp_lock:
-            active = bool(db.settings()['admin_totp'])
-            if not active:
+            if db.settings()['admin_totp']:
+                return self.json({'error': 'disable existing 2FA before enrolling again'}, 409)
+
+            def on():
                 _totp_last_step.pop(sec, None)
                 db.set_settings(admin_totp=sec)
-        if active:
-            return self.json({'error': 'disable existing 2FA before enrolling again'}, 409)
-        return self._new_admin_session()
+            # Like turning it off: not from a session another change ended meanwhile.
+            return self._change_admin_sign_in(s, on)
 
     def _change_admin_sign_in(self, s, change):
         """Apply `change` to how the admin signs in, then end every session and start one for this browser.
@@ -2024,6 +2045,9 @@ def validate_settings(d, s):
         t = str(d['reality_target']).strip().lower()
         if not HOST_RE.match(t):
             return 'camouflage site must be a domain name like www.microsoft.com'
+        if t != s.get('reality_target') and _is_private_host(t):
+            # REALITY hands every non-client connection to this site; a local one would expose this machine.
+            return 'camouflage site must be a public website, not this machine or a private network'
         out['reality_target'] = t
     for k in ('reality_port', 'hy2_port', 'tuic_port'):
         if k in d:
@@ -2102,6 +2126,9 @@ def validate_settings(d, s):
         v = str(d['hy2_masquerade']).strip()
         if not re.fullmatch(r'https://[A-Za-z0-9.-]+(/\S*)?', v):
             return 'masquerade must be an https:// URL'
+        if v != s.get('hy2_masquerade') and _is_private_host(urllib.parse.urlsplit(v).hostname):
+            # Hysteria 2 proxies every visitor without the password to this URL.
+            return 'masquerade must be a public website, not this machine or a private network'
         out['hy2_masquerade'] = v
     merged = dict(s, **out)
     if not (merged['reality_enabled'] or merged['hy2_enabled'] or merged['tuic_enabled']):

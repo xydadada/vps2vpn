@@ -220,9 +220,17 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
             return None
         os.makedirs(folder, exist_ok=True)
         published = []
+        failed = False
         for name in sorted(missing):
-            sig = _get(assets[name + '.sig'], MAX_SIG).decode('ascii', 'replace')
-            tmp, sha, size = _download(assets[name], folder, name)
+            # Each platform on its own: one that fails must neither hold back the others nor leave what was
+            # already published out of the manifest (which is what later syncs clean up by).
+            try:
+                sig = _get(assets[name + '.sig'], MAX_SIG).decode('ascii', 'replace')
+                tmp, sha, size = _download(assets[name], folder, name)
+            except (OSError, ValueError) as e:
+                failed = True
+                log('client update %s: download failed (%s); tried again later' % (name, e))
+                continue
             if not signature_ok(name, sha, size, sig):
                 os.unlink(tmp)
                 log('client update %s: the signature does not match; not published' % name)
@@ -234,6 +242,8 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
             os.replace(os.path.join(folder, name + '.sig.tmp'), os.path.join(folder, name + '.sig'))
             published.append(name)
         if not published:
+            if failed:
+                raise OSError('no client installer could be downloaded')
             return None
         # Remove only what an earlier sync brought in and this one superseded.
         mine = _manifest(folder)

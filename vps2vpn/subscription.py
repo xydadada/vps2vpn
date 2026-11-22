@@ -125,7 +125,8 @@ DISABLED_TEXT = ('已停用', 'Disabled')
 # and the routing of a disabled profile rejects everything anyway.
 PLACEHOLDER_HOST, PLACEHOLDER_PORT = '0.0.0.0', 1
 PLACEHOLDER_UUID = '00000000-0000-0000-0000-000000000000'
-SUPPORT_URL_RE = r'(?:https?://|tg://)[^\s<>"\x00-\x1f\x7f-\uffff]{3,300}'
+# ASCII only: it goes out in an HTTP header (\U0010ffff, not \uffff: an emoji is outside the BMP).
+SUPPORT_URL_RE = r'(?:https?://|tg://)[^\s<>"\x00-\x1f\x7f-\U0010ffff]{3,300}'
 
 
 def status_text(u):
@@ -317,10 +318,10 @@ def clash(s, u, base_url):
             # Only there to show the reason in the app: it points nowhere and the only rule is REJECT.
             dead = [{'name': ph, 'type': 'socks5', 'server': PLACEHOLDER_HOST, 'port': PLACEHOLDER_PORT}]
             groups[0]['proxies'] = [ph] + groups[0]['proxies']
-        return {'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule',
-                'log-level': 'warning', 'dns': {'enable': False},
-                'proxies': dead, 'proxy-groups': groups, 'rule-providers': {},
-                'rules': ['MATCH,REJECT']}
+        return dict({'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule',
+                     'log-level': 'warning', 'dns': {'enable': False},
+                     'proxies': dead, 'proxy-groups': groups, 'rule-providers': {},
+                     'rules': ['MATCH,REJECT']}, **_panel_pin(s))
     cn_dns = ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query']
     ns_policy = {'rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private': cn_dns}
     for d in list(rules.CN_DIRECT_SUFFIX) + list(s.get('custom_direct') or []):
@@ -350,7 +351,15 @@ def clash(s, u, base_url):
         'proxy-groups': groups,
         'rule-providers': providers,
         'rules': rule_lines,
+        **_panel_pin(s),
     }
+
+
+def _panel_pin(s):
+    """With a self-signed certificate the vps2vpn app trusts the panel by this pin (mihomo ignores the key). The
+    Hysteria 2 / TUIC entries carry it too, but a REALITY-only or a disabled account's subscription has none."""
+    pin = tls_info(s)['pin']
+    return {'x-vps2vpn-pin': pin} if pin else {}
 
 
 def clash_yaml(s, u, base_url):
@@ -613,7 +622,9 @@ def detect_format(ua, wanted='', accept=None):
     ua = (ua or '').lower()
     if any(k in ua for k in ('sing-box', 'singbox', 'hiddify', 'karing', 'sfa', 'sfi', 'sfm')):
         return 'singbox'
-    if any(k in ua for k in ('clash', 'mihomo', 'stash', 'flclash', 'verge', 'meta', 'nyanpasu')):
+    # 'meta' alone: Clash.Meta builds, but not Facebook's and Instagram's in-app browser ("MetaIAB").
+    if (any(k in ua for k in ('clash', 'mihomo', 'stash', 'flclash', 'verge', 'nyanpasu'))
+            or re.search(r'(?<![a-z])meta(?!iab)', ua)):
         return 'clash'
     if any(k in ua for k in ('shadowrocket', 'v2ray', 'nekobox', 'nekoray', 'quantumult', 'surge', 'loon')):
         return 'links'

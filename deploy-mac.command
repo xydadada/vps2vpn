@@ -49,7 +49,13 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; th
 fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$WORK/known_hosts"
+# Server keys are remembered next to the saved logins (the same file deploy.py uses), so a server whose key
+# changed since the last deploy is refused instead of trusted again. ssh splits this value on spaces and
+# expands %-tokens in it: quote it and double every %.
+REC_DIR="$HOME/vps2vpn"; mkdir -p "$REC_DIR" || exit 1; chmod 700 "$REC_DIR"
+KH="$REC_DIR/known_hosts"
+KH_NAME="$HOST"; [ "$PORT" = 22 ] || KH_NAME="[$HOST]:$PORT"
+OPTS=(-F none -p "$PORT" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=\"${KH//\%/%%}\""
       -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
 if [ -n "$KEY" ]; then
   [ -f "$KEY" ] || { echo "找不到这个文件 / file not found: $KEY"; exit 1; }
@@ -70,12 +76,12 @@ if [ "$rc" -ne 0 ] || [ -z "$B64" ]; then
   say "出错了 / something went wrong (exit $rc)."
   echo "Permission denied -> 密钥/密码/用户名不对（亚马逊一般是 ubuntu / ec2-user / admin）"
   echo "timed out / refused -> IP 写错、服务器没开机，或云厂商防火墙没放行 SSH 端口"
+  echo "Host key verification failed -> 服务器身份和上次不一样。刚重装过系统就运行  ssh-keygen -R '$KH_NAME' -f '$KH'  再部署；没重装过先别继续，可能有人冒充你的服务器"
   read -r -p "按回车关闭 / press Enter to close" _
   exit 1
 fi
 
 # Save the login next to the other servers (only on this computer), keeping an older password on upgrades.
-REC_DIR="$HOME/vps2vpn"; mkdir -p "$REC_DIR"; chmod 700 "$REC_DIR"
 REC="$REC_DIR/$(printf '%s' "$HOST" | tr -c 'A-Za-z0-9._-' '_').json"
 JSON=$(printf '%s' "$B64" | base64 -d 2>/dev/null || printf '%s' "$B64" | base64 -D)
 OLD="{}"; [ -f "$REC" ] && OLD=$(cat "$REC")
@@ -147,7 +153,10 @@ elif safe_url "$SUB" '^https?://[^/]+'; then
   echo "  https://github.com/clash-verge-rev/clash-verge-rev/releases/latest"
   echo "装好后把下面的订阅链接粘贴到软件的「新建订阅」里。浏览器里会打开订阅页，手机可以扫上面的二维码导入。"
   echo "  $SUB"
-  command -v open >/dev/null && open -- "$SUB" || { command -v xdg-open >/dev/null && xdg-open -- "$SUB" >/dev/null 2>&1; }
+  # xdg-open takes no options (it rejects "--"); safe_url already refused a URL starting with "-".
+  # Only a Mac's open: on Debian "open" is openvt.
+  if [ "$(uname)" = Darwin ]; then open -- "$SUB" 2>/dev/null
+  elif command -v xdg-open >/dev/null; then xdg-open "$SUB" >/dev/null 2>&1; fi
 fi
 echo
 echo "管理面板（加用户、看流量）：$PANEL"

@@ -176,6 +176,10 @@ def tuic_config(s, users):
         conf['dns'] = {'servers': [{'type': 'https', 'tag': 'doh', 'server': doh[0][0], 'tls': {'server_name': doh[0][1]}},
                                    {'type': 'local', 'tag': 'local'}], 'final': 'doh'}
         conf['route']['default_domain_resolver'] = 'doh'
+    else:
+        # The resolve rule above needs a resolver; name the system one rather than rely on a default.
+        conf['dns'] = {'servers': [{'type': 'local', 'tag': 'local'}], 'final': 'local'}
+        conf['route']['default_domain_resolver'] = 'local'
     return conf
 
 
@@ -615,7 +619,7 @@ _tuic = TuicMeter()
 
 
 UID_RE = re.compile(r'\bu(\d+)\b')
-IP_RE = re.compile(r'"((?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]*:[0-9a-fA-F:]+)"\s*:')
+IP_RE = re.compile(r'"((?:[0-9a-fA-F:]*:)?(?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]*:[0-9a-fA-F:]+)"\s*:')
 
 
 def _xray_api(s, *args, timeout=4):

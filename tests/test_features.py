@@ -244,6 +244,26 @@ class Invites(tu.Base):
         members.decide(rid, True)                                          # 17 GB covers it
         self.assertEqual(db.user(u['id'])['enabled'], 1)
 
+    def test_an_approval_does_not_switch_an_expired_account_back_on(self):
+        u = mk('finn', 10, enabled=0, disabled_reason='quota', used_down=11 * GIB,
+               expire_at=int(time.time()) - 60)                           # it also ran out of time since
+        rid = members.request_more(u['id'], 20, '')
+        members.decide(rid, True)
+        u = db.user(u['id'])
+        self.assertEqual((u['quota_gb'], u['enabled']), (30, 0))           # the quota is still granted
+        unlimited = mk('gwen', 0)
+        with self.assertRaises(members.Refused):
+            members.request_more(unlimited['id'], 10, '')                 # nothing to add to
+        with self.assertRaises(members.Refused):
+            members.request_more(u['id'], True, '')                       # JSON true is no amount
+
+    def test_the_bot_lists_the_quota_left_after_sharing(self):
+        a = mk('hana', 50)
+        mk('ivo', 10, invited_by=a['id'], invite_deduct=10)
+        with mock.patch.object(jobs.cores, 'online_detail', return_value={}):
+            line = jobs.tg_users(dict(db.settings(), language='en'), 'hana')
+        self.assertIn('0.00 GB / 40 GB', line)                            # as the quota pass counts it
+
     def test_invitee_of_an_unstarted_account_gets_its_own_countdown(self):
         a = mk('fay', 20, expire_after_days=30)                            # clock not started
         rec = members.create_invite('member', 2, 7, inviter=a['id'], by_member=True)
@@ -255,6 +275,16 @@ class Invites(tu.Base):
         db.update_user(a['id'], used_down=GIB)                             # later the inviter starts too
         jobs.enforce()
         self.assertEqual(db.user(b)['expire_at'], db.user(a['id'])['expire_at'])
+
+    def test_deleting_a_middle_account_hands_its_share_to_live_invitees_first(self):
+        a = mk('ann', 100)
+        b = mk('bea', 20, invited_by=a['id'], invite_deduct=10)
+        c = mk('cy', 10, invited_by=b['id'], invite_deduct=10, expire_at=int(time.time()) - 60)   # expired, older id
+        d = mk('dee', 10, invited_by=b['id'], invite_deduct=10)
+        db.delete_user(b['id'])
+        self.assertEqual((db.user(d['id'])['invited_by'], db.user(d['id'])['invite_deduct']), (a['id'], 10))
+        self.assertEqual(db.user(c['id'])['invited_by'], 0)
+        self.assertEqual(members.effective_quota(db.user(a['id'])), 90)    # still charged for dee
 
     def test_delete_inviter_cleans_up(self):
         a = mk('a', 20)
@@ -425,7 +455,8 @@ class ScaleHelpers(tu.Base):
         enforce.assert_called_once()
 
     def test_slow_certificate_renewal_and_backup_upload_do_not_hold_up_quotas(self):
-        # #112: ACME and Telegram can take minutes; the 20-second quota and expiry pass must go on.
+        # #112: ACME and Telegram can take minutes; the 20-second quota and expiry pass must go on. So can
+        # asking outside servers for our public IP.
         db.set_settings(setup_done=True, tg_backup=True, tg_token='t', tg_chat='1')
         sched = jobs.Scheduler()
         release, started = threading.Event(), []
@@ -438,21 +469,22 @@ class ScaleHelpers(tu.Base):
             with mock.patch.object(paths, 'LIVE', True), \
                     mock.patch.object(sched, 'renew_cert', side_effect=blocked), \
                     mock.patch.object(jobs.notify, 'send_file', side_effect=blocked), \
+                    mock.patch.object(sched.ipwatch, 'check', side_effect=blocked), \
                     mock.patch.object(jobs, 'backup', return_value=os.path.join(paths.VAR, 'x.json')), \
                     mock.patch.object(jobs, 'collect'), \
                     mock.patch.object(jobs, 'enforce', return_value=False) as enforce, \
-                    mock.patch.object(sched, 'due', side_effect=lambda name, every: name in ('collect', 'cert', 'backup')):
+                    mock.patch.object(sched, 'due', side_effect=lambda name, every: name in ('collect', 'cert', 'backup', 'ip')):
                 with open(os.path.join(paths.VAR, 'x.json'), 'wb') as f:
                     f.write(b'{}')
                 done = threading.Event()
                 threading.Thread(target=lambda: (sched.tick(), sched.tick(), done.set()), daemon=True).start()
-                self.assertTrue(done.wait(5), 'a tick waited for the certificate or the backup upload')
+                self.assertTrue(done.wait(5), 'a tick waited for the certificate, the backup upload or the IP check')
                 self.assertEqual(enforce.call_count, 2)
                 for _ in range(50):
-                    if len(started) == 2:
+                    if len(started) == 3:
                         break
                     time.sleep(0.05)
-                self.assertEqual(len(started), 2)       # one renewal and one upload, not one per tick
+                self.assertEqual(len(started), 3)       # one renewal, one upload, one IP check; not one per tick
         finally:
             release.set()
 
@@ -2556,6 +2588,21 @@ class ClientSync(unittest.TestCase):
             self.assertIsNone(self._sync())
         with mock.patch.object(paths, 'CLIENT', self.dir):
             self.assertEqual(set(web.client_files()['files']), {'windows', 'android'})
+
+    def test_one_platform_that_fails_to_download_holds_back_neither_sibling_nor_manifest(self):
+        android = 'vps2vpn-1.0.9-android-arm64.apk'          # sorts first, fails
+        windows = 'vps2vpn-1.0.9-windows-amd64-setup.exe'
+        self._release('1.0.9', {android: b'android package', windows: b'windows package'})
+        del self.web['https://dl.example/' + android]
+        self.assertEqual(self._sync(), '1.0.9')
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, windows)))
+        self.assertEqual(clientsync._manifest(self.dir), [windows])   # so a later sync can clean it up
+        self.assertEqual([n for n in os.listdir(self.dir) if n.endswith('.part')], [])
+        # nothing at all could be fetched: the scheduler sees a failure, not "up to date"
+        self._release('1.1.0', {'vps2vpn-1.1.0-windows-amd64-setup.exe': b'w'})
+        del self.web['https://dl.example/vps2vpn-1.1.0-windows-amd64-setup.exe']
+        with self.assertRaises(OSError):
+            self._sync()
 
     def test_a_bad_signature_or_a_prerelease_is_not_published(self):
         self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'setup'})

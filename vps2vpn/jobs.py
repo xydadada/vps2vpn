@@ -628,18 +628,24 @@ def tg_status(s):
 def tg_users(s, name=''):
     zh = s['language'] != 'en'
     users = db.users()
+    invitees = members.invitee_index(users)       # before a name narrows the list: shares count all of it
     on = cores.online_detail(s) or {}
     if name:
         u = next((x for x in users if x['name'].lower() == name.lower()), None)
         if not u:
             return '没有这个使用者' if zh else 'No such user'
         users = [u]
+    now = time.time()
     users.sort(key=lambda u: -(u['used_up'] + u['used_down']))
     out = []
     for u in users[:25]:
         used = (u['used_up'] + u['used_down']) / (1 << 30)
         state = '🟢' if u['id'] in on else ('⚪' if u['enabled'] else '⛔')
-        quota = ('%g GB' % u['quota_gb']) if u['quota_gb'] else ('不限' if zh else 'unlimited')
+        # What the account may really use after sharing with invitees, as the quota pass and the app see it.
+        if u['quota_gb']:
+            quota = '%g GB' % round(members.effective_quota(u, now=now, index=invitees), 2)
+        else:
+            quota = '不限' if zh else 'unlimited'
         exp = time.strftime('%Y-%m-%d', time.localtime(u['expire_at'])) if u['expire_at'] else ('永久' if zh else 'never')
         out.append('%s %s  %.2f GB / %s  %s %s' % (state, u['name'], used, quota, '到期' if zh else 'until', exp))
     return '\n'.join(out) or ('还没有使用者' if zh else 'No users yet')
@@ -822,7 +828,9 @@ class Scheduler:
         if self.due('watchdog', 300) and paths.LIVE:
             watchdog(s)
         if self.due('ip', 6 * 3600) or self.ipwatch.seen:
-            self.ipwatch.check(s)
+            # Asks outside servers for our address, which can take several timeouts: beside the quota pass.
+            # One at a time, so IpWatch's state has a single writer; cores.apply takes its own lock.
+            self.in_background('ipwatch', self.ipwatch.check, s)
         if paths.LIVE and self.due('aicheck', 86400):
             threading.Thread(target=ai_recheck, args=(s, log), daemon=True, name='aicheck').start()
         if self.due('backup', 86400):

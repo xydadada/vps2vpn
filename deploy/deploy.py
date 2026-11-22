@@ -378,12 +378,23 @@ def join_main(main, rec, name):
 
 
 # --- ssh ---------------------------------------------------------------------------------------
+def known_hosts_option(path):
+    """-o value for a known_hosts file. ssh splits the value on spaces (it takes a list of files) and expands
+    %-tokens in it, so "C:\\Users\\John Smith\\..." would otherwise become two files and the key is never kept."""
+    return 'UserKnownHostsFile="%s"' % path.replace('%', '%%')
+
+
+def known_host_name(host, port):
+    """How ssh names the server in known_hosts (and what ssh-keygen -R wants)."""
+    return host if int(port) == 22 else '[%s]:%d' % (host, int(port))
+
+
 def ssh_base(job):
     os.makedirs(RECORDS, exist_ok=True)
     restrict(RECORDS)
     kh = os.path.join(RECORDS, 'known_hosts')     # persisted per user, separate from ~/.ssh
     # -F none: ignore the user's own ssh config (it may route through proxies or have bad permissions)
-    cmd = ['ssh', '-F', 'none', '-p', str(job['port']), '-o', 'StrictHostKeyChecking=accept-new', '-o', 'UserKnownHostsFile=' + kh,
+    cmd = ['ssh', '-F', 'none', '-p', str(job['port']), '-o', 'StrictHostKeyChecking=accept-new', '-o', known_hosts_option(kh),
            '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8']
     env = dict(os.environ)
     if job.get('key'):
@@ -441,7 +452,7 @@ def run_job(job):
             if 'IDENTIFICATION HAS CHANGED' in msg or 'Host key verification failed' in msg:
                 msg += ('\n-> 这台服务器的身份和上次连接时不一样。如果你刚重装过系统或换了同一个 IP 的新服务器，这是正常的：'
                         '运行  ssh-keygen -R %s -f "%s"  后再部署一次。没有重装过就先别继续，可能有人在冒充你的服务器。'
-                        % (job['host'], os.path.join(RECORDS, 'known_hosts')))
+                        % (known_host_name(job['host'], job['port']), os.path.join(RECORDS, 'known_hosts')))
             raise RuntimeError(msg)
         say(r.stdout.strip().replace('\n', ' | '))
         say('uploading vps2vpn and running the installer (1-3 minutes) ...')
@@ -678,7 +689,8 @@ class H(http.server.BaseHTTPRequestHandler):
 
     def ok_token(self):
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        return secrets.compare_digest((q.get('t') or [''])[0], TOKEN)
+        # bytes: compare_digest raises TypeError on a str with non-ASCII characters (?t=%E4%B8%AD)
+        return secrets.compare_digest((q.get('t') or [''])[0].encode('utf-8'), TOKEN.encode('ascii'))
 
     def job(self):
         jid = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get('id') or [''])[0]

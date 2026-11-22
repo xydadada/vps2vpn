@@ -240,7 +240,7 @@ def _resolve_public_node_targets(host, port):
             ip = ipaddress.ip_address(info[4][0].split('%', 1)[0])
         except (IndexError, TypeError, ValueError):
             raise SyncError('node DNS returned an invalid address')
-        if not ip.is_global:
+        if not _public_ip(ip):
             raise SyncError('node DNS resolved to a non-public address')
         endpoint = (str(ip), port)
         if endpoint not in targets:
@@ -569,6 +569,23 @@ def unique_name(name, s, skip=None):
     return out
 
 
+_NAT64 = ipaddress.ip_network('64:ff9b::/96')
+
+
+def _public_ip(ip):
+    """Globally routable, and not a private IPv4 address carried in IPv6 (mapped, NAT64, 6to4, Teredo), which
+    `is_global` alone lets through for NAT64 and 6to4."""
+    if not ip.is_global:
+        return False
+    if ip.version == 6:
+        inner = ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
+        if inner is None and ip in _NAT64:
+            inner = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        if inner is not None and not inner.is_global:
+            return False
+    return True
+
+
 def _check_server_host(hostname):
     """Block loopback/private/link-local addresses in live mode to prevent SSRF via join codes."""
     if not paths.LIVE:
@@ -578,7 +595,7 @@ def _check_server_host(hostname):
     except ValueError:
         ip = None
     if ip is not None:
-        if not ip.is_global:
+        if not _public_ip(ip):
             raise ValueError('server address must be a public IP or domain')
         return
     try:
@@ -588,7 +605,7 @@ def _check_server_host(hostname):
     if not infos:
         raise ValueError('cannot resolve server address')
     for info in infos:
-        if not ipaddress.ip_address(info[4][0]).is_global:
+        if not _public_ip(ipaddress.ip_address(info[4][0].split('%', 1)[0])):
             raise ValueError('server address must be a public IP or domain')
 
 

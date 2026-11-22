@@ -205,6 +205,32 @@ class PerClientConnections(unittest.TestCase):
         self.assertTrue(all(srv._client_slot(('::ffff:127.0.0.1', 1), True) for _ in range(web.Server.PER_CLIENT * 2)))
 
 
+    def test_ipv4_clients_of_a_dual_stack_listener_each_get_their_own_share(self):
+        srv = web.Server.__new__(web.Server)
+        srv._per_client, srv._per_client_lock = {}, threading.Lock()
+        a, b = ('::ffff:198.51.100.7', 1), ('::ffff:203.0.113.9', 1)
+        self.assertTrue(all(srv._client_slot(a, True) for _ in range(web.Server.PER_CLIENT)))
+        self.assertFalse(srv._client_slot(a, True))
+        self.assertTrue(srv._client_slot(b, True))                     # not one shared ::/64 bucket
+        self.assertEqual(web._rate_key('::ffff:198.51.100.7'), '198.51.100.7')
+        self.assertEqual(web._rate_key('fe80::1%eth0'), 'fe80::/64')
+
+    def test_port_hopping_only_redirects_traffic_for_this_machine(self):
+        rules = system.nft_rules({'hy2_hop_range': '20000-40000', 'hy2_port': 443})
+        self.assertIn('fib daddr type local udp dport 20000-40000 redirect to :443', rules)
+
+    def test_cluster_nodes_must_be_public_even_inside_ipv6(self):
+        from vps2vpn import cluster
+        ip = web.ipaddress.ip_address
+        for bad in ('64:ff9b::7f00:1', '2002:c0a8:101::1', '::ffff:10.0.0.1', '10.0.0.1'):
+            self.assertFalse(cluster._public_ip(ip(bad)), bad)
+        for good in ('8.8.8.8', '2606:4700::1', '64:ff9b::808:808'):
+            self.assertTrue(cluster._public_ip(ip(good)), good)
+
+    def test_xray_online_list_keeps_mapped_ipv4(self):
+        body = '{"stat": {"ips": {"::ffff:203.0.113.5": 1, "198.51.100.1": 2, "2001:db8::1": 3}}}'
+        self.assertEqual(cores.IP_RE.findall(body), ['::ffff:203.0.113.5', '198.51.100.1', '2001:db8::1'])
+
 class Settings(Base):
     def test_defaults_and_secrets(self):
         s = db.settings()
@@ -223,6 +249,14 @@ class Settings(Base):
         self.assertIsInstance(web.validate_settings({'tuic_port': 30000}, s), str)               # inside hop range
         self.assertIsInstance(web.validate_settings({'hy2_port': 25000}, s), str)        # inside hop range
         self.assertIsInstance(web.validate_settings({'hy2_hop_range': '80-90'}, s), str)
+        # camouflage targets that would hand probes to this machine or a private network
+        for bad in ('https://127.0.0.1/', 'https://localhost', 'https://169.254.169.254/latest', 'https://10.0.0.5'):
+            self.assertIsInstance(web.validate_settings({'hy2_masquerade': bad}, s), str, bad)
+        self.assertIsInstance(web.validate_settings({'hy2_masquerade': 'https://www.bing.com/'}, s), dict)
+        self.assertIsInstance(web.validate_settings({'reality_target': 'localhost'}, s), str)
+        self.assertIsInstance(web.validate_settings({'reality_target': 'printer.local'}, s), str)
+        self.assertTrue(web._is_private_ip(web.ipaddress.ip_address('64:ff9b::7f00:1')))       # NAT64 of 127.0.0.1
+        self.assertTrue(web._is_private_ip(web.ipaddress.ip_address('2002:c0a8:0101::1')))     # 6to4 of 192.168.1.1
         ok = web.validate_settings({'domain': 'Vpn.Example.com', 'hy2_obfs': 'random', 'node_name': 'a#b\nc'}, s)
         self.assertEqual(ok['public_host'], 'vpn.example.com')
         self.assertEqual(len(ok['hy2_obfs']), 16)
@@ -421,6 +455,7 @@ class Subscriptions(Base):
         self.assertEqual(hy['type'], 'hysteria2')
         self.assertEqual(hy['ports'], '20000-40000')
         self.assertEqual(len(hy['fingerprint']), 64)
+        self.assertEqual(c['x-vps2vpn-pin'], hy['fingerprint'])     # the app trusts the panel by it
         self.assertEqual(c['rules'][-1], 'MATCH,漏网之鱼')
         used = {r.split(',')[1] for r in c['rules'] if r.startswith('RULE-SET')}
         self.assertEqual(used, set(c['rule-providers']))
@@ -496,6 +531,14 @@ class Subscriptions(Base):
         self.assertEqual(subscription.detect_format('HiddifyNext/2.5'), 'singbox')
         self.assertEqual(subscription.detect_format('Mozilla/5.0 Chrome/130'), '')
         self.assertEqual(subscription.detect_format('Mozilla/5.0', 'clash'), 'clash')
+        # Facebook's and Instagram's in-app browser is a browser, not Clash.Meta
+        iab = 'Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Mobile/15E148 Instagram 300.0 MetaIAB'
+        self.assertEqual(subscription.detect_format(iab), '')
+        self.assertEqual(subscription.detect_format('Meta/1.18 (Android)'), 'clash')
+        # a support link goes out in an HTTP header: ASCII only, an emoji included
+        s = db.settings()
+        self.assertIsInstance(web.validate_settings({'support_url': 'https://t.me/help😀'}, s), str)
+        self.assertIsInstance(web.validate_settings({'support_url': 'https://t.me/help'}, s), dict)
 
     def test_route_plan_covers_sets(self):
         for name in rules.used_sets(db.settings()):
@@ -984,6 +1027,8 @@ class Web(Base):
         self.assertEqual([(p['server'], p['port']) for p in paused['proxies']], [('0.0.0.0', 1)])
         self.assertIn('Disabled', paused['proxies'][0]['name'])
         self.assertEqual(paused['rules'], ['MATCH,REJECT'])
+        # no Hysteria entry carries the pin now, so the app still needs it to reach the panel and show why
+        self.assertEqual(len(paused['x-vps2vpn-pin']), 64)
         # rule file falls back to the CDN until the mirror has it
         st, _, r = self.req('GET', '/rules/cn.mrs')
         self.assertEqual(st, 302)

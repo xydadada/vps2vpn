@@ -179,6 +179,8 @@ def propagate_lifetime(uid, new_expire_at, new_reset_day=None):
 
 
 def _num(v, low, high, label, integer=False):
+    if isinstance(v, bool):                       # JSON true is no amount
+        raise Refused('%s must be a number' % label)
     try:
         n = int(v) if integer else float(v)
     except (TypeError, ValueError, OverflowError):
@@ -312,6 +314,8 @@ def request_more(uid, add_gb, reason):
     u = db.user(uid)
     if not u:
         raise Refused('no such account')
+    if not u['quota_gb']:
+        raise Refused('this account has no traffic limit')
     add_gb = _num(add_gb, 1, 10000, 'extra quota (GB)')
     reason = str(reason or '').strip()[:300]
     if any(r['status'] == 'pending' for r in db.requests(uid)):
@@ -342,7 +346,9 @@ def decide(rid, approve, add_gb=None, answer=''):
             # Switch it back on only if the new quota really covers what was used; otherwise the next
             # enforce pass would pause it again and tell the owner a second time.
             fresh = db.user(u['id'])
-            quota = effective_quota(fresh, None, time.time())
-            if not fresh['quota_gb'] or fresh['used_up'] + fresh['used_down'] < quota * (1 << 30):
+            now = time.time()
+            quota = effective_quota(fresh, None, now)
+            expired = bool(fresh['expire_at']) and fresh['expire_at'] <= now
+            if not expired and (not fresh['quota_gb'] or fresh['used_up'] + fresh['used_down'] < quota * (1 << 30)):
                 db.update_user(u['id'], enabled=1, disabled_reason='')
         db.decide_request(rid, 'approved', answer, gb)
