@@ -59,9 +59,40 @@ function Find-Tool([string]$name, [string[]]$candidates) {
   if ($g) { return $g.Source }
   return $null
 }
+function Get-SshVersion([string]$exe) {
+  # ssh -V writes to stderr. Read it through Process: in Windows PowerShell 5.1 "& ssh -V 2>&1" with
+  # $ErrorActionPreference = 'Stop' throws that line as an error (every password deploy failed on it).
+  try {
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe; $psi.Arguments = '-V'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $psi.RedirectStandardError = $true; $psi.RedirectStandardOutput = $true
+    $p = [Diagnostics.Process]::Start($psi)
+    $t = $p.StandardError.ReadToEnd() + $p.StandardOutput.ReadToEnd()
+    $p.WaitForExit()
+  } catch { return $null }
+  if ($t -match 'OpenSSH(?:_for_Windows)?_(\d+)\.(\d+)') { return [version]"$($Matches[1]).$($Matches[2])" }
+  return $null
+}
+
+function Find-Ssh {
+  # Windows' own OpenSSH, or a newer one installed from the Win32-OpenSSH releases (Program Files): the newest
+  # wins, since Windows 10's own 8.1 cannot be handed a password. Other builds on PATH only as a last resort.
+  $best = $null; $bestV = $null
+  foreach ($c in @((Join-Path $env:ProgramFiles 'OpenSSH\ssh.exe'), (Join-Path $Sys 'OpenSSH\ssh.exe'))) {
+    if (-not (Test-Path -LiteralPath $c)) { continue }
+    $v = Get-SshVersion $c
+    if (-not $best -or ($v -and (-not $bestV -or $v -gt $bestV))) { $best = $c; $bestV = $v }
+  }
+  if ($best) { return $best }
+  return (Find-Tool 'ssh.exe' @())
+}
 $Sys = Join-Path $env:SystemRoot 'System32'
 $TarExe = Find-Tool 'tar.exe' @((Join-Path $Sys 'tar.exe'))
-$SshExe = Find-Tool 'ssh.exe' @((Join-Path $Sys 'OpenSSH\ssh.exe'), (Join-Path $env:ProgramFiles 'OpenSSH\ssh.exe'))
+$SshExe = Find-Ssh
+$NewSshUrl = 'https://github.com/PowerShell/Win32-OpenSSH/releases/latest'
+$OldSshMsg = "这台电脑自带的 ssh 太旧（Windows 10 自带的是 8.1 版），不能替你自动填密码。两个办法任选一个：`n" +
+  "① 改用密钥文件：在云服务商的控制台下载或新建一个 SSH 密钥，拖进来；`n" +
+  "② 装新版 OpenSSH：打开 $NewSshUrl ，下载名字是 OpenSSH-Win64-….msi 的文件，双击安装，再重新打开部署工具。"
 
 # ---------------------------------------------------------------- core steps
 function New-Payload {
@@ -170,11 +201,15 @@ function Set-AskPass([string]$pw) {
 }
 
 function Test-SshVersionForPassword {
-  $v = (& $SshExe -V 2>&1 | Out-String)
-  if ($v -match 'OpenSSH_for_Windows_(\d+)\.(\d+)') {
-    return ([int]$Matches[1] -gt 8) -or ([int]$Matches[1] -eq 8 -and [int]$Matches[2] -ge 4)
-  }
-  return $true
+  # SSH_ASKPASS_REQUIRE (how the password is handed over) needs OpenSSH 8.4
+  $v = Get-SshVersion $SshExe
+  return (-not $v) -or ($v -ge [version]'8.4')
+}
+
+function Test-Connected($job) {
+  # The probe printed its own "connected" line and finished cleanly. A plain text match also hit ssh's own
+  # "Disconnected from ..." error, and a failing "sudo -n id -u" was only noticed in the install step.
+  return ($job.Proc.ExitCode -eq 0) -and ($job.Text -cmatch '(?m)^connected\r?$')
 }
 
 function Quote-Arg([string]$s) { '"' + (($s -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' }
@@ -514,18 +549,18 @@ if ($Headless) {
     $a = Get-SshArgs $kp ([bool]$Pass)
     $j = Start-Ssh $a (& $ProbeCmd) $null
     $j.Proc.WaitForExit()
-    $t = Read-New $j
-    $w = Get-LoginAsUser $t
-    if ($t -notmatch 'connected' -and $w -and $w -ne $User) {
+    $j.Text = Read-New $j
+    $w = Get-LoginAsUser $j.Text
+    if (-not (Test-Connected $j) -and $w -and $w -ne $User) {
       Write-Output "the server asks to log in as `"$w`" instead of `"$User`"; trying that ..."
       $User = $w
       $a = Get-SshArgs $kp ([bool]$Pass)
       $j = Start-Ssh $a (& $ProbeCmd) $null
       $j.Proc.WaitForExit()
-      $t = Read-New $j
+      $j.Text = Read-New $j
     }
-    if ($t -notmatch 'connected') { throw (Explain $t.Trim()) }
-    Write-Output $t.Trim()
+    if (-not (Test-Connected $j)) { throw (Explain $j.Text.Trim()) }
+    Write-Output $j.Text.Trim()
     $j = Start-Ssh $a (& $InstallCmd) (New-Payload)
     while (-not $j.Proc.HasExited) {
       Start-Sleep -Milliseconds 300; $x = Read-New $j; $j.Text += $x
@@ -786,14 +821,14 @@ $timer.Add_Tick({
   $t = Read-New $j; $j.Text += $t
   if ($script:stage -eq 'probe') {
     $w = Get-LoginAsUser $j.Text
-    if ($j.Text -notmatch 'connected' -and $w -and $w -ne $script:User) {
+    if (-not (Test-Connected $j) -and $w -and $w -ne $script:User) {
       Say "服务器要求用 $w 登录（不是 $($script:User)），正在换成 $w 重试…`n"
       $script:User = $w; $tbUser.Text = $w
       $script:sshArgs = @($script:sshArgs[0..($script:sshArgs.Count - 2)]) + @("$w@$($script:Server)")
       $script:job = Start-Ssh $script:sshArgs (& $ProbeCmd) $null
       return
     }
-    if ($j.Text -notmatch 'connected') { Finish $false (Explain $j.Text.Trim()); return }
+    if (-not (Test-Connected $j)) { Finish $false (Explain $j.Text.Trim()); return }
     Say ($j.Text.Trim() + "`n正在上传并安装（1-3 分钟，请别关窗口）…`n")
     $status.Text = '正在安装，大约 1-3 分钟…'
     $script:stage = 'install'
@@ -819,7 +854,11 @@ $btn.Add_Click({
     $kp = $null
     if ($script:keyFile) { $kp = Copy-Key $script:keyFile }
     else {
-      if (-not (Test-SshVersionForPassword)) { throw '这台电脑的 ssh 版本太旧，不支持自动填密码。请用密钥文件，或在「可选功能」里更新 OpenSSH 客户端。' }
+      if (-not (Test-SshVersionForPassword)) {
+        $ans = [Windows.Forms.MessageBox]::Show($OldSshMsg + "`n`n现在打开新版 OpenSSH 的下载页吗？", 'vps2vpn', 'YesNo', 'Warning')
+        if ($ans -eq 'Yes' -and (Test-SafeUrl $NewSshUrl @('https'))) { Start-Process $NewSshUrl }
+        return
+      }
       Set-AskPass $tbPw.Text
     }
     $Server = $script:Server; $User = $script:User; $Port = $script:Port

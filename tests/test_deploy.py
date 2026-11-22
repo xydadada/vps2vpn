@@ -1104,5 +1104,76 @@ class DownloadedZip(unittest.TestCase):
 
 
 
+PS_SSH_HARNESS = r'''param([string]$Ps1)
+$ErrorActionPreference = 'Stop'          # as in deploy.ps1: "& ssh -V 2>&1" threw the version line here
+$errs = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Ps1, [ref]$null, [ref]$errs)
+if ($errs.Count) { throw "deploy.ps1 does not parse: $($errs[0].Message)" }
+$want = 'Find-Tool', 'Get-SshVersion', 'Find-Ssh', 'Test-SshVersionForPassword', 'Test-Connected'
+foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+  if ($want -contains $f.Name) { . ([scriptblock]::Create($f.Extent.Text)) }
+}
+$Sys = Join-Path $env:SystemRoot 'System32'
+$SshExe = Find-Ssh
+$job = { param($code, $text) @{ Proc = [pscustomobject]@{ ExitCode = $code }; Text = $text } }
+$r = [ordered]@{
+  ssh = "$SshExe"; version = "$(Get-SshVersion $SshExe)"; password_ok = (Test-SshVersionForPassword)
+  connected = (Test-Connected (& $job 0 "connected`r`nLinux x86_64`r`n0`r`n"))
+  disconnected = (Test-Connected (& $job 255 "Received disconnect from 192.0.2.1 port 22:2: Too many authentication failures`nDisconnected from 192.0.2.1 port 22`n"))
+  sudo_fails = (Test-Connected (& $job 1 "connected`nLinux x86_64`nsudo: a password is required`n"))
+  no_line = (Test-Connected (& $job 0 "Disconnected from 192.0.2.1 port 22`n"))
+}
+[Console]::Out.WriteLine((ConvertTo-Json -InputObject $r -Compress))
+'''
+
+
+class DeployerSsh(unittest.TestCase):
+    """Which ssh runs, whether it can be handed a password, and when the first connection counts as working."""
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('powershell'), 'needs Windows PowerShell')
+    def test_windows_deployer_reads_the_ssh_version_and_the_probe(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        harness = os.path.join(tmp, 'harness.ps1')
+        with open(harness, 'w', encoding='utf-8-sig') as f:
+            f.write(PS_SSH_HARNESS)
+        p = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', harness,
+                            '-Ps1', os.path.join(ROOT_DIR, 'deploy', 'deploy.ps1')], capture_output=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        r = json.loads(p.stdout.decode('utf-8', 'replace').strip().splitlines()[-1])
+        if r['ssh']:                     # Windows' own OpenSSH is there on 10/11 unless removed
+            self.assertRegex(r['version'], r'^\d+\.\d+$')
+            self.assertEqual(r['password_ok'], tuple(map(int, r['version'].split('.'))) >= (8, 4))
+        self.assertTrue(r['connected'])
+        self.assertFalse(r['disconnected'])     # ssh's own "Disconnected from" is not our "connected" line
+        self.assertFalse(r['sudo_fails'])       # explained right away, not in the install step
+        self.assertFalse(r['no_line'])
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows ssh locations')
+    def test_newest_windows_ssh_wins(self):
+        pf = os.path.join(os.environ.get('ProgramFiles') or r'C:\Program Files', 'OpenSSH', 'ssh.exe')
+        sys32 = os.path.join(os.environ.get('SystemRoot') or r'C:\Windows', 'System32', 'OpenSSH', 'ssh.exe')
+        versions = {pf: (9, 8), sys32: (8, 1)}
+        with mock.patch.object(deploy.os.path, 'isfile', lambda p: p in versions), \
+                mock.patch.object(deploy, 'ssh_version', lambda p: versions[p]):
+            self.assertEqual(deploy.ssh_program(), pf)
+            self.assertTrue(deploy.ssh_supports_askpass())
+            versions[pf] = (7, 7)
+            self.assertEqual(deploy.ssh_program(), sys32)
+            self.assertFalse(deploy.ssh_supports_askpass())
+
+    def test_too_old_ssh_says_what_to_do(self):
+        job, err = deploy.new_job('203.0.113.10', 'root', '22')
+        job['password'] = 'pw'
+        with mock.patch.object(deploy, 'ssh_program', return_value='ssh'), \
+                mock.patch.object(deploy, 'ssh_supports_askpass', return_value=False):
+            deploy.run_job(job)
+        self.assertEqual(job['state'], 'error')
+        self.assertEqual(job['error'], deploy.OLD_SSH_MSG)
+        self.assertIn('https://github.com/PowerShell/Win32-OpenSSH/releases', job['error'])
+        self.assertNotIn('可选功能', job['error'])          # Optional Features cannot update it
+        self.assertNotIn('password', job)                   # never kept after the job
+
+
 if __name__ == '__main__':
     unittest.main()

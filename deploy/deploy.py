@@ -404,7 +404,7 @@ def ssh_base(job):
     restrict(RECORDS)
     kh = os.path.join(RECORDS, 'known_hosts')     # persisted per user, separate from ~/.ssh
     # -F none: ignore the user's own ssh config (it may route through proxies or have bad permissions)
-    cmd = ['ssh', '-F', 'none', '-p', str(job['port']), '-o', 'StrictHostKeyChecking=accept-new', '-o', known_hosts_option(kh),
+    cmd = [ssh_program() or 'ssh', '-F', 'none', '-p', str(job['port']), '-o', 'StrictHostKeyChecking=accept-new', '-o', known_hosts_option(kh),
            '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=8']
     env = dict(os.environ)
     if job.get('key'):
@@ -450,11 +450,10 @@ def run_job(job):
         log.append(line.rstrip())
 
     try:
-        if not shutil.which('ssh'):
+        if not ssh_program():
             raise RuntimeError('这台电脑没有 ssh 程序。Windows 10/11：设置 > 应用 > 可选功能 > 添加“OpenSSH 客户端”。')
         if job.get('password') and not ssh_supports_askpass():
-            raise RuntimeError('这台电脑的 ssh 版本太旧，不支持自动填密码。请用密钥文件，'
-                               '或在「设置 > 应用 > 可选功能」里更新 OpenSSH 客户端。')
+            raise RuntimeError(OLD_SSH_MSG)
         cmd, env = ssh_base(job)
         say('正在连接 %s …' % job['host'])
         r = probe(cmd, env, job['user'])
@@ -856,16 +855,44 @@ def login_as_hint(text):
     return m.group(1) if m else ''
 
 
+NEW_SSH_URL = 'https://github.com/PowerShell/Win32-OpenSSH/releases/latest'
+OLD_SSH_MSG = ('这台电脑自带的 ssh 太旧（Windows 10 自带的是 8.1 版），不能替你自动填密码。两个办法任选一个：\n'
+               '① 改用密钥文件：在云服务商的控制台下载或新建一个 SSH 密钥，拖进来；\n'
+               '② 装新版 OpenSSH：打开 %s ，下载名字是 OpenSSH-Win64-….msi 的文件，双击安装，再重新打开部署工具。'
+               % NEW_SSH_URL)
+
+
+def ssh_version(path):
+    """(major, minor) from `ssh -V`, or None."""
+    try:
+        v = subprocess.run([path, '-V'], capture_output=True, text=True, errors='replace', timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r'OpenSSH(?:_for_Windows)?_(\d+)\.(\d+)', (v.stderr or '') + (v.stdout or ''))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def ssh_program():
+    """The ssh to run. On Windows: Windows' own OpenSSH or a newer one installed from the Win32-OpenSSH releases
+    (Program Files), whichever is newer, since Windows 10's own 8.1 cannot be handed a password."""
+    if os.name == 'nt':
+        found = [p for p in (os.path.join(os.environ.get('ProgramFiles') or r'C:\Program Files', 'OpenSSH', 'ssh.exe'),
+                             os.path.join(os.environ.get('SystemRoot') or r'C:\Windows', 'System32', 'OpenSSH', 'ssh.exe'))
+                 if os.path.isfile(p)]
+        if len(found) > 1:
+            return max(found, key=lambda p: ssh_version(p) or (0, 0))     # ties: the first one
+        if found:
+            return found[0]
+    return shutil.which('ssh') or ''
+
+
 def ssh_supports_askpass():
-    """Windows' built-in OpenSSH before 8.4 ignores SSH_ASKPASS_REQUIRE, so it cannot be handed a password."""
+    """Windows' own OpenSSH before 8.4 ignores SSH_ASKPASS_REQUIRE (Windows 10 ships 8.1), so it cannot be handed
+    a password. Elsewhere an older ssh still asks the helper or the terminal."""
     if os.name != 'nt':
         return True
-    try:
-        v = subprocess.run(['ssh', '-V'], capture_output=True, text=True, errors='replace', timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return True
-    m = re.search(r'OpenSSH_for_Windows_(\d+)\.(\d+)', (v.stderr or '') + (v.stdout or ''))
-    return not m or (int(m.group(1)), int(m.group(2))) >= (8, 4)
+    v = ssh_version(ssh_program() or 'ssh')
+    return not v or v >= (8, 4)
 
 
 def write_key(text):
