@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.23
+
+- The owner panel keeps the open page in the address (for example `#users`). Reloading, or reopening the panel on a phone, stays on that page instead of jumping back to the overview, and the browser's or phone's Back button returns to the previous page instead of leaving the panel.
+
 ## 0.2.22
 
 - An account set to expire "N days from first use" now starts its clock on a x0 (free) server too. There its traffic is billed as 0 bytes, so before, the clock never started and the account never expired.

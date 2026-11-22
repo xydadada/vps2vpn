@@ -438,12 +438,25 @@ async function renderShell() {
     S.escBound = true;
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.querySelector('dialog.modal[open]')) closeDrawer(); });
   }
-  go(S.view);
+  // the page in the address (#users): a reload or a shared link opens it, and Back returns to the last page
+  const hv = location.hash.slice(1);
+  if (VIEWS.some(x => x[0] === hv)) S.view = hv;
+  if (!S.popBound) {
+    S.popBound = true;
+    window.addEventListener('popstate', () => {
+      const v = location.hash.slice(1) || 'home';
+      if ($('view') && v !== S.view && VIEWS.some(x => x[0] === v)) { closeDrawer(); go(v, 'none'); }
+    });
+  }
+  go(S.view, 'replace');
   clearInterval(S.timer);
   S.timer = setInterval(() => { if (!document.hidden) refresh(false); }, 5000);
 }
 
-function go(v) {
+function go(v, how) {
+  if (how !== 'none' && location.hash !== '#' + v) {
+    try { history[how === 'replace' || S.view === v ? 'replaceState' : 'pushState'](null, '', '#' + v); } catch (e) { /* sandboxed: no history */ }
+  }
   S.view = v;
   S.viewSeq++;
   for (const ch of Object.values(S.charts)) if (ch && ch.destroy) ch.destroy();
