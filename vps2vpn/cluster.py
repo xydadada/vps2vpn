@@ -528,10 +528,13 @@ def _sync_all(log):
     # Perform network I/O outside _lock so panel edits/restores never block on slow nodes.
     results, keys = [], {x['id']: x.get('key') for x in servers}
     for srv in servers:
+        # A paused server is still synced, with every account switched off there: otherwise anyone paused or
+        # removed meanwhile would keep using it, and nothing it carries would be counted until it is resumed.
+        pushed = push_users(srv['id'], users)
         if not srv.get('enabled', True):
-            continue
+            pushed = [dict(x, enabled=False) for x in pushed]
         try:
-            ans, got_pin = _request(srv, dict(payload, users=push_users(srv['id'], users)))
+            ans, got_pin = _request(srv, dict(payload, users=pushed))
             _validate_sync_answer(ans)
             results.append((srv['id'], srv.get('url'), ans, got_pin, None))
         except SyncError as e:
@@ -648,6 +651,7 @@ def add_server(code, name=''):
 def remove_server(sid):
     with _lock:
         db.set_settings(servers=[x for x in db.settings()['servers'] if x['id'] != sid])
+        db.forget_server(sid)
 
 
 def update_server(sid, **kv):

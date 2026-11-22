@@ -73,6 +73,12 @@ def enforce(now=None):
         by_id = {u['id']: u for u in users}
         invitees = members.invitee_index(users)       # once: per-user rebuilding was O(n^2)
         t_now = now or time.time()
+        try:
+            # Slowing down only means something where speed limits hold; elsewhere (a container without tc)
+            # "slow down instead of stopping" would be "never stop", so such accounts stop as before.
+            can_slow = shaper.active()
+        except Exception:
+            can_slow = False
         for _pass in range(2):
             pass_changed = False
             for u in users:
@@ -106,7 +112,7 @@ def enforce(now=None):
                 reason = over_limit(u, now, quota)
                 # Quota used up on an account that slows down instead of stopping: it keeps working, held to
                 # its slow-down speed until the next reset or more quota.
-                slow = int(reason == 'quota' and (u['throttle_mbps'] or 0) > 0)
+                slow = int(reason == 'quota' and (u['throttle_mbps'] or 0) > 0 and can_slow)
                 if slow:
                     reason = ''
                 if slow != (u['throttled'] or 0):

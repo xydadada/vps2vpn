@@ -55,10 +55,10 @@ const T = {
     no_users: '还没有使用者，点右上角添加。', proto_one: '至少要开一种协议',
     copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
     tab_home: '总览', tab_users: '用户', tab_members: '会员', tab_servers: '服务器', tab_monitor: '监控', tab_settings: '设置', tab_system: '体检',
-    online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', extra_now: '本期临时加量（下次重置取消）', invited_by: '邀请人', eff_quota: '实际可用额度', history: '每日用量', history_sub: '近 30 天',
+    online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', extra_now: '本期临时加量（下次重置或手动清零时取消）', extra_gone: '本期临时加量也会一起取消。', invited_by: '邀请人', eff_quota: '实际可用额度', plan: '套餐', history: '每日用量', history_sub: '近 30 天',
     member_login: '会员中心登录', member_login_tip: '设置密码后，他可以用名字 + 密码登录会员中心（看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
     login_on: '已设置密码', login_off: '未设置密码', set_pw: '设置 / 重置密码', clear_pw: '取消密码登录', pw_cleared: '已取消',
-    requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '只加到本期，下次重置日自动取消；想长期提高额度，请在用户编辑里改「流量额度」。', answer: '回复（可选）',
+    requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '只加到本期：下次重置日（或手动清零流量时）自动取消；没设重置日的账号会一直保留到手动清零。想长期提高，请在用户编辑里改「流量上限」。', answer: '回复（可选）',
     pending: '待处理', approved: '已批准', rejected: '已拒绝',
     invites: '邀请码', inv_tip: '管理员邀请码：自定义额度和有效期，不扣任何人的流量。会员也可以在会员中心用自己的额度生成邀请码。',
     inv_make: '生成邀请码', inv_quota: '每个账号的流量 (GB，0 = 不限)', inv_life: '账号有效期（天，0 = 永久）', inv_uses: '可以用几次', inv_valid: '邀请码几天内有效', inv_reset: '每月几号重置（0 = 不重置）',
@@ -91,8 +91,8 @@ const T = {
     e_timeout: '超时', e_reset: '连接被重置', e_dns: '域名解析失败', e_tls: 'TLS 握手失败', e_other: '打不开', events: '最近记录', no_events: '还没有记录。', coverage: '覆盖', abuse_none: '当前没有在线连接。', ok_quiet: '正常',
     f_all: '全部', f_online: '在线', f_active: '正常', f_paused: '已停用', f_soon: '7 天内到期', f_low: '快用完',
     s_id: '按添加顺序', s_name: '按名字', s_used: '按用量', s_exp: '按到期日', s_seen: '按最近使用',
-    selected: '已选', sel_all: '全选', clear_sel: '取消选择', b_reset: '清零流量', b_extend: '延期', b_addgb: '加流量', b_rotate: '换链接',
-    extend_days: '延长多少天（没设到期日的人不受影响）', add_gb_q: '每人增加多少 GB（不限量的人不受影响）', bulk_done: '已处理',
+    selected: '已选', sel_all: '全选', clear_sel: '取消选择', b_reset: '清零流量', b_extend: '延期', b_addgb: '永久提高上限', b_rotate: '换链接',
+    extend_days: '延长多少天（没设到期日的人不受影响）', add_gb_q: '每人的流量上限永久提高多少 GB（每月都有效；不限量的人不受影响）', bulk_done: '已处理', still_n: '其中 {n} 个已到期或流量用完，启用后马上又暂停了：请先延期或加流量。', still_expired: '已到期，启用后马上又暂停了：请先把到期日往后改。', still_quota: '流量已用完，启用后马上又暂停了：请先清零流量或调高上限。',
     confirm_bulk_del: '删除后这些人的链接立即失效，不能恢复。', confirm_bulk_rotate: '这些人的旧链接会立刻失效，需要把新链接重新发给他们。',
     batch_add: '批量添加', export_csv: '导出表格', batch_prefix: '名字前缀（生成 前缀-01、前缀-02…）', batch_count: '数量（1–200）', batch_made: '已创建',
     max_ips: '同时在线设备上限（0 = 不限）', speed_mbps: '限速 Mbps（0 = 不限）', throttle_mbps: '流量用完后降速到 Mbps（0 = 直接停用）',
@@ -164,10 +164,10 @@ const T = {
     no_users: 'No users yet. Add one with the button above.', proto_one: 'Turn on at least one protocol',
     copy_btn: 'Copy', nav_members: 'Members & invites', nav_servers: 'Servers', nav_monitor: 'Monitor & abuse', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
     tab_home: 'Home', tab_users: 'Users', tab_members: 'Members', tab_servers: 'Servers', tab_monitor: 'Monitor', tab_settings: 'Settings', tab_system: 'Health',
-    online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset)', invited_by: 'Invited by', eff_quota: 'Effective quota', history: 'Daily usage', history_sub: 'last 30 days',
+    online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset or manual reset)', extra_gone: 'The top-up for this period ends too.', invited_by: 'Invited by', eff_quota: 'Effective quota', plan: 'plan', history: 'Daily usage', history_sub: 'last 30 days',
     member_login: 'Member centre login', member_login_tip: 'With a password they can log in to the member centre by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
     login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password login', pw_cleared: 'Removed',
-    requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'Added for the current period only and dropped at the next reset; to raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)',
+    requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'For the current period only: it ends at the next reset day or a manual traffic reset (accounts without a reset day keep it until a manual reset). To raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)',
     pending: 'pending', approved: 'approved', rejected: 'declined',
     invites: 'Invite codes', inv_tip: 'Admin codes: any quota and lifetime, nobody is charged. Members can also make codes from their own quota in the member centre.',
     inv_make: 'Create code', inv_quota: 'Quota per account (GB, 0 = unlimited)', inv_life: 'Account lifetime (days, 0 = forever)', inv_uses: 'Uses', inv_valid: 'Code valid for (days)', inv_reset: 'Monthly reset day (0 = never)',
@@ -200,8 +200,8 @@ const T = {
     e_timeout: 'timed out', e_reset: 'connection reset', e_dns: 'DNS failed', e_tls: 'TLS failed', e_other: 'failed', events: 'Recent events', no_events: 'Nothing recorded yet.', coverage: 'Coverage', abuse_none: 'No open connections right now.', ok_quiet: 'normal',
     f_all: 'All', f_online: 'Online', f_active: 'Active', f_paused: 'Paused', f_soon: 'Expiring in 7 days', f_low: 'Almost used up',
     s_id: 'Order added', s_name: 'Name', s_used: 'Usage', s_exp: 'Expiry', s_seen: 'Last seen',
-    selected: 'Selected', sel_all: 'Select all', clear_sel: 'Clear', b_reset: 'Reset usage', b_extend: 'Extend', b_addgb: 'Add GB', b_rotate: 'New links',
-    extend_days: 'Days to add (accounts without an expiry are unchanged)', add_gb_q: 'GB to add per person (unlimited accounts are unchanged)', bulk_done: 'Done:',
+    selected: 'Selected', sel_all: 'Select all', clear_sel: 'Clear', b_reset: 'Reset usage', b_extend: 'Extend', b_addgb: 'Raise quota', b_rotate: 'New links',
+    extend_days: 'Days to add (accounts without an expiry are unchanged)', add_gb_q: 'GB to add to each plan for good (every month; unlimited accounts are unchanged)', bulk_done: 'Done:', still_n: '{n} of them are expired or out of quota and were paused again at once: extend or add quota first.', still_expired: 'Expired, so it was paused again at once: move the expiry date first.', still_quota: 'Out of quota, so it was paused again at once: reset its traffic or raise the quota first.',
     confirm_bulk_del: 'Their links stop working immediately. This cannot be undone.', confirm_bulk_rotate: 'Their old links stop working at once; send them the new ones.',
     batch_add: 'Add many', export_csv: 'Export CSV', batch_prefix: 'Name prefix (makes prefix-01, prefix-02 …)', batch_count: 'How many (1–200)', batch_made: 'Created',
     max_ips: 'Devices online at once (0 = no limit)', speed_mbps: 'Speed limit, Mbps (0 = none)', throttle_mbps: 'When the quota is used up, slow down to Mbps (0 = stop)',
@@ -656,10 +656,12 @@ function userState(u) {
   return chip(u.disabled_reason === 'manual' || !u.disabled_reason ? 'off' : 'bad', t({quota: 'r_quota', expired: 'r_expired', remote: 'r_remote'}[u.disabled_reason] || 'r_manual'));
 }
 const expText = u => u.expire_at ? dateStr(u.expire_at) : u.expire_after_days ? u.expire_after_days + ' ' + t('days') + ' · ' + t('exp_waiting') : t('never');
+// Bytes an account may use now. A capped plan whose share went to invitees is 'used up', never 'unlimited'.
+const quotaBytes = u => u.quota_gb ? Math.max(1, (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB) : 0;
 const FILTERS = {
   all: () => true, online: u => !!u.online, active: u => !!u.enabled, paused: u => !u.enabled,
   soon: u => u.enabled && u.expire_at && u.expire_at - Date.now() / 1000 < 7 * 86400,
-  low: u => { const q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB; return u.enabled && q && (u.used_up + u.used_down) / q >= .8; }
+  low: u => { const q = quotaBytes(u); return u.enabled && q && (u.used_up + u.used_down) / q >= .8; }
 };
 const SORTS = {
   id: (a, b) => a.id - b.id, name: (a, b) => a.name.localeCompare(b.name, L === 'zh' ? 'zh-CN' : 'en'),
@@ -680,12 +682,13 @@ async function bulk(action) {
   try {
     const r = await api('users-bulk', {ids, action, value});
     toast(t('bulk_done') + ' ' + r.done);
+    if (r.still_paused) toast(t('still_n').replace('{n}', r.still_paused), 'err');
     if (action === 'delete') S.sel.clear();
     await load(); drawUsers();
   } catch (e) { err(e); }
 }
 function usageBar(u) {
-  const used = u.used_up + u.used_down, q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB, p = q ? used / q : 0;
+  const used = u.used_up + u.used_down, q = quotaBytes(u), p = q ? used / q : 0;
   return h('div', null, h('div', {class: 'use-top'}, h('b', null, fmt.bytes(used)), h('span', null, q ? fmt.bytes(q) : t('unlimited'))),
     h('div', {class: 'bar' + (p > .95 ? ' bad' : p > .8 ? ' warn' : '')}, h('i', {style: 'width:' + Math.min(100, p * 100) + '%'})));
 }
@@ -788,13 +791,13 @@ async function openUser(id, first) {
   let links;
   try { links = await api('user-links?id=' + id); } catch (e) { if (seq === S.drawerSeq) err(e); return; }
   if (seq !== S.drawerSeq || !$('drawer')) return;
-  const used = u.used_up + u.used_down, q = (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB;
+  const used = u.used_up + u.used_down, q = quotaBytes(u);
   const histBox = h('div', {class: 'chart h160'});
   const pwIn = h('input', {type: 'password', autocomplete: 'new-password', placeholder: '8+'});
   const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
   const act = async (btn, fn, ok) => {
     if (btn) btn.disabled = true;
-    try { await fn(); toast(ok || t('saved')); await load(); closeDrawer(); if (S.view === 'users') drawUsers(); }
+    try { const r = await fn(); if (r && r.still_paused) toast(t('still_' + r.still_paused), 'err'); else toast(ok || t('saved')); await load(); closeDrawer(); if (S.view === 'users') drawUsers(); }
     catch (e) { err(e); if (btn) btn.disabled = false; }
   };
   const actBtn = (cls, ic, label, onClick) => { const b = h('button', {class: cls}, ...(ic ? [icon(ic)] : []), label); b.onclick = () => onClick(b); return b; };
@@ -815,7 +818,7 @@ async function openUser(id, first) {
         h('p', {class: 'muted', style: 'font-size:12px;margin:10px 0 0'}, t('apps_hint'))),
       h('div', {class: 'dr-sec'}, h('h4', null, t('usage'), h('span', {class: 'right'}, userState(u))),
         h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats'},
-          h('div', null, h('small', null, t('used')), h('b', null, fmt.bytes(used))), h('div', null, h('small', null, t('quota').split(/[（(]/)[0]), h('b', null, q ? fmt.bytes(q) : t('unlimited'))),
+          h('div', null, h('small', null, t('used')), h('b', null, fmt.bytes(used))), h('div', null, h('small', null, q && u.quota_eff != null && u.quota_eff !== u.quota_gb ? t('eff_quota') : t('quota').split(/[（(]/)[0]), h('b', null, q ? fmt.bytes(q) : t('unlimited'), q && u.quota_eff != null && u.quota_eff !== u.quota_gb ? h('small', {class: 'muted'}, ' (' + t('plan') + ' ' + u.quota_gb + ' GB)') : null)),
           h('div', null, h('small', null, '↓ ' + t('down')), h('b', null, fmt.bytes(u.used_down))), h('div', null, h('small', null, '↑ ' + t('up_')), h('b', null, fmt.bytes(u.used_up))),
           h('div', null, h('small', null, t('expires')), h('b', null, expText(u))), h('div', null, h('small', null, t('last_seen')), h('b', null, u.online ? t('online_now') : fmt.ago(u.last_seen))),
           h('div', null, h('small', null, t('sub_fetched')), h('b', null, u.sub_fetched_at ? fmt.ago(u.sub_fetched_at) : t('sub_never'))),
@@ -835,7 +838,7 @@ async function openUser(id, first) {
       h('div', {class: 'dr-sec'}, h('h4', null, t('actions')), h('div', {class: 'act-grid'},
         h('button', {class: 'btn', onclick: () => { closeDrawer(); editUser(u); }}, icon('edit'), t('edit')),
         actBtn('btn', u.enabled ? 'pause' : 'play', u.enabled ? t('disable') : t('enable'), b => act(b, () => api(`users/${u.id}/save`, {enabled: !u.enabled}))),
-        actBtn('btn', 'refresh', t('reset'), async b => { if (await confirmBox(t('reset'), t('confirm_reset'))) await act(b, () => api(`users/${u.id}/reset`, {})); }),
+        actBtn('btn', 'refresh', t('reset'), async b => { if (await confirmBox(t('reset'), t('confirm_reset') + (u.extra_gb ? ' ' + t('extra_gone') : ''))) await act(b, () => api(`users/${u.id}/reset`, {})); }),
         actBtn('btn', 'key', t('rotate'), async b => { if (await confirmBox(t('rotate'), t('confirm_rotate'))) await act(b, () => api(`users/${u.id}/rotate`, {})); }),
         actBtn('btn danger', 'x', t('del'), async b => { if (await confirmBox(t('del') + ' · ' + u.name, t('confirm_del'), {danger: true, confirm: t('del')})) await act(b, () => api(`users/${u.id}/delete`, {})); })))));
   openDrawer();
@@ -875,12 +878,12 @@ function shaperNote() {
 function editUser(u) {
   S.drawerSeq++;
   const isNew = !u; u = u || {name: '', quota_gb: 0, expire_at: 0, reset_day: 0, note: '', max_ips: 0, expire_after_days: 0, speed_mbps: 0, throttle_mbps: 0, servers: null};
-  const f = {name: h('input', {type: 'text', value: u.name, maxlength: '32'}), quota: h('input', {type: 'number', min: '0', step: '1', value: u.quota_gb || 0}),
+  const f = {name: h('input', {type: 'text', value: u.name, maxlength: '32'}), quota: h('input', {type: 'number', min: '0', step: 'any', value: u.quota_gb || 0}),
     exp: h('input', {type: 'date', value: u.expire_at ? dateStr(u.expire_at) : ''}), reset: h('input', {type: 'number', min: '0', max: '28', value: u.reset_day || 0}),
     note: h('input', {type: 'text', value: u.note || '', maxlength: '200'}), ips: h('input', {type: 'number', min: '0', max: '100', value: u.max_ips || 0}),
     mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'date'}, t('exp_date')), h('option', {value: 'first'}, t('exp_first'))),
     first: h('input', {type: 'number', min: '1', max: '3650', value: u.expire_after_days || 30}),
-    speed: h('input', {type: 'number', min: '0', step: '1', value: u.speed_mbps || 0}), slow: h('input', {type: 'number', min: '0', step: '1', value: u.throttle_mbps || 0})};
+    speed: h('input', {type: 'number', min: '0', step: 'any', value: u.speed_mbps || 0}), slow: h('input', {type: 'number', min: '0', step: 'any', value: u.throttle_mbps || 0})};
   const pick = serverPicker(u.servers);
   f.mode.value = u.expire_at ? 'date' : u.expire_after_days ? 'first' : 'never';
   const expF = field(t('expire').split(/[（(]/)[0], f.exp), firstF = field(t('exp_first_days'), f.first);
@@ -944,10 +947,10 @@ async function drawMembers() {
       h('button', {class: 'btn sm', onclick: () => decide(r, false)}, t('reject')))));
   const histRows = done.map(r => h('div', {class: 'tl-row'}, h('b', null, r.name), h('span', {class: 'num'}, '+' + r.add_gb + ' GB'),
     h('span', {class: 'muted'}, fmt.time(r.decided_at) + (r.answer ? ' · ' + r.answer : '')), h('span', {class: 'tl-acts'}, chip(r.status === 'approved' ? 'ok' : 'off', t(r.status)))));
-  const f = {quota: h('input', {type: 'number', min: '0', step: '1', value: '100'}), life: h('input', {type: 'number', min: '0', value: '30'}),
+  const f = {quota: h('input', {type: 'number', min: '0', step: 'any', value: '100'}), life: h('input', {type: 'number', min: '0', value: '30'}),
     uses: h('input', {type: 'number', min: '1', max: '1000', value: '1'}), valid: h('input', {type: 'number', min: '1', max: '90', value: '7'}),
     reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}), note: h('input', {type: 'text', maxlength: '100'}),
-    speed: h('input', {type: 'number', min: '0', step: '1', value: '0'}), slow: h('input', {type: 'number', min: '0', step: '1', value: '0'})};
+    speed: h('input', {type: 'number', min: '0', step: 'any', value: '0'}), slow: h('input', {type: 'number', min: '0', step: 'any', value: '0'})};
   const pick = serverPicker(null);
   const mk = h('button', {class: 'btn primary'}, icon('key'), t('inv_make'));
   mk.onclick = async () => {
@@ -1300,7 +1303,8 @@ function drawSystem() {
     docBtn = h('button', {class: 'btn primary'}, icon('pulse'), t('doctor_run'));
   docBtn.onclick = () => runDoctor(docBtn, docBox);
   const tgTok = h('input', {type: 'password', placeholder: '123456789:AA…', autocomplete: 'off'});
-  const tgPairCode = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+  // One code per visit: a refresh or a redraw must not change the command the owner already sent to the bot.
+  const tgPairCode = S.tgPairCode || (S.tgPairCode = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''));
   const tgPairCommand = '/bind ' + tgPairCode;
   const tgIntro = d.settings.tg_repair_needed ? t('tg_repair') : t('tg_tip');
   const tgCb = k => { const e = h('input', {type: 'checkbox', checked: !!d.settings[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
@@ -1309,7 +1313,7 @@ function drawSystem() {
   const tgConnBtn = h('button', {class: 'btn'}, t('tg_connect'));
   tgConnBtn.onclick = async () => {
     tgConnBtn.disabled = true;
-    try { await api('telegram', {token: tgTok.value.trim(), challenge: tgPairCode}); toast(t('tg_on')); await load(); drawSystem(); }
+    try { await api('telegram', {token: tgTok.value.trim(), challenge: tgPairCode}); S.tgPairCode = null; toast(t('tg_on')); await load(); drawSystem(); }
     catch (e) { toast(e.message === 'no_chat' ? t('tg_no_chat') : e.message === 'bad_token' ? t('tg_bad') : e.message, 'err'); tgConnBtn.disabled = false; }
   };
   const tgBody = tg ? h('div', {class: 'stack'}, h('div', null, chip('ok', t('tg_on'))), h('p', {class: 'muted', style: 'margin:0;font-size:12.5px;line-height:1.8'}, t('tg_cmds')),

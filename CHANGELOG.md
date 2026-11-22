@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.19
+
+A walk through the owner's panel, as an owner running it for family and friends would use it.
+
+**Moving, pausing and removing servers**
+- Restoring a backup on a new server keeps this panel's secret path and port, and this server's address unless the backup has a domain. Before, the page went to "404" right after "restored", and subscriptions pointed at the old server's IP.
+- A restore keeps this period's approved top-ups (0.2.18 left them out).
+- Removing a joined server takes it out of every account and invite code that named it. Someone limited to that server alone keeps this server, instead of an empty subscription.
+- A paused joined server is still synced, with every account switched off there. Before, people paused or removed meanwhile kept using it, and its traffic went uncounted until it was resumed.
+
+**Accounts**
+- Quotas and speeds with decimals (2.5 GB from a member's invite, 0.5 GB added in bulk) can be saved in Edit. The form used to refuse them with a browser bubble.
+- "Slow down instead of stopping" applies only where speed limits hold. On a server without them (a container VPS), an account that used up its quota stops as before, instead of running unlimited.
+- An account that shared its whole quota with invitees shows as used up, not "unlimited".
+- Switching on an account that is expired or out of quota says why it stays paused, instead of "saved" (one account or in bulk).
+- The account details label the total after shares and top-ups "实际可用额度", with the plan beside it.
+
+**Wording**
+- Bulk "加流量" is now "永久提高上限", which is what it does. Approving a request is the top-up for this period. The approve dialog names the field to change for good (「流量上限」) and says that an account without a reset day keeps a top-up until its traffic is reset by hand. Resetting traffic warns that the top-up ends too.
+- The Telegram pairing command no longer changes when the page refreshes after it was sent to the bot.
+
 ## 0.2.18
 
 A walk through the member page and the owner's request queue, as a member and as the owner would use them.

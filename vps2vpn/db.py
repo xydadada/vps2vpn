@@ -105,6 +105,18 @@ def server_list(u):
     return None if not raw else [x for x in raw.split(',') if x]
 
 
+def forget_server(sid):
+    """A removed server leaves every account and invite code that named it. One that named only it keeps this
+    server instead of an empty subscription (it is not widened to every server the owner did not pick)."""
+    with transaction() as c:
+        for table in ('users', 'invites'):
+            for row in c.execute("SELECT id, servers FROM %s WHERE servers != ''" % table).fetchall():
+                ids = [x for x in row[1].split(',') if x]
+                if sid in ids:
+                    left = [x for x in ids if x != sid] or [MAIN_SERVER]
+                    c.execute('UPDATE %s SET servers=? WHERE id=?' % table, (','.join(left), row[0]))
+
+
 def allowed_on(u, server_id):
     ids = server_list(u)
     return ids is None or server_id in ids
@@ -939,6 +951,15 @@ def _check_import_user(u, i):
     _check_import_limits(u, 'user %d' % i)
 
 
+def _is_ip(host):
+    import ipaddress
+    try:
+        ipaddress.ip_address(str(host).strip('[]'))
+        return True
+    except ValueError:
+        return False
+
+
 def import_all(data):
     if not isinstance(data, dict) or data.get('format') != 'vps2vpn-backup-1':
         raise ValueError('not a vps2vpn backup file')
@@ -981,10 +1002,22 @@ def import_all(data):
     # A backup can be old, copied from another install, or edited: it is never
     # evidence that this bot/chat was verified on the restored installation.
     keep['tg_verified'] = False
+    # Restoring is how an owner moves to a new server. The panel must stay where the owner is looking at it:
+    # the old server's secret path and port would leave this page on a 404 (and the new firewall closed),
+    # and the old server's IP in every subscription. A domain moves with the backup (its DNS follows).
+    here = settings()
+    if here.get('panel_path'):
+        keep['panel_path'] = here['panel_path']
+        if keep.get('member_path') == here['panel_path']:
+            keep['member_path'] = DEFAULTS['member_path'] if DEFAULTS['member_path'] != here['panel_path'] else ''
+    if here.get('panel_port'):
+        keep['panel_port'] = here['panel_port']
+    if here.get('public_host') and not keep.get('domain') and _is_ip(keep.get('public_host', '')):
+        keep['public_host'] = here['public_host']
     cols = ('id', 'name', 'uuid', 'hy2_pass', 'sub_token', 'quota_gb', 'expire_at', 'reset_day', 'used_up',
             'used_down', 'enabled', 'disabled_reason', 'note', 'last_seen', 'last_reset', 'created_at',
             'login_hash', 'invited_by', 'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
-            'sub_fetched_at', 'sub_ua', 'servers', 'speed_mbps', 'throttle_mbps', 'throttled')
+            'sub_fetched_at', 'sub_ua', 'servers', 'speed_mbps', 'throttle_mbps', 'throttled', 'extra_gb')
     table_cols = {'invites': INVITE_COLS, 'requests': REQUEST_COLS}
     with transaction() as c:
         c.execute('DELETE FROM settings')

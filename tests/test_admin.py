@@ -317,6 +317,15 @@ class AdminWeb(tu.Base):
 
     req = tu.Web.req
 
+    def test_switching_on_an_expired_account_says_why_it_stays_paused(self):
+        self.login()
+        uid = db.add_user('late')
+        db.update_user(uid, expire_at=int(time.time()) - 60, enabled=0, disabled_reason='expired')
+        st, body, _ = self.req('POST', '/adm/api/users/%d/save' % uid, {'enabled': True})
+        self.assertEqual((st, json.loads(body).get('still_paused')), (200, 'expired'))
+        st, body, _ = self.req('POST', '/adm/api/users-bulk', {'ids': [uid], 'action': 'enable'})
+        self.assertEqual(json.loads(body)['still_paused'], 1)
+
     def login(self, **extra):
         return self.req('POST', '/adm/api/login', dict({'username': 'admin', 'password': 'adminpassword'}, **extra))
 

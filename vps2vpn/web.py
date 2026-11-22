@@ -1447,7 +1447,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 db.update_user(uid, quota_gb=max(0.0, value))
         jobs.enforce()
         apply_async()
-        return self.json({'ok': True, 'done': done})
+        still = 0
+        if action == 'enable':
+            still = sum(1 for uid in ids if (lambda x: x and not x['enabled'] and x['disabled_reason'] in ('expired', 'quota'))(db.user(uid)))
+        return self.json({'ok': True, 'done': done, 'still_paused': still})
 
     def api_users_export(self, method, s):
         """All users as CSV (opens in Excel / Numbers). Contains subscription links: keep it private."""
@@ -1474,6 +1477,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def api_user_action(self, uid, action):
         u = db.user(uid)
+        fields = {}             # set by 'save' only
         if not u:
             return self.json({'error': 'no such user'}, 404)
         if action == 'delete':
@@ -1519,6 +1523,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     u['reset_day'], fields['reset_day'] if rst_changed else None)
         jobs.enforce()
         apply_async()
+        after = db.user(uid)
+        if after and fields.get('enabled') and not after['enabled'] and after['disabled_reason'] in ('expired', 'quota'):
+            # Switched on, but still expired or out of quota: enforce paused it again at once. Say so.
+            return self.json({'ok': True, 'still_paused': after['disabled_reason']})
         return self.json({'ok': True})
 
     def refused(self, fn, after=None):

@@ -127,3 +127,47 @@ class NodeSyncHttpErrors(tu.Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OwnerWalkthrough(tu.Base):
+    """What the owner runs into when moving, pausing or removing servers (0.2.19)."""
+
+    def test_paused_server_is_still_synced_with_every_account_off(self):
+        uid = db.add_user('mum')
+        db.set_settings(servers=[{'id': '33333333', 'name': 'Tokyo', 'url': 'https://tokyo.example/panel',
+                                  'key': 'k', 'pin': '', 'enabled': False}])
+        answer = {'ok': True, 'info': {'node_name': 'tokyo'}, 'idmap': {}, 'traffic': {}}
+        with mock.patch.object(cluster, '_request', return_value=(answer, 'ab' * 32)) as send:
+            cluster.sync_all(log=lambda _: None)
+        self.assertEqual(send.call_count, 1)
+        pushed = send.call_args[0][1]['users']
+        self.assertEqual([(x['id'], x['enabled']) for x in pushed], [(uid, False)])
+
+    def test_removing_a_server_leaves_nobody_with_an_empty_subscription(self):
+        only = db.add_user('only-tokyo')
+        both = db.add_user('both')
+        db.update_user(only, servers='33333333')
+        db.update_user(both, servers='main,33333333')
+        db.set_settings(servers=[{'id': '33333333', 'name': 'Tokyo', 'url': 'https://tokyo.example/panel',
+                                  'key': 'k', 'pin': '', 'enabled': True}])
+        cluster.remove_server('33333333')
+        self.assertEqual(db.user(only)['servers'], 'main')
+        self.assertEqual(db.user(both)['servers'], 'main')
+        self.assertEqual(db.settings()['servers'], [])
+
+    def test_restore_keeps_this_panel_address_and_the_top_ups(self):
+        uid = db.add_user('mum')
+        db.update_user(uid, quota_gb=50, extra_gb=20)
+        db.set_settings(panel_path='oldpath', panel_port=1111, public_host='198.51.100.1')
+        backup = db.export_all()
+        db.set_settings(panel_path='newpath', panel_port=2222, public_host='203.0.113.9')
+        db.import_all(backup)
+        s = db.settings()
+        self.assertEqual((s['panel_path'], s['panel_port'], s['public_host']), ('newpath', 2222, '203.0.113.9'))
+        self.assertEqual(db.user_by_name('mum')['extra_gb'], 20)
+        # a domain moves with the backup: its DNS follows the owner to the new server
+        db.set_settings(domain='vpn.example.org', public_host='vpn.example.org')
+        backup = db.export_all()
+        db.set_settings(domain='', public_host='203.0.113.9')
+        db.import_all(backup)
+        self.assertEqual(db.settings()['public_host'], 'vpn.example.org')

@@ -2058,7 +2058,16 @@ class AirportFeatures(tu.Base):
         self.assertEqual(db.clean_servers(''), '')
         self.assertEqual(db.clean_servers([]), '')
 
-    def test_quota_used_up_slows_down_instead_of_stopping(self):
+    def test_no_slowing_down_where_limits_cannot_hold(self):
+        u = mk('box', 1, throttle_mbps=5)
+        db.update_user(u['id'], used_down=2 << 30)
+        with mock.patch('vps2vpn.shaper.active', return_value=False), mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        got = db.user(u['id'])
+        self.assertEqual((got['enabled'], got['throttled'], got['disabled_reason']), (0, 0, 'quota'))
+
+    @mock.patch('vps2vpn.shaper.active', return_value=True)
+    def test_quota_used_up_slows_down_instead_of_stopping(self, _active):
         u = mk('slow', 1, throttle_mbps=5)
         db.update_user(u['id'], used_down=2 << 30)
         with mock.patch.object(jobs.notify, 'send') as send:
