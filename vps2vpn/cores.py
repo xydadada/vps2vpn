@@ -370,6 +370,7 @@ def replacing_accounts(s):
         except Exception as e:      # a core that cannot be read restarts with zero counters anyway
             print('could not reset traffic counters after restore: %s' % e, flush=True)
         _unsaved.clear()
+        _tuic.forget_accounts()     # its own buffers (an unassigned remainder) outlive the reading above (#106)
 
 
 def _save_before_restart(s, units):
@@ -489,6 +490,9 @@ class TuicMeter:
 
     def __init__(self):
         self.lock = threading.Lock()
+        self._clear()
+
+    def _clear(self):
         self.conns = {}            # connection id -> (uid, up, down) at the last sample
         self.total = None          # (up, down) server-wide at the last sample
         self.share = {}            # uid -> recent bytes (decaying): how to split the remainder
@@ -601,6 +605,13 @@ class TuicMeter:
             self._sample_locked(s, users=users)
             out, self.acc = self.acc, {}
         return out
+
+    def forget_accounts(self):
+        """The accounts were replaced (a restore): everything kept here was measured under the old ones.
+        The remainder nobody was credited with yet, who was recently busy, and the per-connection baseline
+        all name old account ids that may now be other people. Start over: the next reading is a baseline."""
+        with self.lock:
+            self._clear()
 
     def online(self, s):
         try:

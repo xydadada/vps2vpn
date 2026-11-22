@@ -20,11 +20,11 @@ import math
 import mimetypes
 import os
 import re
-import shutil
 import signal
 import socket
 import sqlite3
 import ssl
+import stat
 import threading
 import time
 import urllib.error
@@ -49,6 +49,16 @@ _SVG_CSP = "default-src 'none'; style-src 'none'; sandbox"
 
 class _BadRequest(ValueError):
     """Malformed HTTP request framing, JSON body, or query parameter (answered with 400)."""
+
+
+def _has_surrogate(v):
+    if isinstance(v, str):
+        return any(0xd800 <= ord(c) <= 0xdfff for c in v)
+    if isinstance(v, list):
+        return any(_has_surrogate(x) for x in v)
+    if isinstance(v, dict):
+        return any(_has_surrogate(k) or _has_surrogate(x) for k, x in v.items())
+    return False
 
 
 def _rate_key(ip):
@@ -624,6 +634,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise _BadRequest('invalid json')
         if not isinstance(obj, dict):
             raise _BadRequest('json object required')
+        if _has_surrogate(obj):          # a lone surrogate escape is valid JSON but not text: later a 500
+            raise _BadRequest('invalid unicode')
         return obj
 
     def client_ip(self):
@@ -723,6 +735,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not self.secure_ok():
                     loc = self._https_location(s)
                     return self.send(301, '', headers={'Location': loc}) if loc else self.not_found()
+                if path == pp and method in ('GET', 'HEAD'):
+                    # The page's relative links (api/..., assets) only resolve under the trailing slash.
+                    url = urllib.parse.urlsplit(self.path)
+                    return self.send(301, '', headers={'Location': pp + '/' + ('?' + url.query if url.query else '')})
                 return self.panel(method, path[len(pp):] or '/', s)
             return self.not_found()
         except _BadRequest as e:
@@ -731,9 +747,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 pass
         except (ConnectionError, socket.timeout, ssl.SSLError):
+            self.close_connection = True
             return
         except Exception as e:   # never leak a traceback to the network
             import traceback
+            self.close_connection = True     # part of a reply may be out already: no second one on this connection
             jobs.log('http error %s %s: %r %s' % (method, self._log_path(), e,
                                                  traceback.format_exc(limit=-2).replace(chr(10), ' | ')[-300:]))
             try:
@@ -1737,21 +1755,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sig = name.endswith('.sig')
         if not _client_asset(name[:-4] if sig else name):
             return self.not_found()
-        f = os.path.join(paths.CLIENT, name)
-        if not os.path.isfile(f):
+        # Opened once, and the size taken from that open file: a client sync may swap in a new installer at
+        # any moment, and a size read from one file with bytes sent from another breaks Content-Length (and
+        # the next request on the connection). Not through a symlink.
+        try:
+            fd = os.open(os.path.join(paths.CLIENT, name), os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) |
+                         getattr(os, 'O_BINARY', 0))
+        except OSError:
             return self.not_found()
-        size = os.path.getsize(f)
-        if sig and size > 4096:
-            return self.not_found()
-        self.send_response(200)
-        for k, v in (('Content-Type', 'application/octet-stream'), ('Content-Length', str(size)),
-                     ('Content-Disposition', 'attachment; filename="%s"' % name), ('Cache-Control', 'no-store'),
-                     ('X-Content-Type-Options', 'nosniff')):
-            self.send_header(k, v)
-        self.end_headers()
-        if self.command != 'HEAD':
-            with open(f, 'rb') as fh:
-                shutil.copyfileobj(fh, self.wfile, 1 << 16)
+        with os.fdopen(fd, 'rb') as fh:
+            st = os.fstat(fh.fileno())
+            size = st.st_size
+            if not stat.S_ISREG(st.st_mode) or (sig and size > 4096):
+                return self.not_found()
+            self.send_response(200)
+            for k, v in (('Content-Type', 'application/octet-stream'), ('Content-Length', str(size)),
+                         ('Content-Disposition', 'attachment; filename="%s"' % name), ('Cache-Control', 'no-store'),
+                         ('X-Content-Type-Options', 'nosniff')):
+                self.send_header(k, v)
+            self.end_headers()
+            if self.command == 'HEAD':
+                return
+            left = size
+            while left:
+                chunk = fh.read(min(left, 1 << 16))
+                if not chunk:                    # shorter than it said: the client must not wait for the rest
+                    self.close_connection = True
+                    return
+                self.wfile.write(chunk)
+                left -= len(chunk)
 
     def member_view(self, s, u, by_link):
         base = self.base_url(s)
@@ -1801,7 +1833,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if len(new) > 128:               # sign-in refuses longer passwords: it would lock the admin out
             return self.json({'error': 'password: 8 to 128 characters'}, 400)
         new_hash = secure.hash_password(new)     # slow: before the transaction, not inside it
-        user = str(d.get('username') or s['admin_user'])[:32]
+        user = str(d.get('username') or s['admin_user']).strip()[:32]
+        if not user or any(ord(c) < 32 or ord(c) == 127 for c in user):
+            return self.json({'error': 'invalid username'}, 400)
         return self._change_admin_sign_in(s, lambda: db.set_settings(admin_hash=new_hash, admin_user=user))
 
     def api_check_targets(self, method, s):
@@ -1836,7 +1870,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             image = qr.svg(text, scale=5)
         except ValueError:
             return self.json({'error': 'too long for a QR code; copy the link instead'}, 413)
-        return self.send(200, image, 'image/svg+xml', {'Cache-Control': 'no-store'})
+        return self.send(200, image, 'image/svg+xml', {'Cache-Control': 'no-store', 'Content-Security-Policy': _SVG_CSP})
 
     def api_user_links(self, method, s):
         try:
@@ -1907,7 +1941,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'restore failed: %s' % e}, 400)
         db.end_all_sessions()
         db.end_all_member_sessions()
-        s2 = db.settings()
+        s2 = db.ensure_secrets()    # a backup without some keys (older, or made by hand) gets them now, not at restart
         certs.ensure_self_signed(s2['domain'] or s2['public_host'])
         apply_async(force=True)
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})

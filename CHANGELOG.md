@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.14
+
+**Accounting**
+- After a restore, TUIC traffic that was still waiting to be split between users (connections that opened and closed between two samples) is dropped with the rest of the old accounts' counts, instead of going to whoever the backup gives the same account number (#106). A restore that fails keeps it.
+
+**Access**
+- When writing the new configs fails after an account was stopped (quota, expiry), the scheduler tries again with backoff (1, 2, 4 … 15 min) instead of waiting for the next unrelated change; until then the cores still let that account in.
+- A device-limit pause no longer replaces an admin turning the account off at the same moment, which used to switch it back on by itself after 10 minutes.
+
+**App downloads**
+- An installer is sent from one open file, so a client update swapping in a newer one mid-request can no longer mix the size of one with the bytes of the other; links in the folder are not followed.
+- Installers, signatures and the list of fetched files are kept private (0600) like the rest of `/var/lib/vps2vpn`, and each one is recorded as fetched as soon as it is published, so it is cleaned up later even if that round stopped early (PR #118).
+
+**Panel**
+- `/<panel path>` without the trailing slash redirects to it (the page's links only work there).
+- Text that is not valid Unicode (a lone surrogate) is refused with 400 instead of an internal error; an admin username that is blank or has control characters is refused.
+- The QR code image gets the same sandboxing header as the other SVGs; after an error mid-reply the connection is closed.
+- A restored backup that lacks some keys (an older or hand-made one) gets them at once instead of at the next restart.
+
 ## 0.2.13
 
 **Client app**

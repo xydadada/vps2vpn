@@ -356,6 +356,10 @@ class OpsWeb(tf.MemberWeb):
         self.assertEqual(self.req('GET', base + 'download/vps2vpn-1.10.0-windows-setup.exe.sig')[:2], (200, b'c2lnbmF0dXJl\n'))
         self.assertEqual(self.req('GET', base + 'download/vps2vpn-1.10.0-android.apk.sig')[0], 404)   # too big
         self.assertEqual(self.req('GET', base + 'download/notes.txt.sig')[0], 404)
+        if hasattr(os, 'O_NOFOLLOW'):       # a link in the folder is not followed (to the database, say)
+            os.symlink(paths.DB, os.path.join(paths.CLIENT, 'vps2vpn-1.10.0-windows-arm64-setup.exe'))
+            self.assertEqual(self.req('GET', base + 'download/vps2vpn-1.10.0-windows-arm64-setup.exe')[0], 404)
+            os.unlink(os.path.join(paths.CLIENT, 'vps2vpn-1.10.0-windows-arm64-setup.exe'))
         self.assertEqual(web.client_files()['unsigned'], [])
         self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
         self.assertEqual(self.req('POST', '/adm/api/settings', {'client_version': 'one'})[0], 400)

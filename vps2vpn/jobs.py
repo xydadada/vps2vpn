@@ -503,7 +503,8 @@ def device_limits(s, online=None, now=None):
             db.add_event('devices', u['id'], '%s: %d devices online, limit %d (%s)' % (
                 u['name'], n, u['max_ips'], ', '.join(d.get('ips', [])[:8])))
         if s['ip_limit_pause']:
-            db.update_user(u['id'], enabled=0, disabled_reason='devices', paused_until=int(now + DEVICE_PAUSE))
+            if not db.pause_for_devices(u['id'], now + DEVICE_PAUSE):
+                continue                        # turned off meanwhile (by an admin, say): leave it so
             log('paused %s for 10 minutes: %d devices, limit %d' % (u['name'], n, u['max_ips']))
             changed = True
         notify.send('%s: %d devices online (limit %d)%s / %s 同时在线 %d 台设备（上限 %d）%s' % (
@@ -753,6 +754,7 @@ class Scheduler:
     def __init__(self):
         self.last = {}
         self.cert_backoff_until = 0.0
+        self.apply_owed, self.apply_wait, self.apply_at = False, 0, 0.0   # a failed apply, tried again later
         self.stop = threading.Event()
         self.ipwatch = IpWatch()
         self._threads = []
@@ -804,8 +806,19 @@ class Scheduler:
             server_month(s, health)
             HISTORY.sample(health)
         if changed:
-            cores.apply()
             cluster.sync_soon()
+        if changed or (self.apply_owed and time.monotonic() >= self.apply_at):
+            # The database already says who may connect; until the cores have loaded it, an account that was
+            # just stopped (quota, expiry) still gets in. A failed apply is tried again with backoff
+            # (1, 2, 4 ... 15 min), not only at the next unrelated change, which may never come.
+            try:
+                cores.apply()
+                self.apply_owed, self.apply_wait = False, 0
+            except Exception as e:
+                self.apply_owed = True
+                self.apply_wait = min(self.apply_wait * 2 or 60, 900)
+                self.apply_at = time.monotonic() + self.apply_wait
+                log('apply failed, retrying in %d s: %s' % (self.apply_wait, e))
         if s['abuse_guard'] and self.due('abuse', 60) and paths.LIVE:
             abuse.check(s, log)
         if s['monitor_enabled'] and paths.LIVE and self.due('monitor', 300):

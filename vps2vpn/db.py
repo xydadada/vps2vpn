@@ -414,6 +414,16 @@ def update_user(uid, **kv):
         x('UPDATE users SET %s WHERE id=?' % ','.join(sets), args + [uid])
 
 
+def pause_for_devices(uid, until):
+    """Pause an account over its device limit, but only while it is still on: the device check works
+    from a reading that takes seconds, and an admin who turned the account off meanwhile must not have
+    that replaced by a pause that ends by itself. Returns True when it was paused."""
+    with _lock:
+        cur = connect().execute("UPDATE users SET enabled=0, disabled_reason='devices', paused_until=? "
+                                "WHERE id=? AND enabled=1", (int(until), uid))
+        return cur.rowcount == 1
+
+
 SUB_UA_MAX = 120
 SUB_FETCH_QUIET = 300           # the same app fetching again within 5 minutes is not written down again
 

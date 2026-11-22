@@ -62,6 +62,18 @@ class Limits(tu.Base):
         u = db.user(uid)
         self.assertEqual((u['enabled'], u['disabled_reason']), (1, ''))
 
+    def test_device_pause_does_not_replace_an_admin_turning_the_account_off(self):
+        # The check reads who is online (seconds) and the accounts before the admin's change lands.
+        uid = db.add_user('busy', 0, max_ips=1)
+        stale = db.users()
+        db.update_user(uid, enabled=0, disabled_reason='')            # the admin turns it off by hand
+        now = time.time()
+        with mock.patch.object(db, 'users', return_value=stale):
+            self.assertFalse(jobs.device_limits(db.settings(), {uid: {'ips': ['1.1.1.1', '2.2.2.2'], 'devices': 2}}, now))
+        jobs.enforce(now + jobs.DEVICE_PAUSE + 1)
+        u = db.user(uid)
+        self.assertEqual((u['enabled'], u['disabled_reason'], u['paused_until']), (0, '', 0))   # stays off
+
     def test_device_limit_warn_only(self):
         db.set_settings(ip_limit_pause=False)
         uid = db.add_user('warned', 0, max_ips=1)
@@ -743,6 +755,35 @@ class AuthHardening(tu.Base):
         st, _, _ = self.req('POST', '/adm/api/password', {'old': 'adminpassword', 'new': 'x' * 129})
         self.assertEqual(st, 400)
         self.assertTrue(secure.check_password('adminpassword', db.settings()['admin_hash']))
+
+    def test_unusable_text_and_usernames_are_refused_not_crashed_on(self):
+        # A lone surrogate is valid JSON but cannot be hashed: a clear 400, not an internal error.
+        self.assertEqual(self.req('POST', '/adm/api/login', {'username': 'admin', 'password': chr(0xd800)})[0], 400)
+        self.login()
+        for name in ('   ', 'ad\nmin', 'ad\x7fmin'):
+            st, body, _ = self.req('POST', '/adm/api/password', {'old': 'adminpassword', 'new': 'newpassword1',
+                                                                 'username': name})
+            self.assertEqual(st, 400, (name, body))
+        self.assertEqual(db.settings()['admin_user'], 'admin')
+        self.assertTrue(secure.check_password('adminpassword', db.settings()['admin_hash']))
+
+    def test_panel_address_without_the_slash_redirects_and_the_qr_code_is_sandboxed(self):
+        st, _, r = self.req('GET', '/adm?x=1')
+        self.assertEqual((st, r.getheader('Location')), (301, '/adm/?x=1'))
+        self.login()
+        st, body, r = self.req('GET', '/adm/api/qr?text=hello')
+        self.assertEqual(st, 200, body)
+        self.assertEqual(r.getheader('Content-Security-Policy'), web._SVG_CSP)
+
+    def test_restore_fills_in_keys_the_backup_does_not_have(self):
+        self.login()
+        backup = db.export_all()
+        backup['settings']['stats_secret'] = ''
+        backup['settings']['node_key'] = ''
+        st, body, _ = self.req('POST', '/adm/api/restore', backup)
+        self.assertEqual(st, 200, body)
+        s = db.settings()
+        self.assertTrue(s['stats_secret'] and s['node_key'])
 
     def test_member_password_change_is_rate_limited(self):
         uid = self._member('zed', 'zedpassword1')

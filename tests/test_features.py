@@ -445,6 +445,33 @@ class ScaleHelpers(tu.Base):
         bob = db.user(alice['id'])
         self.assertEqual((bob['name'], bob['used_up'], bob['used_down']), ('bob', 0, 0))
 
+    def test_tuic_remainder_is_not_billed_to_whoever_a_restore_gives_the_id(self):
+        # #106, the TUIC meter's own buffer: bytes nobody could be credited with yet (connections that
+        # opened and closed between samples) stay waiting for a user who was recently busy. After a restore
+        # that id may be someone else, who must not inherit them.
+        s, users = db.settings(), {1, 2}
+        meter = cores.TuicMeter()
+
+        def reading(up, down, *conns):
+            return {'uploadTotal': up, 'downloadTotal': down,
+                    'connections': [{'id': cid, 'chains': ['u%d' % uid], 'upload': a, 'download': b}
+                                    for cid, uid, a, b in conns]}
+
+        meter.sample(s, reading(0, 0), users)
+        meter.sample(s, reading(500, 600), users)                # nobody seen: 500/600 wait unassigned
+        self.assertEqual(meter.pending, [500, 600])
+        failed = dict(s, tuic_enabled=False)
+        with mock.patch.object(cores, '_tuic', meter), mock.patch.object(cores, 'collect_traffic', return_value={}):
+            with self.assertRaises(ValueError):                  # a restore that fails keeps it
+                with cores.replacing_accounts(failed):
+                    raise ValueError('bad backup')
+            self.assertEqual(meter.pending, [500, 600])
+            with cores.replacing_accounts(failed):               # one that succeeds: id 1 is Bob now
+                pass
+        meter.sample(s, reading(0, 0), users)                    # the core restarted
+        meter.sample(s, reading(20, 30, ('new', 1, 20, 30)), users)
+        self.assertEqual(meter.collect(dict(s, tuic_api_port=1), users), {1: (20, 30)})   # not (520, 630)
+
     def test_quotas_are_enforced_when_a_traffic_reading_fails(self):
         db.set_settings(setup_done=True)
         sched = jobs.Scheduler()
@@ -453,6 +480,30 @@ class ScaleHelpers(tu.Base):
                 mock.patch.object(sched, 'due', side_effect=lambda name, every: name == 'collect'):
             sched.tick()
         enforce.assert_called_once()
+
+    def test_a_failed_apply_after_a_quota_stop_is_tried_again(self):
+        # A stopped account keeps its access until a core has loaded the new configs: a failed apply must not
+        # wait for the next, unrelated change.
+        db.set_settings(setup_done=True)
+        sched = jobs.Scheduler()
+        clock = [1000.0]
+        with mock.patch.object(jobs, 'collect'), \
+                mock.patch.object(jobs.cluster, 'sync_soon'), \
+                mock.patch.object(jobs.time, 'monotonic', side_effect=lambda: clock[0]), \
+                mock.patch.object(jobs, 'enforce', side_effect=[True, False, False, False]), \
+                mock.patch.object(jobs.cores, 'apply', side_effect=[RuntimeError('xray did not start'), None]) as apply, \
+                mock.patch.object(sched, 'due', side_effect=lambda name, every: name == 'collect'):
+            sched.tick()                                   # the stop, and a failed apply
+            self.assertEqual(apply.call_count, 1)
+            clock[0] += 30
+            sched.tick()                                   # inside the first minute: not yet
+            self.assertEqual(apply.call_count, 1)
+            clock[0] += 31
+            sched.tick()                                   # tried again, and it works
+            self.assertEqual(apply.call_count, 2)
+            clock[0] += 3600
+            sched.tick()                                   # nothing owed any more
+            self.assertEqual(apply.call_count, 2)
 
     def test_slow_certificate_renewal_and_backup_upload_do_not_hold_up_quotas(self):
         # #112: ACME and Telegram can take minutes; the 20-second quota and expiry pass must go on. So can
@@ -2607,6 +2658,26 @@ class ClientSync(unittest.TestCase):
         del self.web['https://dl.example/vps2vpn-1.1.0-windows-amd64-setup.exe']
         with self.assertRaises(OSError):
             self._sync()
+
+    def test_an_installer_published_before_an_unexpected_error_stays_managed(self):
+        android = 'vps2vpn-1.0.9-android-arm64.apk'
+        windows = 'vps2vpn-1.0.9-windows-amd64-setup.exe'
+        self._release('1.0.9', {android: b'android', windows: b'windows'})
+        real, calls = clientsync.signature_ok, []
+
+        def second_breaks(*a):
+            calls.append(a[0])
+            if len(calls) == 2:
+                raise RuntimeError('unexpected')
+            return real(*a)
+
+        with mock.patch.object(clientsync, 'signature_ok', side_effect=second_breaks):
+            with self.assertRaises(RuntimeError):
+                self._sync()
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, calls[0])))
+        self.assertEqual(clientsync._manifest(self.dir), [calls[0]])
+        self.assertEqual(self._sync(), '1.0.9')
+        self.assertEqual(set(clientsync._manifest(self.dir)), {android, windows})
 
     def test_a_bad_signature_or_a_prerelease_is_not_published(self):
         self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'setup'})

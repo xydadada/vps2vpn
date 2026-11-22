@@ -238,6 +238,9 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
             os.replace(tmp, os.path.join(folder, name))
             os.replace(os.path.join(folder, name + '.sig.tmp'), os.path.join(folder, name + '.sig'))
             published.append(name)
+            # Recorded at once: if anything stops this round later, the file is still known as ours (not one
+            # put there by hand) and is cleaned up once superseded (PR #118).
+            _save_manifest(folder, _manifest(folder) + [name])
         if not published:
             if failed:
                 raise OSError('no client installer could be downloaded')
