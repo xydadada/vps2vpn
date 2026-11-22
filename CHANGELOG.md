@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.21
+
+The member page, walked through as a member would use it, plus two clearer labels in the owner panel.
+
+**Member page**
+- Opened inside WeChat or QQ, the page says to use "Open in browser" (those apps cannot hand a link to a VPN app).
+- "Invite friends" says plainly that a friend's share leaves your monthly quota as soon as they register, and how to take it back.
+- GB promised to unused invite codes is shown, and "left" counts it. A code the inviter can no longer honour is marked void instead of "usable".
+- Changing the subscription link shows the new link at once, with a copy button. Opened from the personal link, the warning says this page's address stops working too.
+- A taken name or a short password at sign-up keeps the typed passwords and no longer counts toward the wrong-code limit.
+- Stash and Karing get their own import buttons, and the app list says which iPhone apps cost money.
+- The subscription landing page shows the same quota as the member page (with top-ups, minus shares).
+- Opened from the personal link, a new password can be set without the old one.
+
+**Owner panel**
+- The users list says "resets on day N each month" and "at most N devices" instead of bare symbols; the server pause and sync buttons explain themselves on hover.
+
 ## 0.2.20
 
 The rest of the owner-panel walkthrough.
