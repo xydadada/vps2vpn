@@ -14,6 +14,13 @@ A walk through the member page and the owner's request queue, as a member and as
 - The "quota used up" notice only suggests asking for more when requests are on. It gives the reset date, or says to ask the admin when the account never resets.
 - "Too many devices" names the limit and says to close the extra devices. An account that expires N days after first use says so instead of "never". Unlimited accounts no longer see a request form they cannot use.
 
+**One-click deploy and installer**
+- The deployers refuse a PuTTY `.ppk`, a public key or a passphrase-protected key up front and say what to use instead.
+- A server that wants another login user (AWS: "Please login as the user ubuntu") is retried once as that user; the macOS deployer without Python names the user to try. Only AWS-named `.pem` keys default to `ubuntu` now, not every `.pem`.
+- The macOS deployer accepts a key with Windows line endings; the web deployer checks that Windows' own OpenSSH is new enough before a password login.
+- While the cloud firewall still blocks the lines, the finish screens (web, Windows, macOS) say "one more step" instead of "done", and list what to do next: add people, add a server, upgrade. The macOS one no longer says no VPN app was found when one was.
+- `install.sh` run through `curl | bash` no longer picks up a `vps2vpn` folder in the current directory instead of the verified release.
+
 ## 0.2.17
 
 **Airport features**
