@@ -861,10 +861,10 @@ class AuthHardening(tu.Base):
     def test_member_password_change_is_rate_limited(self):
         uid = self._member('zed', 'zedpassword1')
         link = '/s/%s/api/password' % db.user(uid)['sub_token']
-        for _ in range(8):
-            self.assertEqual(self.req('POST', link, {'old': 'guess', 'new': 'otherpassword'})[0], 403)
-        self.assertEqual(self.req('POST', link, {'old': 'zedpassword1', 'new': 'otherpassword'})[0], 429)
-        self.assertTrue(secure.check_password('zedpassword1', db.user(uid)['login_hash']))
+        for i in range(8):                  # link mode needs no old password, but every change counts
+            self.assertEqual(self.req('POST', link, {'new': 'otherpassword%d' % i})[0], 200)
+        self.assertEqual(self.req('POST', link, {'new': 'lastpassword1'})[0], 429)
+        self.assertTrue(secure.check_password('otherpassword7', db.user(uid)['login_hash']))
 
     def test_pending_member_login_cannot_reauthorize_an_old_password(self):
         uid = self._member('member-race', 'oldmemberpassword')
