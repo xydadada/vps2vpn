@@ -91,7 +91,7 @@ debian_archive_sources() {  # -> 0 if an end-of-life Debian was given its archiv
   # shellcheck source=/dev/null
   code=$(. "$OS_RELEASE" && echo "${VERSION_CODENAME:-}")
   [ "$id" = debian ] && [ "$code" = bullseye ] && [ ! -e "$f" ] || return 1
-  say "Debian 11 is past its end of life and its updates moved to archive.debian.org; adding it as a package source ($f)"
+  say "Debian 11 is past its end of life and its updates moved to archive.debian.org; adding it as a package source ($f) / Debian 11 已停止维护，改用存档软件源"
   printf 'deb [check-valid-until=no] http://archive.debian.org/%s main\n' \
     "debian $code" "debian $code-updates" "debian-security $code-security" > "$f" || return 1
   apt-get "${APT_OPTS[@]}" update -qq || true
@@ -116,7 +116,7 @@ modprobe kmod kmod kmod kmod
 sysctl procps procps-ng procps procps-ng
 ss iproute2 iproute iproute2 iproute2
 EOF
-  say "installing system packages"
+  say "installing system packages / 正在安装系统软件包"
   local failed="could not install the system packages (${pkgs[*]}); the package manager's message is above"
   if command -v apt-get >/dev/null; then
     # a fresh VPS often runs unattended-upgrades on first boot: wait for its dpkg lock instead of failing,
@@ -135,7 +135,7 @@ EOF
   else die "unknown package manager; install: ${pkgs[*]}"; fi
   if ! pick_python; then
     # RHEL/Rocky/Alma 8 and openSUSE Leap 15 ship Python 3.6 as python3: add a newer one next to it
-    say "$(python3 --version 2>&1 || echo 'no python3') is too old; installing a newer Python next to it"
+    say "$(python3 --version 2>&1 || echo 'no python3') is too old; installing a newer Python next to it / Python 版本太旧，正在另装一个新版"
     local p
     for p in python3.12 python3.11 python39 python311 python312; do
       if command -v dnf >/dev/null; then dnf install -y -q "$p" >/dev/null 2>&1 || continue
@@ -146,7 +146,7 @@ EOF
     done
     pick_python || die "python 3.8 or newer is required (found: $(python3 --version 2>&1 || echo none))"
   fi
-  say "using $("$PY" --version 2>&1) ($PY)"
+  say "using $("$PY" --version 2>&1) ($PY) / 使用这个 Python"
 }
 
 ROUTE4=/proc/net/route
@@ -205,10 +205,10 @@ fetch_panel_code() {  # tmp -> panel code unpacked under tmp (tmp/vps2vpn)
     tag=$(latest_release_tag)
     if [ -z "$tag" ]; then
       tag="$PINNED_TAG"
-      say "GitHub's API is unreachable; using the pinned release $tag"
+      say "GitHub's API is unreachable; using the pinned release $tag / 连不上 GitHub 接口，改用内置版本 $tag"
     fi
     name="vps2vpn-$tag.tar.gz"
-    say "downloading vps2vpn $tag from github.com/$REPO/releases"
+    say "downloading vps2vpn $tag from github.com/$REPO/releases / 正在下载 vps2vpn $tag"
     if try_fetch "https://github.com/$REPO/releases/download/$tag/$name" "$tmp/src.tgz"; then
       # a release that has the tarball must have its checksum too, and it must match
       fetch "https://github.com/$REPO/releases/download/$tag/$name.sha256" "$tmp/src.tgz.sha256"
@@ -216,7 +216,7 @@ fetch_panel_code() {  # tmp -> panel code unpacked under tmp (tmp/vps2vpn)
       got=$(sha256sum "$tmp/src.tgz" | awk '{print $1}')
       [ -n "$want" ] && [ "$want" = "$got" ] \
         || die "vps2vpn $tag checksum mismatch (expected ${want:-nothing}, got $got): refusing to install it"
-      say "checksum OK: $got"
+      say "checksum OK: $got / 文件校验通过"
     elif try_fetch "https://github.com/$REPO/archive/refs/tags/$tag.tar.gz" "$tmp/src.tgz"; then
       # releases made before the release workflow existed carry no tarball: use GitHub's archive of the same tag
       warn "release $tag has no $name; installing GitHub's archive of tag $tag, UNVERIFIED (no checksum)"
@@ -245,7 +245,7 @@ snapshot_before_upgrade() {  # -> SNAPSHOT=dir holding a consistent copy of the 
   old=$(pkg_version "$LIB/app/vps2vpn/__init__.py")
   stamp=$(date -u +%Y%m%d-%H%M%S)
   dir="$SNAPS/$stamp-v${old:-unknown}"
-  say "saving the current database and code to $dir"
+  say "saving the current database and code to $dir / 正在备份当前的数据库和程序"
   (umask 077 && mkdir -p "$dir") || die "could not create $dir (disk full?); nothing was changed"
   chmod 0700 "$SNAPS" "$dir"
   if [ -f "$db" ]; then
@@ -297,7 +297,7 @@ EOF
   for d in "$SNAPS"/[0-9]*-v*/; do if [ -d "$d" ]; then all+=("${d%/}"); fi; done
   for ((i = 0; i + 3 < ${#all[@]}; i++)); do rm -rf -- "${all[$i]}"; done
   SNAPSHOT="$dir"
-  say "to roll back this upgrade later:  sudo bash $SNAPSHOT/restore.sh"
+  say "to roll back this upgrade later / 以后想退回这次升级:  sudo bash $SNAPSHOT/restore.sh"
 }
 
 install_cores() {
@@ -310,7 +310,7 @@ install_cores() {
   [ -f "$LIB/.sing-box-version" ] && have_s=$(cat "$LIB/.sing-box-version")
 
   if [ "$have_x" != "$XRAY_VERSION" ] || [ ! -x "$LIB/xray" ]; then
-    say "downloading Xray $XRAY_VERSION"
+    say "downloading Xray $XRAY_VERSION / 正在下载 Xray 内核"
     local base="https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION"
     fetch "$base/$XRAY_ASSET" "$tmp/xray.zip"
     fetch "$base/$XRAY_ASSET.dgst" "$tmp/xray.dgst"
@@ -326,7 +326,7 @@ install_cores() {
   fi
 
   if [ "$have_h" != "$HYSTERIA_VERSION" ] || [ ! -x "$LIB/hysteria" ]; then
-    say "downloading Hysteria $HYSTERIA_VERSION"
+    say "downloading Hysteria $HYSTERIA_VERSION / 正在下载 Hysteria 内核"
     local base="https://github.com/apernet/hysteria/releases/download/$HYSTERIA_VERSION"
     fetch "$base/$HY_ASSET" "$tmp/hysteria"
     fetch "$base/hashes.txt" "$tmp/hashes.txt"
@@ -339,7 +339,7 @@ install_cores() {
   fi
 
   if [ "$have_s" != "$SINGBOX_VERSION" ] || [ ! -x "$LIB/sing-box" ]; then
-    say "downloading sing-box $SINGBOX_VERSION (TUIC)"
+    say "downloading sing-box $SINGBOX_VERSION (TUIC) / 正在下载 sing-box 内核"
     local v=${SINGBOX_VERSION#v} want got
     fetch "https://github.com/SagerNet/sing-box/releases/download/$SINGBOX_VERSION/sing-box-$v-linux-$SB_ARCH.tar.gz" "$tmp/sb.tgz"
     case "$SB_ARCH" in amd64) want="$SINGBOX_SHA256_amd64" ;; arm64) want="$SINGBOX_SHA256_arm64" ;; *) want="" ;; esac
@@ -363,10 +363,10 @@ install_app() {
   local tmp; tmp=$(mktemp -d)
   _TMPDIRS+=("$tmp")
   if [ -n "${V2V_SRC:-}" ] && [ -f "$V2V_SRC" ]; then
-    say "using panel code from $V2V_SRC"
+    say "using panel code from $V2V_SRC / 使用上传的面板程序"
     tar --no-same-owner --no-same-permissions -xzf "$V2V_SRC" -C "$tmp"
   elif [ -f "$here/vps2vpn/__init__.py" ]; then
-    say "using panel code next to this script"
+    say "using panel code next to this script / 使用本地的面板程序"
     cp -r "$here/vps2vpn" "$tmp/"
   else
     fetch_panel_code "$tmp"
@@ -613,14 +613,14 @@ prepare_system() {
   swap_kb=$(awk '/SwapTotal/ {print $2}' /proc/meminfo)
   free_mb=$(df -Pm / | awk 'NR==2 {print $4}')
   if [ "$mem_mb" -lt 1000 ] && [ "$swap_kb" -eq 0 ] && [ "$free_mb" -gt 3000 ] && [ ! -e /swapfile ]; then
-    say "only ${mem_mb} MB of memory: adding a 1 GB swap file"
+    say "only ${mem_mb} MB of memory: adding a 1 GB swap file / 内存较小，正在加 1 GB 虚拟内存"
     # fallocate is fast, but swapon rejects preallocated (unwritten) extents on some XFS/Btrfs setups:
     # if that happens, write the file out with dd and try once more.
     if make_swapfile fallocate || make_swapfile dd; then
       grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
     else
       rm -f /swapfile
-      say "could not enable swap (continuing without it)"
+      say "could not enable swap (continuing without it) / 虚拟内存没开成，不影响继续安装"
     fi
   fi
   # Certificates and TLS need a correct clock.
@@ -664,7 +664,7 @@ do_install() {
 
 do_uninstall() {
   need_root
-  say "removing vps2vpn"
+  say "removing vps2vpn / 正在卸载 vps2vpn"
   systemctl disable --now vps2vpn vps2vpn-xray vps2vpn-hysteria vps2vpn-tuic vps2vpn-nft 2>/dev/null || true
   rm -f /etc/systemd/system/vps2vpn*.service /usr/local/bin/vps2vpn /etc/sysctl.d/99-vps2vpn.conf \
     /etc/modules-load.d/vps2vpn.conf "$ETC/nft-hop.nft"
@@ -682,7 +682,7 @@ one_at_a_time() {   # a retried or double-clicked deploy must not run two instal
   # braces: a bare "exec 9>f 2>/dev/null" would send the rest of the installer's errors to /dev/null too
   { exec 9>"$LOCK"; } 2>/dev/null || return 0
   if ! flock -n 9; then
-    say "another vps2vpn install is running; waiting for it (up to 10 minutes)"
+    say "another vps2vpn install is running; waiting for it (up to 10 minutes) / 另一个安装正在进行，最多等 10 分钟"
     flock -w 600 9 || die "another vps2vpn install is still running"
   fi
 }
