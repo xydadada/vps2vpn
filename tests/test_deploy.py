@@ -1035,6 +1035,29 @@ class MacDeployer(unittest.TestCase):
         self.assertIn('login as the user', src)
 
 
+class DownloadedZip(unittest.TestCase):
+    """What a beginner gets from the GitHub zip: double-clickable scripts, and a clear message when the
+    Windows script is opened from inside the zip without unpacking it."""
+
+    @unittest.skipUnless(shutil.which('git') and os.path.isdir(os.path.join(ROOT_DIR, '.git'))
+                         or os.path.isfile(os.path.join(ROOT_DIR, '.git')), 'needs a git checkout')
+    def test_scripts_are_executable_in_git(self):
+        # without the x bit macOS refuses to run a double-clicked .command ("no access privileges")
+        out = subprocess.run(['git', 'ls-files', '-s', 'deploy-mac.command', 'install.sh'], cwd=ROOT_DIR,
+                             capture_output=True, text=True).stdout
+        self.assertEqual(out.count('100755 '), 2, out)
+
+    @unittest.skipUnless(os.name == 'nt', 'needs Windows cmd')
+    def test_bat_outside_its_folder_says_unzip(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        shutil.copy(os.path.join(ROOT_DIR, 'deploy-windows.bat'), d)
+        p = subprocess.run(['cmd', '/c', os.path.join(d, 'deploy-windows.bat')], input=b'\r\n',
+                           capture_output=True, timeout=60)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn(b'Extract All', p.stdout)
+
+
 
 if __name__ == '__main__':
     unittest.main()

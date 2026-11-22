@@ -54,7 +54,8 @@ selinux_label() {  # type path...
 }
 
 need_root() {
-  [ "$(id -u)" = 0 ] || die "please run as root, e.g.:  sudo bash install.sh"
+  [ "$(id -u)" = 0 ] || die "please run as root, e.g.:  sudo bash install.sh
+  需要 root 权限：先运行  sudo -i  切换成 root，再把安装命令重新粘贴一次。"
   [ "$(uname -s)" = Linux ] || die "Linux only"
   command -v systemctl >/dev/null || die "this system has no systemd"
 }
@@ -165,7 +166,8 @@ fetch() {  # url dest
   connections first (NAT64/DNS64 from your provider or a public NAT64 resolver, or Cloudflare WARP),
   then run the installer again. / 这台服务器只有 IPv6，访问不了 GitHub：先配好 NAT64/DNS64 或 WARP 再装。"
   fi
-  die "download failed: $1"
+  die "download failed: $1
+  下载失败：服务器暂时连不上 GitHub。过几分钟再运行一次安装命令；一直不行就检查服务器能否上网（curl -I https://github.com）。"
 }
 
 try_fetch() {  # url dest -> non-zero instead of dying (a file that may not exist, e.g. a release asset)
@@ -651,7 +653,8 @@ do_install() {
       systemctl restart vps2vpn
       die "the new version failed to start, so the previous version was restored${SNAPSHOT:+ (database too: sudo bash $SNAPSHOT/restore.sh)}"
     fi
-    die "panel failed to start"
+    die "panel failed to start (the log above says why)
+  面板没能启动，原因在上面的日志里。可以再运行一次安装命令试试；想看完整日志就运行  journalctl -u vps2vpn -n 50  看完整日志。"
   fi
   show_result "$json"
   if [ -n "$SNAPSHOT" ]; then
