@@ -1836,7 +1836,7 @@ class MemberWeb(tu.Base):
         st, _, _ = self.req('POST', base + 'api/password', {'new': 'mynewpassword'})
         self.assertEqual(st, 200)
         st, _, _ = self.req('POST', base + 'api/password', {'new': 'another-password'})
-        self.assertEqual(st, 403)                           # changing needs the current one
+        self.assertEqual(st, 200)                           # the link is the key: no old password needed
         st, _, _ = self.req('GET', '/s/%s/api/me' % ('x' * 24))
         self.assertEqual(st, 404)
         st, body, _ = self.req('GET', base + 'static/member.js')
