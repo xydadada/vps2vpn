@@ -2345,6 +2345,9 @@ class AirportFeatures(tu.Base):
             self.assertIn('install.sh', r['fix'])
         with mock.patch.object(shaper, 'active', return_value=True):
             self.assertTrue(doctor.speed_limits()[0]['ok'])
+        # a separate process (`vps2vpn doctor`) has applied nothing itself: it still names the network card
+        with mock.patch.object(shaper, 'active', return_value=True),                 mock.patch.object(shaper, 'default_dev', return_value='eth0'),                 mock.patch.dict(shaper._state, dev=''):
+            self.assertIn('limited on eth0', doctor.speed_limits()[0]['detail'])
 
 
 class AirportFeaturesAudit5Leftovers(tu.Base):
