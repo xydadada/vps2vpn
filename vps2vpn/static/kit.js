@@ -61,8 +61,8 @@ function placeTip(tip,x,y,w){tip.classList.remove('hide');const hw=Math.min(w/2,
 const ERR_LBL={'quota (GB)':'额度（GB）','uses':'可用次数','code valid for (days)':'邀请码有效天数','account lifetime (days)':'账号有效天数','reset day':'重置日','extra quota (GB)':'增加的流量（GB）'};
 const lbl=a=>ERR_LBL[a]||a;
 const ERR_ZH=[
- [/^(.+) must be a number$/,(m,a)=>lbl(a)+' 必须是数字'],[/^(.+) must be a whole number$/,(m,a)=>lbl(a)+' 必须是整数'],
- [/^(.+) must be between (\S+) and (\S+)$/,(m,a,b,c)=>lbl(a)+' 必须在 '+b+' 到 '+c+' 之间'],
+ [/^(.+) must be a number$/,(m,a)=>lbl(a)+'必须是数字'],[/^(.+) must be a whole number$/,(m,a)=>lbl(a)+'必须是整数'],
+ [/^(.+) must be between (\S+) and (\S+)$/,(m,a,b,c)=>lbl(a)+'必须在 '+b+' 到 '+c+' 之间'],
  [/^note: at most/,'备注最多 100 个字'],[/^inviter not found/,'找不到邀请人'],[/^a paused or expired account cannot invite/,'已停用或已到期的账号不能邀请别人'],
  [/^unlimited accounts cannot share/,'不限量账号不能分额度；需要邀请码请找管理员'],
  [/^not enough quota: (\d+) x (\S+) GB is more than the (\S+) GB/,(m,a,b,c)=>'额度不够：'+a+' × '+b+' GB 超过了你还能分出的 '+c+' GB（自己至少保留 1 GB）'],

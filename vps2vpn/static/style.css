@@ -422,6 +422,7 @@ textarea.mono{font:12.5px/1.7 var(--mono)}
 .m-stats{grid-template-columns:repeat(4,minmax(0,1fr))}
 .m-tip{font-size:12.5px;line-height:1.8;margin:0}
 .m-import{display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:18px;align-items:start}
+.m-import .btn{min-width:0;white-space:normal;text-align:center}   /* long (English) app names wrap on a phone */
 .m-qr{text-align:center}.m-qr .qr{width:170px;max-width:100%;margin:0 auto 6px}
 .m-apps{list-style:none;margin:0 0 12px;padding:0;display:flex;flex-direction:column;gap:10px}
 .m-apps li{display:flex;flex-direction:column;gap:2px;font-size:13px}.m-apps li b{font-size:12px;color:var(--muted);font-weight:700}
@@ -439,7 +440,7 @@ textarea.mono{font:12.5px/1.7 var(--mono)}
 .on-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft);margin-right:6px;vertical-align:middle}
 @media(max-width:860px){
   .m-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .m-import{grid-template-columns:1fr}
+  .m-import{grid-template-columns:minmax(0,1fr)}
   .site-grid{grid-template-columns:1fr}
   .form-grid.g3{grid-template-columns:repeat(2,minmax(0,1fr))}
   .m-hello h1{font-size:23px}

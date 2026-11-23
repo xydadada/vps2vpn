@@ -128,5 +128,19 @@ class SettingsOnPhones(unittest.TestCase):
         self.assertIn("h('div', {style: 'display:flex;flex-wrap:wrap;gap:8px'}, rulesBtn, restartBtn)", js)
 
 
+class ChineseErrorSpacing(unittest.TestCase):
+    def test_no_space_between_the_field_name_and_the_message(self):
+        kit = read('vps2vpn', 'static', 'kit.js')
+        self.assertIn("lbl(a)+'必须在 '+b+' 到 '+c+' 之间'", kit)
+        self.assertNotIn("lbl(a)+' 必须", kit)
+
+
+class MemberImportOnPhones(unittest.TestCase):
+    def test_long_app_names_do_not_widen_the_page(self):
+        css = read('vps2vpn', 'static', 'style.css')
+        self.assertIn('.m-import{grid-template-columns:minmax(0,1fr)}', css)
+        self.assertIn('.m-import .btn{min-width:0;white-space:normal', css)
+
+
 if __name__ == '__main__':
     unittest.main()
