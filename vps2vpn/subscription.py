@@ -353,12 +353,8 @@ def clash(s, u, base_url):
                      'rules': ['MATCH,REJECT']}, **_panel_pin(s))
     cn_dns = ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query']
     remote_dns = ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query']
-    # in route_plan's order (first match wins): direct names, proxied names, then the Chinese lists
-    ns_policy = {}
-    for d in list(s.get('custom_direct') or []) + list(rules.CN_DIRECT_SUFFIX):
-        ns_policy.setdefault('+.' + d, cn_dns)
-    for d in rules.proxied_suffixes(s):
-        ns_policy.setdefault('+.' + d, remote_dns)
+    # in route_plan's order (first match wins): the named domains, then the Chinese lists
+    ns_policy = {'+.' + d: cn_dns if where == 'local' else remote_dns for d, where in rules.dns_plan(s)}
     ns_policy['rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private'] = cn_dns
     return {
         'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule', 'log-level': 'warning', 'ipv6': True,
@@ -492,12 +488,14 @@ def singbox(s, u, base_url):
                               'url': '%s/rules/%s.srs' % (base_url, value), 'download_detour': 'direct',
                               'update_interval': '1d'})
     cn_sets = ['private', 'cn', 'cn-download', 'steam-cn', 'apple-cn', 'microsoft-cn']
-    # in route_plan's order (first match wins): direct names, proxied names, then the Chinese lists
-    direct_suffixes = list(s.get('custom_direct') or []) + list(rules.CN_DIRECT_SUFFIX)
-    dns_rules = [{'domain_suffix': direct_suffixes, 'server': 'local'}] if direct_suffixes else []
-    proxied = rules.proxied_suffixes(s)
-    if proxied:
-        dns_rules.append({'domain_suffix': proxied, 'server': 'remote'})
+    # in route_plan's order (first match wins): the named domains, one rule per run going to the same resolver,
+    # then the Chinese lists
+    dns_rules = []
+    for d, where in rules.dns_plan(s):
+        if dns_rules and dns_rules[-1]['server'] == where:
+            dns_rules[-1]['domain_suffix'].append(d)
+        else:
+            dns_rules.append({'domain_suffix': [d], 'server': where})
     dns_rules.append({'rule_set': cn_sets, 'server': 'local'})
     return {
         'log': {'level': 'warn'},

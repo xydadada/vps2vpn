@@ -6,15 +6,18 @@
 
 ## 1. 现在的状态
 
-- **服务端最新版：v0.2.30**（GitHub Release 标为 Latest，CI 全绿）。
+- **服务端最新版：v0.2.33**（GitHub Release 标为 Latest，CI 全绿）。
   - 0.2.28：旧面板迁移工具、旧订阅链接、29–31 号重置、重置时区、名单上限 1 万。
   - 0.2.29：第七次外部审计（报告里编号 S8-xx）。
   - 0.2.30：修好 0.2.29 卸载会中途停下的问题。
-- **客户端最新版：v1.0.25**（Windows 安装包和便携版，SHA256 和更新签名都由服务端维护者核对过）。安卓正式包还在 CI 里测。
-- 离线测试：全量 453 项通过（含迁移工具 16 项）。命令见第 4 节。
+  - 0.2.31、0.2.32：另一个会话发的（去掉 `global-client-fingerprint`、体检到网卡上查限速、新手走查修复）。
+  - 0.2.33：第八次外部审计（报告里编号 S9-xx），见第 2 节。
+- **客户端最新版：v1.0.26**（第八次审计客户端 C9-01~05 + C-32；Windows 安装包和便携版的更新签名由服务端维护者独立核对过）。
+- **安卓**：还没有正式包。CI 模拟器 API 31/33/34/35 全都在 VPN 连上约 1 秒后整机冻住（不是应用崩溃，原因没查清）。只发预发布 `test-android-1.0.26`（`vps2vpn-1.0.26-android-universal.apk`），**要用户先在真手机上试过**，再在服务端配置 `files.android`。
+- 离线测试：全量 478 项通过（含迁移工具 22 项）。命令见第 4 节。
 - **限速 / 降速从来没在真实 Linux 服务器上跑过**，只有单元测试和模拟。上线前要在测试服务器上真跑一次。
 
-## 2. 最近做了什么（0.2.17 → 0.2.30）
+## 2. 最近做了什么（0.2.17 → 0.2.33）
 
 - 机场常用功能：流量倍率、每个账号可用的服务器、流量用完降速而不是停用、速度限制（tc HTB + ifb + nft connmark，见 `vps2vpn/shaper.py`）、限速节点、邀请与备份、体检项 `speed_limits`。
 - 第五、六次外部审计的服务端条目都已处理（0.2.26、0.2.27）。没采纳的及原因：
@@ -29,6 +32,14 @@
   - 仍不采纳：gstatic.cn / ggpht.cn（理由同上）。
 - 0.2.30：`install.sh` 里 `clear_speed_limits` 在 `set -euo pipefail` 下，`ip link del v2vifb0` 找不到设备就会让卸载中途退出。现在每一步都允许失败，`tests/test_audit8.py` 加了「ip/tc/nft 全部失败」的测试。
   **教训：** 打 tag 就会发布，不管测试有没有过。所以先只推 main，等 `test` workflow（含各发行版容器里的安装和卸载）全绿，再推 tag。
+- 第八次审计（0.2.33），全部采纳：
+  - S9-01 旧订阅链接在有可信证书时先 308 到 HTTPS（`web.legacy_subscription`）。
+  - S9-02 DNS 规则按 `rules.dns_plan(s)`，它直接由 `route_plan` 生成，顺序和分流一致；`proxied_suffixes` 已删。
+  - S9-03 迁移工具：校验 UUID / Hysteria 密码 / 计数（`_whole`），null 当未设置，本月重置用新面板时区，结果文件 0600。
+  - S9-06 客户端同步只清理本轮发布过的平台的旧包；版本补成 4 位再比较；按「版本号后面的文件名」判断这一版是否已经在。注意：成员看到的仍只是最新版本的平台（`web.client_files`），留下的旧 APK 只是不删。
+  - S9-07 `clock.zone()`：数据库出错不缓存；`forget()` 增加代数 `_gen`，进行中的旧读取不写回。
+  - S9-08 体检限速只数 `cores.active_users()`。
+  - 部署器会话做的：S9-04（Mac 部署脚本引号、`ssh.exe`、`-p` 只认数字）、S9-05（整数字段拒绝小数；服务器重置日 1–31）。测试在 `tests/test_audit9.py`，已加进 CI。
 
 ## 3. 正在进行 / 没做完的事（按优先级）
 
@@ -51,15 +62,15 @@
 2. **和部署器会话共用一个目录**：它也改 `web.py`、`install.sh`、`member.js`、`app.js`，有时会自己在本地提交（不推送）。发版前看一眼 `git log origin/main..`，把它的提交审过、一起跑全量测试再推。
 3. **在真实服务器上测限速和降速**：Reality、TUIC 各测一次。还要测只开 Hysteria 的服务器：限速账号仍能用、只是不限速；降速账号在那台上应该被关掉。
 4. 客户端（详见客户端仓库的交接文档）：
-   - 1.0.24（管道权限 C-17、免责声明改成勾选同意）和 1.0.25（第七次审计客户端 6 项）都已发布，签名核对过。
-   - 安卓正式签名版：第七轮 CI（运行 45092375494）在跑，产物名应为 `vps2vpn-1.0.25-android-universal.apk`。发布后核对签名，再在服务端配置里加上 `files.android` 的文件名。
+   - 1.0.24、1.0.25、1.0.26（第八次审计客户端 C9-01~05 + C-32）都已发布，签名核对过。
+   - 安卓正式包：模拟器全部冻住（见第 1 节），只有预发布。用户在真手机上试过能用之后，核对签名，再在服务端配置里加上 `files.android` 的文件名。
 
 ## 4. 怎么测试、怎么发版
 
 离线测试（Windows 上要先指定 bash）：
 
 ```
-PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_beginner_ui
+PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_beginner_ui
 ```
 
 发版步骤：

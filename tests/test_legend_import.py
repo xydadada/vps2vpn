@@ -297,11 +297,14 @@ class LegendRefuses(unittest.TestCase):
 
     def run_tool(self, base, settings):
         p = lambda n: os.path.join(self.dir, n)
+        if os.path.exists(p('out.json')):
+            os.unlink(p('out.json'))
         for name, data in (('base.json', base), ('settings.json', settings)):
             with open(p(name), 'w', encoding='utf-8') as f:
                 json.dump(data, f)
         sqlite3.connect(p('usage.sqlite3')).execute(
-            'CREATE TABLE daily(user_id TEXT, cycle TEXT, day TEXT, upload INTEGER, download INTEGER)').connection.close()
+            'CREATE TABLE IF NOT EXISTS daily(user_id TEXT, cycle TEXT, day TEXT, upload INTEGER, download INTEGER)'
+        ).connection.close()
         err = io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
             code = li.main(['--base', p('base.json'), '--settings', p('settings.json'), '--usage', p('usage.sqlite3'),
@@ -319,6 +322,74 @@ class LegendRefuses(unittest.TestCase):
         code, err, wrote = self.run_tool({'users': []}, {'users': []})
         self.assertEqual((code, wrote), (2, False))
         self.assertIn('--base', err)
+
+    # audit 9 S9-03 ----------------------------------------------------------------------------------------
+    BASE = {'format': 'vps2vpn-backup-1', 'settings': {}, 'users': []}
+
+    def test_bad_credentials_and_counts_are_refused_before_anything_is_written(self):
+        bad = [({'uuid': 'not-a-uuid'}, 'uuid'), ({'hy_password': 'has space, comma'}, 'Hysteria'),
+               ({'total': -1}, 'total'), ({'total': True}, 'total'), ({'expire': -5}, 'expire'),
+               ({'invite_deduct': 1.5e400}, 'invite_deduct'),
+               ({'speed_policy': {'download_mbps': float('nan')}}, 'download_mbps'),
+               ({'speed_policy': {'download_mbps': True}}, 'download_mbps'),
+               ({'speed_policy': {'upload_mbps': 'inf'}}, 'upload_mbps')]
+        for change, word in bad:
+            with self.subTest(change=change):
+                code, err, wrote = self.run_tool(self.BASE, {'users': [dict(account(1, total=10 * GB), **change)]})
+                self.assertEqual((code, wrote), (2, False), err)
+                self.assertIn(word, err)
+
+    def test_null_and_odd_records_mean_not_set(self):
+        u = account(1, total=10 * GB, cycle_day=None, invite_deduct=None, quota_bonus=None, speed_policy=None,
+                    expire=None, created_at=1700000000.5)
+        code, err, wrote = self.run_tool(self.BASE, {'users': [u, account(2, quota_bonus=[], speed_policy='x')]})
+        self.assertEqual((code, wrote), (0, True), err)
+        with open(os.path.join(self.dir, 'out.json'), encoding='utf-8') as f:
+            got = {x['name']: x for x in json.load(f)['users']}
+        self.assertEqual((got['u1']['reset_day'], got['u1']['expire_at'], got['u1']['created_at']), (20, 0, 1700000000))
+        self.assertEqual(got['u1']['throttle_mbps'], 50.0)
+
+    def test_template_must_be_an_object(self):
+        p = lambda n: os.path.join(self.dir, n)
+        self.run_tool(self.BASE, {'users': []})
+        with open(p('template.json'), 'w', encoding='utf-8') as f:
+            json.dump(['DOMAIN-SUFFIX,example.org,DIRECT'], f)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            code = li.main(['--base', p('base.json'), '--settings', p('settings.json'), '--usage', p('usage.sqlite3'),
+                            '--template', p('template.json'), '-o', p('out2.json'), '--now', str(NOW)])
+        self.assertEqual((code, os.path.exists(p('out2.json'))), (2, False))
+        self.assertIn('template', err.getvalue())
+
+    def test_the_result_is_readable_by_its_owner_only(self):
+        code, err, wrote = self.run_tool(self.BASE, {'users': [account(1)]})
+        self.assertEqual((code, wrote), (0, True), err)
+        if os.name == 'posix':
+            self.assertEqual(os.stat(os.path.join(self.dir, 'out.json')).st_mode & 0o777, 0o600)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, 'out.json.tmp')))
+
+    def test_last_reset_follows_the_new_panels_time_zone(self):
+        # 2026-11-20 03:00 in Singapore is still the 19th in UTC-8: there the 20th's reset has not happened yet
+        now = int(dt.datetime(2026, 11, 20, 3, 0, tzinfo=SG).timestamp())
+        for zone, month in (('', '2026-11'), ('UTC+8', '2026-11'), ('UTC-8', '2026-10')):
+            with self.subTest(zone=zone):
+                base = dict(self.BASE, settings={'time_zone': zone})
+                u = account(1, total=10 * GB, cycle_day=20)
+                out, _ = li.import_users(base, {'users': [u]}, {'u1': (0, 0)}, now)
+                self.assertEqual(out['users'][0]['last_reset'], month)
+                db.import_all(dict(db.export_all(), users=out['users'], settings=dict(
+                    db.export_all()['settings'], time_zone=out['settings']['time_zone'])))
+                got = db.users()[0]
+                self.assertFalse(jobs.monthly_reset(got, now)[0])          # not cleared on the first check
+        self.assertEqual(li._parse_tz('UTC-8').utcoffset(None), dt.timedelta(hours=-8))
+        with self.assertRaises(li.Problem):
+            li._parse_tz('Mars/Olympus')
+
+    def test_ai_list_matches_the_panels(self):
+        self.assertEqual(set(li.AI_SUFFIX), set(rules.AI_SUFFIX))
+        self.assertNotIn('28', li.describe({'count': 0, 'renamed': [], 'login_renamed': [], 'no_login': [],
+                                            'exempt': [], 'free_gb': [], 'updown': [], 'nodes': [], 'orphans': [],
+                                            'chain': [], 'legacy': False, 'time_zone': ''}, None, {}))
 
     def test_output_over_an_input(self):
         p = os.path.join(self.dir, 'settings.json')

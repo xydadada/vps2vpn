@@ -1000,6 +1000,14 @@ class Web(Base):
             self.assertEqual(r.getheader('Location'), 'https://203.0.113.9:%d%s' % (db.settings()['panel_port'], path))
             self.assertNotIn(u['uuid'].encode(), body)
             self.assertNotIn(u['hy2_pass'].encode(), body)
+            # the old panel's links too (audit 9 S9-01): first to HTTPS, not 302 / 403 over plain HTTP
+            for old in ('/sub/%s.html', '/import/%s.html', '/sub/%s.conf', '/sub/%s.yaml'):
+                st, _, r = self.req('GET', old % u['sub_token'], tls=False)
+                self.assertEqual((st, r.getheader('Location')), (308, 'https://203.0.113.9:%d%s' % (
+                    db.settings()['panel_port'], old % u['sub_token'])))
+            db.update_user(uid, enabled=0, disabled_reason='manual')
+            self.assertEqual(self.req('GET', '/sub/%s.conf' % u['sub_token'], tls=False)[0], 308)
+            db.update_user(uid, enabled=1, disabled_reason='')
         # a self-signed panel keeps plain HTTP: most apps cannot use its HTTPS
         with mock.patch.object(web.certs, 'trusted', return_value=False):
             st, body, _ = self.req('GET', path, tls=False, headers={'User-Agent': 'clash-verge/2.0'})

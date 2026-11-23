@@ -83,7 +83,7 @@ const ERR_ZH=[
  [/^that server is already added/,'这台服务器已经加过了'],[/^cannot reach that server: (.*)$/,(m,a)=>'连不上那台服务器：'+a],
  [/^this server already belongs to main server "(.*)"/,(m,a)=>'那台服务器已经归主服务器「'+a+'」管理；要换主服务器，先在那台的面板上点「换新加入码」'],
  [/^certificate (changed|does not match)/,'那台服务器的证书变了，请删掉后用新的加入码重新添加'],
- [/^invalid number/,'数字不对'],[/^invalid port|^port must be/,'端口必须是 1–65535'],[/^reset day must be 1-31/,'重置日必须是 1–31（0 = 不重置）'],[/^reset day must be/,'重置日必须是 1–28'],[/^unknown time zone/,'时区不认识（例如 UTC+8）'],
+ [/^invalid number/,'数字不对'],[/^invalid port|^port must be/,'端口必须是 1–65535'],[/^reset day must be 1-31/,'重置日必须是 1–31（0 = 不重置）'],[/^server reset day must be/,'服务器流量重置日必须是 1–31（小月没有这一天时按月底算）'],[/^unknown time zone/,'时区不认识（例如 UTC+8）'],
  [/^turn on at least one protocol/,'至少要开一种协议'],[/^Hysteria 2 and TUIC need different/,'Hysteria 2 和 TUIC 不能用同一个 UDP 端口'],
  [/must be outside the hopping range/,'这个端口不能落在端口跳跃范围里'],[/^the panel already uses that TCP port/,'面板已经占用了这个 TCP 端口'],
  [/^server address must be/,'服务器地址必须是 IP 或域名'],[/^invalid domain name/,'域名格式不对'],[/^invalid e-mail/,'邮箱格式不对'],

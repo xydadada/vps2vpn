@@ -788,6 +788,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = db.user_by_token(token)
         if not u or not s['setup_done']:
             return self.not_found()
+        if self.base_url(s).startswith('https://') and not self.is_tls:
+            # as subscription(): with a trusted certificate the old http:// link moves to HTTPS first. The 302
+            # to /s/<token> below would otherwise send the token over plain HTTP a second time.
+            return self.send(308, '', headers={'Location': self._https_location(s), 'Cache-Control': 'no-store'})
         if ext in ('.conf', '.html') and not u['enabled']:
             return self.send(403, 'account disabled / 账号已停用', 'text/plain; charset=utf-8', {'Cache-Control': 'no-store'})
         if ext == '.html':
@@ -2108,11 +2112,14 @@ def as_bool(v):
 
 def number(v, whole=False, empty=0):
     """float() / int() of a number from JSON, with null and '' as `empty`. true / false are no numbers:
-    int(True) == 1 would quietly move a port to 1 or set a quota of 1 GB."""
+    int(True) == 1 would quietly move a port to 1 or set a quota of 1 GB. With `whole`, 443.9 is refused, not
+    cut to 443 (443.0 from a client that sends every number as a float is 443)."""
     if isinstance(v, bool):
         raise ValueError('expected a number')
     if v is None or v == '':
         return empty
+    if whole and isinstance(v, float) and not v.is_integer():     # also inf and nan
+        raise ValueError('expected a whole number')
     return int(v) if whole else float(v)
 
 
@@ -2217,8 +2224,8 @@ def validate_settings(d, s):
             out['server_reset_day'] = number(d['server_reset_day'], True, 1)
         except (TypeError, ValueError, OverflowError):
             return 'invalid number'
-        if not 1 <= out['server_reset_day'] <= 28:
-            return 'reset day must be 1-28'
+        if not 1 <= out['server_reset_day'] <= 31:      # 29-31: the last day in shorter months, as for accounts
+            return 'server reset day must be 1-31'
     if 'time_zone' in d:
         tz = clock.valid(d['time_zone'])
         if tz is None:

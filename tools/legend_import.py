@@ -22,6 +22,7 @@ import base64
 import calendar
 import datetime as dt
 import json
+import math
 import os
 import re
 import sqlite3
@@ -49,18 +50,61 @@ ORDER = ('block', 'direct', 'proxy')          # the order vps2vpn puts the three
 AI_SUFFIX = ('anthropic.com', 'claude.ai', 'claude.com', 'claudeusercontent.com', 'clau.de', 'openai.com',
              'chatgpt.com', 'oaistatic.com', 'oaiusercontent.com', 'sora.com', 'gemini.google.com',
              'aistudio.google.com', 'generativelanguage.googleapis.com', 'notebooklm.google.com',
-             'ai.google.dev', 'deepmind.google', 'x.ai', 'grok.com', 'perplexity.ai')
+             'alkalimakersuite-pa.clients6.google.com', 'proactivebackend-pa.googleapis.com',
+             'ai.google.dev', 'deepmind.google', 'x.ai', 'grok.com', 'perplexity.ai')   # = vps2vpn rules.AI_SUFFIX
+UUID_RE = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+# what Hysteria 2 (user:password), TUIC and the Shadowrocket lines can carry as they are written
+HY2_PASS_RE = re.compile(r'^[A-Za-z0-9._~!@#$%^&*+=:;?/|-]{6,128}$')
+_OFFSET = re.compile(r'UTC(?:([+-])(\d{1,2})(?::([0-5]\d))?)?')       # vps2vpn clock.parse
 
 
 class Problem(ValueError):
     pass
 
 
+def _whole(u, key, default=0):
+    """A count, byte total or time from the old panel: a whole number >= 0. A missing key or JSON null is
+    `default`; true/false, fractions and negative numbers are refused (they would be quietly turned into 1 or 0)."""
+    v = u.get(key) if isinstance(u, dict) else None
+    if v is None:
+        return default
+    if type(v) is float and math.isfinite(v) and v >= 0:
+        return int(v)                   # a time written by time.time()
+    if type(v) is not int or v < 0:
+        raise Problem('旧账号 %s 的 %s 不是非负整数：%r' % (u.get('id', '?'), key, v))
+    return v
+
+
+def _record(v):
+    return v if isinstance(v, dict) else {}
+
+
+def _parse_tz(name):
+    """tzinfo for the new panel's time_zone setting, as vps2vpn clock.parse reads it (None = not set)."""
+    name = str(name or '').strip()
+    if not name:
+        return None
+    m = _OFFSET.fullmatch(name)
+    if m:
+        if not m.group(1):
+            return dt.timezone.utc
+        hours, minutes = int(m.group(2)), int(m.group(3) or 0)
+        if hours > 14 or (hours == 14 and minutes):
+            raise Problem('新面板的重置时区 %s 看不懂' % name)
+        delta = dt.timedelta(hours=hours, minutes=minutes)
+        return dt.timezone(-delta if m.group(1) == '-' else delta, name)
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        raise Problem('新面板的重置时区 %s 在这台电脑上找不到；先在面板里改成 UTC+8 这样的写法' % name) from None
+
+
 # --- the old panel's own arithmetic (legend_sub.py), kept identical -----------------------------------------
 def cycle_key(cycle_day, ts):
     local = dt.datetime.fromtimestamp(ts, SG)
-    day = int(cycle_day)
-    if not 1 <= day <= 31:
+    day = 20 if cycle_day is None else cycle_day
+    if type(day) is not int or not 1 <= day <= 31:
         raise Problem('cycle_day outside 1..31')
     year, month = local.year, local.month
     if local.day < min(day, calendar.monthrange(year, month)[1]):
@@ -71,18 +115,18 @@ def cycle_key(cycle_day, ts):
 
 
 def legend_deducting(u, now):
-    return (bool(u.get('invited_by')) and int(u.get('invite_deduct', 0)) > 0 and u.get('enabled', True)
-            and not (int(u.get('expire', 0)) and int(u['expire']) <= now))
+    return (bool(u.get('invited_by')) and _whole(u, 'invite_deduct') > 0 and u.get('enabled', True)
+            and not (_whole(u, 'expire') and _whole(u, 'expire') <= now))
 
 
 def legend_quota(u, users, now):
     """Bytes the old panel allowed this period (0 = unlimited): legend_sub.quota_total with invites.annotate."""
-    base = int(u.get('total', 0))
+    base = _whole(u, 'total')
     if not base:
         return 0
-    bonus = u.get('quota_bonus') or {}
-    extra = int(bonus.get('bytes', 0)) if bonus.get('cycle') == cycle_key(u.get('cycle_day', 20), now) else 0
-    out = sum(int(c['invite_deduct']) for c in users if c.get('invited_by') == u['id'] and legend_deducting(c, now))
+    bonus = _record(u.get('quota_bonus'))
+    extra = _whole(bonus, 'bytes') if bonus.get('cycle') == cycle_key(u.get('cycle_day'), now) else 0
+    out = sum(_whole(c, 'invite_deduct') for c in users if c.get('invited_by') == u['id'] and legend_deducting(c, now))
     return max(1, base + extra - out)
 
 
@@ -107,8 +151,10 @@ def read_usage(path, users, now):
         out = {}
         for u in users:
             row = db.execute('SELECT COALESCE(SUM(upload),0), COALESCE(SUM(download),0) FROM daily '
-                             'WHERE user_id=? AND cycle=?', (u['id'], cycle_key(u.get('cycle_day', 20), now))).fetchone()
-            out[u['id']] = (int(row[0]), int(row[1]))
+                             'WHERE user_id=? AND cycle=?', (u['id'], cycle_key(u.get('cycle_day'), now))).fetchone()
+            if not all(type(n) is int and n >= 0 for n in row):
+                raise Problem('流量记录里账号 %s 的用量不是非负整数' % u['id'])
+            out[u['id']] = (row[0], row[1])
         return out
     except sqlite3.DatabaseError as e:
         raise Problem('流量记录文件读不了（%s）：是 usage.sqlite3 吗？' % e)
@@ -155,14 +201,23 @@ def _speed(u, quota, report):
     """throttle_mbps for vps2vpn (0 = stop when the quota is used up)."""
     if not quota or u.get('quota_overrun') != 'throttle':
         return 0
-    p = u.get('speed_policy') or {}
+    p = _record(u.get('speed_policy'))
     if p.get('exempt'):
         report['exempt'].append(u['id'])
         return MAX_MBPS
-    try:
-        down, up = float(p.get('download_mbps', 50)), float(p.get('upload_mbps', 5))
-    except (TypeError, ValueError):
-        down, up = 50.0, 5.0
+    speeds = []
+    for key, default in (('download_mbps', 50.0), ('upload_mbps', 5.0)):
+        v = p.get(key)
+        if v is None:
+            v = default
+        try:                            # the old panel wrote numbers, sometimes as text ("50")
+            f = float(v) if type(v) in (int, float, str) else float('nan')
+        except ValueError:
+            f = float('nan')
+        if not math.isfinite(f) or f <= 0:          # NaN would become "no limit", true would become 1 Mbps
+            raise Problem('旧账号 %s 的降速速度 %s 不对：%r' % (u['id'], key, v))
+        speeds.append(f)
+    down, up = speeds
     if p and p.get('follow_quota') is False:
         report['free_gb'].append(u['id'])
     if up != down:
@@ -177,10 +232,12 @@ def import_users(base, legend, usage, now):
     old = legend.get('users') if isinstance(legend, dict) else None
     if not isinstance(old, list):
         raise Problem('--settings 里没有 users：是旧面板的 settings.json 吗？')
-    report = {'renamed': [], 'login_renamed': [], 'reset_day': [], 'exempt': [], 'free_gb': [], 'updown': [],
+    report = {'renamed': [], 'login_renamed': [], 'exempt': [], 'free_gb': [], 'updown': [],
               'nodes': [], 'orphans': [], 'chain': [], 'no_login': [], 'legacy': bool(legend.get('legacy')),
               'count': 0}
     users = [dict(u) for u in base['users']]
+    base_settings = _record(base.get('settings'))
+    panel_tz = _parse_tz(base_settings.get('time_zone')) or SG
     taken = {str(u.get('name', '')).casefold() for u in users}
     seen = {k: {u.get(k) for u in users} for k in ('sub_token', 'uuid', 'hy2_pass')}
     next_id = max([int(u.get('id') or 0) for u in users] + [0]) + 1
@@ -201,6 +258,12 @@ def import_users(base, legend, usage, now):
             seen[k_new].add(v)
         if not re.fullmatch(r'[A-Za-z0-9_-]{16,64}', u['token']):
             raise Problem('旧账号 %s 的订阅 token 格式 vps2vpn 不认' % u['id'])
+        for k in ('total', 'expire', 'invite_deduct', 'created_at'):
+            _whole(u, k)                                      # every count, whether or not it is used below
+        if not UUID_RE.fullmatch(u['uuid']):
+            raise Problem('旧账号 %s 的 uuid 不是 UUID：恢复后 Xray 会起不来' % u['id'])
+        if not HY2_PASS_RE.fullmatch(u['hy_password']):
+            raise Problem('旧账号 %s 的 Hysteria 密码里有空格、逗号或别的字符，订阅里写不进去' % u['id'])
         name = pick_name(u, taken)
         taken.add(name.casefold())
         login = u.get('member_login') if isinstance(u.get('member_login'), dict) else {}
@@ -212,16 +275,18 @@ def import_users(base, legend, usage, now):
             report['renamed'].append((u['id'], wanted, name))
         if login.get('password_hash') and login.get('enabled', True) and not login_hash:
             report['no_login'].append(u['id'])
-        day = int(u.get('cycle_day', 20))
+        day = 20 if u.get('cycle_day') is None else u['cycle_day']
         cycle_key(day, now)                                   # rejects an impossible day
         reset_day = day                                       # 29-31 fall on a short month's last day, as before
-        here = dt.datetime.fromtimestamp(now, SG)
+        # the month as the new panel will see it: in its own time zone (UTC+8, the old panel's, if none is set),
+        # or its first reset check would think a month had passed and clear this month's usage
+        here = dt.datetime.fromtimestamp(now, panel_tz)
         prev = (here.year - 1, 12) if here.month == 1 else (here.year, here.month - 1)
         this_month = min(day, calendar.monthrange(here.year, here.month)[1])
         last_reset = '%04d-%02d' % ((here.year, here.month) if here.day >= this_month else prev)
-        total = int(u.get('total') or 0)
-        bonus = u.get('quota_bonus') or {}
-        extra = int(bonus.get('bytes', 0)) if total and bonus.get('cycle') == cycle_key(day, now) else 0
+        total = _whole(u, 'total')
+        bonus = _record(u.get('quota_bonus'))
+        extra = _whole(bonus, 'bytes') if total and bonus.get('cycle') == cycle_key(day, now) else 0
         up, down = usage.get(u['id'], (0, 0))
         inviter = u.get('invited_by') or ''
         if inviter and inviter not in ids:
@@ -232,11 +297,11 @@ def import_users(base, legend, usage, now):
         new.append({
             'id': ids[u['id']], 'name': name, 'uuid': u['uuid'], 'hy2_pass': u['hy_password'],
             'sub_token': u['token'], 'quota_gb': total / GIB, 'extra_gb': extra / GIB,
-            'expire_at': int(u.get('expire') or 0), 'reset_day': reset_day, 'last_reset': last_reset,
+            'expire_at': _whole(u, 'expire'), 'reset_day': reset_day, 'last_reset': last_reset,
             'used_up': up, 'used_down': down,
             'enabled': 1 if u.get('enabled', True) else 0, 'disabled_reason': '' if u.get('enabled', True) else 'manual',
-            'note': note[:200], 'created_at': int(u.get('created_at', 0) or 0), 'login_hash': login_hash,
-            'invited_by': ids.get(inviter, 0), 'invite_deduct': int(u.get('invite_deduct', 0)) / GIB if inviter in ids else 0,
+            'note': note[:200], 'created_at': _whole(u, 'created_at'), 'login_hash': login_hash,
+            'invited_by': ids.get(inviter, 0), 'invite_deduct': _whole(u, 'invite_deduct') / GIB if inviter in ids else 0,
             'throttle_mbps': _speed(u, total, report), 'speed_mbps': 0, 'throttled': 0,
         })
     # vps2vpn also charges an inviter for what an inactive invitee passed on to its own invitees; the old
@@ -245,14 +310,14 @@ def import_users(base, legend, usage, now):
     for u in old:
         by_inviter.setdefault(u.get('invited_by'), []).append(u)
     for u in old:
-        if u.get('invited_by') and not legend_deducting(u, now) and int(u.get('invite_deduct', 0)) > 0:
+        if u.get('invited_by') and not legend_deducting(u, now) and _whole(u, 'invite_deduct') > 0:
             if any(legend_deducting(c, now) for c in by_inviter.get(u['id'], ())):
                 report['chain'].append(u['invited_by'])
     report['count'] = len(new)
     out = dict(base)
     out['users'] = users + new
     # the old panel changed months at midnight Singapore time; keep that unless the new panel already chose a zone
-    s = dict(base.get('settings') or {})
+    s = dict(base_settings)
     report['time_zone'] = s.get('time_zone') or ''
     if not report['time_zone']:
         s['time_zone'] = 'UTC+8'
@@ -344,8 +409,6 @@ def describe(report, rules_report, settings):
         lines.append('  · %s 以前用 “%s” 登录成员中心，以后要用 “%s” 登录（密码不变），请告诉对方。' % (oid, old, new))
     for oid in report['no_login']:
         lines.append('  · %s 的成员中心密码格式不认，导入后只能用订阅链接打开成员中心，需要时请重设密码。' % oid)
-    for oid, day in report['reset_day']:
-        lines.append('  · %s 每月 %d 号重置，vps2vpn 最晚只能设 28 号：以后每月 28 号重置。' % (oid, day))
     for oid in report['exempt']:
         lines.append('  · %s 以前“始终不限速”：流量用完后按 %d Mbps（等于不限速）继续用。' % (oid, MAX_MBPS))
     for oid in report['free_gb']:
@@ -403,6 +466,29 @@ def describe(report, rules_report, settings):
 NAMES = {'block': '拦截', 'direct': '直连', 'proxy': '代理'}
 
 
+def write_private(path, data):
+    """The merged backup holds every account's UUID, passwords and subscription token: readable by its owner
+    only (0600), written whole or not at all."""
+    tmp = path + '.tmp'
+    try:
+        os.unlink(tmp)                  # a left-over file would keep its old permissions
+    except FileNotFoundError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0), 0o600)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            if hasattr(os, 'fchmod'):
+                os.fchmod(f.fileno(), 0o600)        # whatever the umask
+            json.dump(data, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description='把旧 legend 面板的账号（和分流规则）合并进 vps2vpn 备份文件。')
     ap.add_argument('--base', required=True, help='新 vps2vpn 面板导出的备份 JSON')
@@ -431,12 +517,12 @@ def main(argv=None):
         out, report = import_users(base, legend, read_usage(a.usage, users, now), now)
         rules_report = None
         if a.template:
-            lists, rules_report = convert_rules(read_json(a.template, '旧模板 template.json').get('rules'), targets)
+            template = read_json(a.template, '旧模板 template.json')
+            if not isinstance(template, dict):
+                raise Problem('旧模板 template.json 不是对象')
+            lists, rules_report = convert_rules(template.get('rules'), targets)
             out = merge_rules(out, lists)
-        tmp = a.output + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(out, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, a.output)
+        write_private(a.output, out)
     except Problem as e:
         print('没有写出文件：%s' % e, file=sys.stderr)
         return 2

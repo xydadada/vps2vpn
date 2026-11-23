@@ -13,6 +13,7 @@ import time
 _OFFSET = re.compile(r'UTC(?:([+-])(\d{1,2})(?::([0-5]\d))?)?')
 _lock = threading.Lock()
 _cached = (0.0, None, None)          # (read at, name, tzinfo or None)
+_gen = 0                             # bumped by forget(): a reading begun before it is not kept
 _TTL = 30
 
 
@@ -53,24 +54,33 @@ def zone():
     """The owner's time zone (None = the server's clock). Re-read from the settings at most every 30 s."""
     global _cached
     now = time.monotonic()
-    at, name, tz = _cached
+    with _lock:
+        at, name, tz = _cached
+        gen = _gen
     if at and now - at < _TTL:
         return tz
     try:
         from . import db
         name = db.settings().get('time_zone') or ''
-        tz = parse(name)
     except Exception:
-        tz = None
+        # The database busy for a moment: this once on the server's clock (or the last zone read), but not
+        # remembered for 30 s.
+        return tz if at else None
+    try:
+        tz = parse(name)
+    except ValueError:
+        tz = None                    # a setting this system cannot read: the server's clock, as the panel says
     with _lock:
-        _cached = (now, name, tz)
+        if _gen == gen:
+            _cached = (now, name, tz)
     return tz
 
 
 def forget():
     """Call after the setting changes, so the next reading uses it."""
-    global _cached
+    global _cached, _gen
     with _lock:
+        _gen += 1
         _cached = (0.0, None, None)
 
 

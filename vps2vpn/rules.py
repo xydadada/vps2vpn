@@ -51,11 +51,13 @@ AI_SUFFIX = ['anthropic.com', 'claude.ai', 'claude.com', 'claudeusercontent.com'
              'ai.google.dev', 'deepmind.google', 'x.ai', 'grok.com', 'perplexity.ai']
 
 
-def proxied_suffixes(s):
-    """Domains route_plan sends through the proxy by name (in its order). Their DNS goes to the remote resolver
-    too: the cn list's catch-all would otherwise ask a Chinese one about them (Google's .cn names, the owner's
-    own proxy list)."""
-    return [v for kind, v, to in route_plan(s) if kind == 'suffix' and to == 'proxy']
+def dns_plan(s):
+    """[(domain, 'local' | 'remote')] for the domains route_plan names, in its order (first match wins): names
+    sent direct are looked up by the Chinese resolver, names sent through the proxy by the remote one. Built
+    from route_plan itself, so a domain the owner moved to the other list is looked up where its traffic goes
+    (the cn list's catch-all would otherwise ask a Chinese resolver about Google's .cn names)."""
+    return [(v, 'local' if to in ('direct', 'cn') else 'remote') for kind, v, to in route_plan(s)
+            if kind == 'suffix' and to in ('direct', 'cn', 'proxy')]
 
 
 def route_plan(s):

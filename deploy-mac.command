@@ -24,26 +24,63 @@ safe_url() {
 # What a beginner pastes into the IP prompt -> HOST, T_USER, T_PORT (same as parse_target() in deploy.py):
 # "203.0.113.10:22", "root@203.0.113.10", "[v6]:2222", a whole "ssh -i key.pem -p 2222 ubuntu@203.0.113.10" from a cloud
 # console, http://203.0.113.10/, and dots or digits typed by a Chinese input method (。．１２３).
+# Written for the bash 3.2 macOS ships with: no ${x,,}, and no "${W[@]}" of an empty array under set -u.
 parse_target() {
-  local t="$1" n dest="" u re6='^\[([0-9A-Fa-f:.]+)\](:([0-9]+))?$' re4='^([^:]*):([0-9]*)$'
+  local t="$1" n dest="" u w i q c len have W WN re6='^\[([0-9A-Fa-f:.]+)\](:([0-9]+))?$' re4='^([^:]*):([0-9]*)$'
   T_USER=""; T_PORT=""
   n=$(printf '%s' "$t" | perl -CS -MUnicode::Normalize -pe '$_ = NFKC($_); s/\x{3002}|\x{FF61}/./g' 2>/dev/null) && t="$n"
-  t=$(printf '%s' "$t" | sed -e 's/"[^"]*"/x/g' -e "s/'[^']*'/x/g")      # -i "My Key.pem" is one word
-  set -f; set -- $t; set +f
-  if [ "${1:-}" = ssh ]; then
-    shift
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -p|-l) if [ $# -ge 2 ]; then if [ "$1" = -p ]; then T_PORT="$2"; else T_USER="$2"; fi; shift; fi ;;
-        -p[0-9]*) T_PORT="${1#-p}" ;;
-        -i|-o|-F|-J|-L|-R|-D|-b|-c|-m|-E|-W) [ $# -lt 2 ] || shift ;;
+  t="${t#"${t%%[![:space:]]*}"}"; t="${t%"${t##*[![:space:]]}"}"
+  q="${t:0:1}"                                   # the whole paste in one pair of quotes: what is inside
+  if [ ${#t} -ge 2 ] && { [ "$q" = '"' ] || [ "$q" = "'" ]; } && [ "${t:${#t}-1:1}" = "$q" ]; then
+    w="${t:1:${#t}-2}"
+    case "$w" in *"$q"*) ;; *) t="${w#"${w%%[![:space:]]*}"}"; t="${t%"${t##*[![:space:]]}"}" ;; esac
+  fi
+  w=$(printf '%s' "${t%%[[:space:]]*}" | tr 'A-Z' 'a-z')
+  if [ "$w" = ssh ] || [ "$w" = ssh.exe ]; then  # SSH, or ssh.exe copied from Windows
+    # its words as a shell splits them, in W[0..WN-1]: -i "My Key.pem" is one word, and -p "2222" or
+    # "ubuntu@203.0.113.10" keep what is inside the quotes (the old sed turned every quoted word into x)
+    W=(); WN=0; i=0; len=${#t}; q=""; w=""; have=0
+    while [ $i -lt $len ]; do
+      c="${t:i:1}"
+      if [ "$q" = "'" ]; then
+        if [ "$c" = "'" ]; then q=""; else w="$w$c"; fi
+      elif [ "$q" = '"' ]; then
+        if [ "$c" = '"' ]; then q=""
+        elif [ "$c" = '\' ] && [ $((i + 1)) -lt $len ] && { [ "${t:i+1:1}" = '"' ] || [ "${t:i+1:1}" = '\' ]; }; then
+          i=$((i + 1)); w="$w${t:i:1}"
+        else w="$w$c"; fi
+      else
+        case "$c" in
+          ' '|$'\t'|$'\n') if [ $have = 1 ]; then W[WN]="$w"; WN=$((WN + 1)); w=""; have=0; fi ;;
+          '"'|"'") q="$c"; have=1 ;;
+          '\') if [ $((i + 1)) -lt $len ]; then i=$((i + 1)); w="$w${t:i:1}"; fi; have=1 ;;
+          *) w="$w$c"; have=1 ;;
+        esac
+      fi
+      i=$((i + 1))
+    done
+    if [ $have = 1 ]; then W[WN]="$w"; WN=$((WN + 1)); fi
+    if [ -n "$q" ]; then read -r -a W <<< "$t"; WN=${#W[@]}; fi      # an unclosed quote: plain words
+    i=1
+    while [ $i -lt $WN ]; do
+      w="${W[i]}"
+      case "$w" in
+        -p|-l) if [ $((i + 1)) -lt $WN ]; then
+                 i=$((i + 1)); if [ "$w" = -p ]; then T_PORT="${W[i]}"; else T_USER="${W[i]}"; fi
+               fi ;;
+        -p*) case "${w#-p}" in *[!0-9]*) ;; *) T_PORT="${w#-p}" ;; esac ;;    # -p2222, not -p2222abc
+        -i|-o|-F|-J|-L|-R|-D|-b|-c|-m|-E|-W) i=$((i + 1)) ;;               # an option with a value: skip both
         -*) ;;
-        *) [ -n "$dest" ] || dest="$1" ;;
+        *) [ -n "$dest" ] || dest="$w" ;;
       esac
-      shift
+      i=$((i + 1))
     done
     t="$dest"
-  elif [ $# -gt 1 ]; then
+  fi
+  # quotes around what is left are not part of it ("203.0.113.10", 'root@203.0.113.10'), as in deploy.py
+  while :; do case "$t" in \"*|\'*) t="${t:1}" ;; *\"|*\') t="${t%?}" ;; *) break ;; esac; done
+  set -f; set -- $t; set +f
+  if [ $# -gt 1 ]; then
     t=""
   else
     t="${1:-}"

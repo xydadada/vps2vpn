@@ -656,6 +656,34 @@ class ServerMonth(tu.Base):
         with self.assertRaises(members.Refused):
             members.create_invite('admin', 5, 7, reset_day=32)
 
+    def test_the_time_zone_is_not_stuck_on_a_failed_or_stale_reading(self):
+        # S9-07: a busy database once is not remembered for 30 s, and forget() wins over a reading in flight
+        import datetime as dt
+        from vps2vpn import clock
+        self.addCleanup(clock.forget)
+        clock.forget()
+        db.set_settings(time_zone='UTC+8')
+        with mock.patch.object(db, 'settings', side_effect=RuntimeError('database is locked')):
+            self.assertIsNone(clock.zone())
+        self.assertEqual(clock.zone().utcoffset(None), dt.timedelta(hours=8))
+        real = db.settings
+
+        def changed_meanwhile():
+            v = real()
+            db.set_settings(time_zone='UTC-5')
+            clock.forget()                          # what the panel does after saving the setting
+            return v
+
+        clock.forget()
+        with mock.patch.object(db, 'settings', side_effect=changed_meanwhile):
+            self.assertEqual(clock.zone().utcoffset(None), dt.timedelta(hours=8))   # the reading it began
+        self.assertEqual(clock.zone().utcoffset(None), dt.timedelta(hours=-5))      # not kept: read again
+        # a reading that fails after one succeeded keeps the last zone, without remembering the failure
+        clock._cached = (clock._cached[0] - 60,) + clock._cached[1:]
+        with mock.patch.object(db, 'settings', side_effect=RuntimeError('database is locked')):
+            self.assertEqual(clock.zone().utcoffset(None), dt.timedelta(hours=-5))
+        self.assertLess(clock._cached[0], time.monotonic() - 30)
+
     def test_custom_lists_take_a_whole_imported_rule_set(self):
         many = ['d%d.example.com' % i for i in range(web.CUSTOM_LIST_MAX)]
         self.assertEqual(len(web.validate_settings({'custom_proxy': many}, db.settings())['custom_proxy']),
@@ -2295,10 +2323,25 @@ class AirportFeatures(tu.Base):
         self.assertIn('1.1.1.1', dict(policy)['+.example.cn'][0])
         self.assertIn('223.5.5.5', dict(policy)['+.a.example.cn'][0])
         dns = subscription.singbox(s, db.user(u['id']), 'https://203.0.113.9:8443')['dns']['rules']
-        self.assertEqual([r['server'] for r in dns], ['local', 'remote', 'local'])
-        self.assertIn('a.example.cn', dns[0]['domain_suffix'])
+        self.assertEqual([r['server'] for r in dns], ['local', 'remote', 'local', 'local'])
+        self.assertEqual(dns[0]['domain_suffix'], ['a.example.cn'])
         self.assertTrue({'example.cn', 'googleapis.cn'} <= set(dns[1]['domain_suffix']))
-        self.assertNotIn('a.example.cn', dns[1]['domain_suffix'])
+        self.assertIn('cdn-apple.com', dns[2]['domain_suffix'])         # the built-in direct list
+        # audit 9 S9-02: a built-in direct domain the owner sends through the proxy is looked up remotely too
+        db.set_settings(custom_proxy=['cdn-apple.com', 'x.mzstatic.com'], custom_direct=[])
+        s = db.settings()
+        dns = subscription.singbox(s, db.user(u['id']), 'https://203.0.113.9:8443')['dns']['rules']
+        local = {d for r in dns if r['server'] == 'local' for d in r.get('domain_suffix', [])}
+        remote = {d for r in dns if r['server'] == 'remote' for d in r.get('domain_suffix', [])}
+        self.assertTrue({'cdn-apple.com', 'x.mzstatic.com'} <= remote)
+        self.assertNotIn('cdn-apple.com', local)
+        first = next(i for i, r in enumerate(dns) if 'x.mzstatic.com' in r.get('domain_suffix', []))
+        self.assertLess(first, next(i for i, r in enumerate(dns) if 'mzstatic.com' in r.get('domain_suffix', [])))
+        policy = subscription.clash(s, db.user(u['id']), 'https://203.0.113.9:8443')['dns']['nameserver-policy']
+        keys = list(policy)
+        self.assertIn('1.1.1.1', policy['+.cdn-apple.com'][0])
+        self.assertLess(keys.index('+.x.mzstatic.com'), keys.index('+.mzstatic.com'))
+        self.assertIn('223.5.5.5', policy['+.mzstatic.com'][0])
         # audit 8 S8-05: a line break in a name stays inside the Clash file's comment line
         db.update_user(u['id'], name='two\nproxies: [] x')
         text = subscription.clash_yaml(db.settings(), db.user(u['id']), 'https://203.0.113.9:8443')
@@ -2353,6 +2396,17 @@ class AirportFeatures(tu.Base):
             r = doctor.speed_limits()[0]
             self.assertFalse(r['ok'])
             self.assertIn('not', r['detail'])
+
+
+    def test_doctor_counts_only_the_accounts_served_here(self):
+        # S9-08: an account only on another server is not "limited here"
+        from vps2vpn import doctor, shaper
+        mk('elsewhere', 0, speed_mbps=10, servers='abcd1234')
+        mk('off', 0, speed_mbps=10, enabled=0)
+        with mock.patch.object(shaper, 'active', return_value=False),                 mock.patch.object(shaper, 'available', return_value=False):
+            self.assertEqual(doctor.speed_limits(), [])
+            mk('here', 0, speed_mbps=10)
+            self.assertIn('1 account', doctor.speed_limits()[0]['detail'])
 
 
 class AirportFeaturesAudit5Leftovers(tu.Base):
@@ -3242,6 +3296,36 @@ class ClientSync(unittest.TestCase):
         self.assertEqual(clientsync._manifest(self.dir), [calls[0]])
         self.assertEqual(self._sync(), '1.0.9')
         self.assertEqual(set(clientsync._manifest(self.dir)), {android, windows})
+
+    def test_a_release_for_one_platform_keeps_the_other_platforms_older_installer(self):
+        # S9-06: a Windows-only release (or one whose APK failed this round) must not delete the older APK
+        old_win, old_apk = 'vps2vpn-1.0.8-windows-amd64-setup.exe', 'vps2vpn-1.0.8-android-arm64.apk'
+        self._release('1.0.8', {old_win: b'w8', old_apk: b'a8'})
+        self.assertEqual(self._sync(), '1.0.8')
+        new_win = 'vps2vpn-1.0.9-windows-amd64-setup.exe'
+        self._release('1.0.9', {new_win: b'w9'})
+        self.assertEqual(self._sync(), '1.0.9')
+        names = sorted(n for n in os.listdir(self.dir) if not n.startswith('.'))
+        self.assertEqual(names, [old_apk, old_apk + '.sig', new_win, new_win + '.sig'])
+        self.assertEqual(set(clientsync._manifest(self.dir)), {old_apk, new_win})
+        # once Android is published too, its older APK goes
+        new_apk = 'vps2vpn-1.0.10-android-arm64.apk'
+        self._release('1.0.10', {new_apk: b'a10', 'vps2vpn-1.0.10-windows-amd64-setup.exe': b'w10'})
+        self.assertEqual(self._sync(), '1.0.10')
+        names = sorted(n for n in os.listdir(self.dir) if not n.startswith('.'))
+        self.assertEqual(names, [new_apk, new_apk + '.sig', 'vps2vpn-1.0.10-windows-amd64-setup.exe',
+                                 'vps2vpn-1.0.10-windows-amd64-setup.exe.sig'])
+
+    def test_versions_compare_whatever_their_length(self):
+        self.assertEqual(clientsync._version('1.0'), clientsync._version('1.0.0'))
+        self.assertLess(clientsync._version('1.0.9'), clientsync._version('1.0.10'))
+        self.assertLess(clientsync._version('1.1'), clientsync._version('1.1.0.1'))
+        # a folder holding 1.0.0 is not "older" than a release tagged 1.0: nothing fetched again
+        self._release('1.0.0', {'vps2vpn-1.0.0-windows-amd64-setup.exe': b'w'})
+        self.assertEqual(self._sync(), '1.0.0')
+        self._release('1.0', {'vps2vpn-1.0-windows-amd64-setup.exe': b'w'})
+        self.assertIsNone(self._sync())
+        self.assertFalse(os.path.exists(os.path.join(self.dir, 'vps2vpn-1.0-windows-amd64-setup.exe')))
 
     def test_a_bad_signature_or_a_prerelease_is_not_published(self):
         self._release('1.0.9', {'vps2vpn-1.0.9-windows-amd64-setup.exe': b'setup'})

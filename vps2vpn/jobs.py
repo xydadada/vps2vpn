@@ -205,7 +205,7 @@ def server_month(s, health=None, now=None):
     if 'rx_total' not in h:
         return s['server_month']
     rec = dict(s['server_month'] or {})
-    period = period_of(now, max(1, min(28, int(s['server_reset_day'] or 1))))
+    period = period_of(now, max(1, min(31, int(s['server_reset_day'] or 1))))    # 31: the last day of each month
     if rec.get('period') != period:
         if rec.get('period'):
             log('server traffic %s: %.1f GB' % (rec['period'], (rec.get('rx', 0) + rec.get('tx', 0)) / (1 << 30)))

@@ -199,7 +199,9 @@ def rule_mirror():
 def speed_limits():
     """Accounts with a speed limit on a server that cannot hold them to it."""
     from . import shaper
-    limited = [u for u in db.users() if u['enabled'] and db.limit_mbps(u) > 0]
+    # the accounts this server's cores serve (not those only on other servers, nor a slowed-down one sent to
+    # servers that can hold it to its speed)
+    limited = [u for u in cores.active_users() if db.limit_mbps(u) > 0]
     if not limited:
         return []
     if shaper.active():

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.33
+
+Fixes from the eighth outside review.
+第八轮外部审计的修复。
+
+- With a trusted certificate, the old panel's subscription links (`/sub/<token>.html`, `.conf`, `.yaml`, `/import/...`) now move to HTTPS first, as `/s/<token>` already did. Before, the `.html` link redirected over plain HTTP and sent the token in the clear a second time.
+  有可信证书时，旧面板的订阅链接（`/sub/<token>.html`、`.conf`、`.yaml`、`/import/...`）也会先跳到 HTTPS，和 `/s/<token>` 一样。以前 `.html` 链接会在明文 HTTP 上再跳一次，token 又明文发了一遍。
+- Clash and sing-box DNS rules follow the routing order exactly. A domain in your own proxy list (or a sub-domain of a built-in direct one) is looked up by the remote resolver, not a Chinese one, so its traffic and its DNS go the same way.
+  Clash 和 sing-box 的 DNS 规则与分流规则的顺序完全一致。你自己代理列表里的域名（或者内置直连域名的子域名）会交给国外 DNS 解析，不再问国内 DNS，流量和 DNS 走同一条路。
+- Client auto-update: a release that has only a Windows installer (or whose Android build failed to download this time) no longer deletes the older Android APK. Versions such as 1.0 and 1.0.0 count as the same, so nothing is downloaded twice.
+  客户端自动同步：新版本只有 Windows 安装包（或者这次安卓包下载失败）时，不会再删掉旧的安卓 APK。1.0 和 1.0.0 算同一个版本，不会重复下载。
+- The monthly reset time zone is not stuck on the server's clock for 30 seconds after the database was briefly busy, and a reading taken while you changed the setting no longer brings back the old zone.
+  数据库短暂繁忙时，月重置时区不会在 30 秒内一直按服务器本地时间算；改时区设置的同时有读取在进行，也不会把旧时区写回去。
+- `vps2vpn doctor` counts only the accounts this server serves when it checks speed limits; accounts that only use other servers no longer cause a false warning.
+  `vps2vpn doctor` 检查限速时只统计这台服务器实际服务的账号；只用其他服务器的账号不会再引起误报。
+- The server's monthly traffic reset day can be 1-31; in shorter months it falls on the last day.
+  服务器流量重置日可以设 1–31 号；小月没有那一天时按月底算。
+- Whole-number fields (ports, days) refuse 443.9 instead of quietly cutting it to 443.
+  端口、天数这类整数字段收到 443.9 时会报错，不再悄悄截成 443。
+- Mac deployer: a pasted IP, user or port in quotes is kept as it is (it used to become the letter x); `SSH` and `ssh.exe` are recognised, and `-p2222abc` is not taken as a port.
+  Mac 部署脚本：粘贴时带引号的 IP、用户名、端口会原样保留（以前会变成字母 x）；能识别 `SSH` 和 `ssh.exe`，`-p2222abc` 不再被当成端口。
+- Migration tool (`tools/legend_import.py`): refuses bad UUIDs, passwords that cannot go into a subscription, and non-numeric counts before writing anything; uses the new panel's time zone for this month's reset; writes the result readable by its owner only.
+  迁移工具（`tools/legend_import.py`）：写入任何东西之前，先拒绝格式不对的 UUID、写不进订阅的密码和不是数字的计数；本月重置按新面板的时区算；结果文件只有所有者能读。
+
 ## 0.2.32
 
 - Clearing the traffic-rate box on the servers page and saving no longer sets it to 0 (which meant "this server's traffic is not counted"). An empty number box now says what it needs; an empty server reset day means the 1st.

@@ -23,7 +23,7 @@ MAX_INSTALLER = 512 << 20
 MAX_SIG = 4096
 MANIFEST = '.vps2vpn-auto.json'        # names this module downloaded, so only those are ever removed
 # What an app installs by itself; a portable zip would only add a big file nobody updates from.
-SELF_UPDATING = re.compile(r'vps2vpn-v?(\d+(?:\.\d+){1,3})-(?:windows-[a-z0-9]+-setup\.exe|android-[a-z0-9]+\.apk)')
+SELF_UPDATING = re.compile(r'vps2vpn-v?(\d+(?:\.\d+){1,3})-(?:(windows)-[a-z0-9]+-setup\.exe|(android)-[a-z0-9]+\.apk)')
 
 _lock = threading.Lock()
 
@@ -117,7 +117,13 @@ def signature_ok(name, sha256_hex, size, sig_text, public=None):
 
 # --- syncing --------------------------------------------------------------------------------------
 def _version(v):
-    return tuple(int(x) for x in v.split('.'))
+    """For comparing: 1.0 and 1.0.0 are the same version (a plain tuple would put (1, 0) below (1, 0, 0))."""
+    t = tuple(int(x) for x in v.split('.'))
+    return t + (0,) * (4 - len(t))
+
+
+def _platform(m):
+    return m.group(2) or m.group(3)
 
 
 def _get(url, limit, timeout=30):
@@ -212,10 +218,21 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
         held = held_version(folder)
         if held is not None and held > newest:
             return None
-        # One platform's installer at newest does not mean its siblings arrived.
-        missing = {name for name, v in wanted.items() if v == newest and
-                   (not os.path.isfile(os.path.join(folder, name)) or
-                    not os.path.isfile(os.path.join(folder, name + '.sig')))}
+        # One platform's installer at newest does not mean its siblings arrived. Each build (the name after its
+        # version) counts as here when this folder holds it signed at that version, however it is written
+        # (1.0 = 1.0.0).
+        have = {}
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            names = []
+        for n in names:
+            m = SELF_UPDATING.fullmatch(n)
+            if m and os.path.isfile(os.path.join(folder, n + '.sig')):
+                slot = n[m.end(1):]
+                have[slot] = max(have.get(slot, ()), _version(m.group(1)))
+        missing = {name for name, v in wanted.items()
+                   if v == newest and have.get(name[SELF_UPDATING.fullmatch(name).end(1):], ()) < newest}
         if not missing:
             return None
         os.makedirs(folder, exist_ok=True)
@@ -260,12 +277,14 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
             if failed:
                 raise OSError('no client installer could be downloaded')
             return None
-        # Remove only what an earlier sync brought in and this one superseded.
+        # Remove only what an earlier sync brought in and this one superseded, on the platforms it published:
+        # a release with no Android build (or one whose APK failed this time) leaves the older APK in place.
         mine = _manifest(folder)
+        renewed = {_platform(SELF_UPDATING.fullmatch(n)) for n in published}
         keep = []
         for n in mine:
             m = SELF_UPDATING.fullmatch(n)
-            if n in published or not m or _version(m.group(1)) >= newest:
+            if n in published or not m or _platform(m) not in renewed or _version(m.group(1)) >= newest:
                 keep.append(n)
                 continue
             for p in (n, n + '.sig'):
@@ -274,7 +293,7 @@ def sync(s, log=print, folder=None, api=RELEASE_API):
                 except OSError:
                     pass
         _save_manifest(folder, keep + published)
-        version = '.'.join(map(str, newest))
+        version = SELF_UPDATING.fullmatch(published[0]).group(1)
         log('client %s from GitHub is now offered to members (%s)' % (version, ', '.join(published)))
         return version
     finally:
