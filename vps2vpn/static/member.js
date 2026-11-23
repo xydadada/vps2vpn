@@ -29,7 +29,7 @@ const T = {
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心（忘了订阅链接也不怕）。', pw_tip_link: '用你的专属链接打开这一页时，不用输入旧密码就能设新密码（链接本身就是钥匙）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
     notice: '管理员公告', paused_quota: '这一期的流量用完了，所以暂时停用。', q_ask: '可以在下面「申请增加流量」。', q_wait: '到 {date} 重置后会自动恢复。', q_admin: '这个账号不会自动重置，请联系管理员。',
-    extra: '本期临时加量', first_use: '首次使用后 {n} 天', inv_copied: '注册链接已复制，发给朋友打开就能注册', dev_limit: '（最多同时 {n} 台）',
+    extra: '本期临时加量', first_use: '首次使用后 {n} 天', asked: '（申请了 {n} GB）', inv_copied: '注册链接已复制，发给朋友打开就能注册', dev_limit: '（最多同时 {n} 台）',
     paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限{lim}，已自动暂停 10 分钟。关掉多余的设备，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
     expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或加流量后恢复。', capped: '这个账号限速 {mbps} Mbps。',
     security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不小心发给了别人？换一个新的，旧链接立刻失效。换完后每台设备都要重新导入一次。',
@@ -64,7 +64,7 @@ const T = {
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can log in to the member centre by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
     notice: 'Notice from the admin', paused_quota: 'This period\u2019s quota is used up, so the account is paused. ', q_ask: 'You can ask for more below. ', q_wait: 'It resumes by itself after the reset on {date}.', q_admin: 'This account does not reset by itself; ask the admin.',
-    extra: 'Top-up this period', first_use: '{n} days after first use', inv_copied: 'Sign-up link copied; your friend just opens it', dev_limit: ' (at most {n} at once)',
+    extra: 'Top-up this period', first_use: '{n} days after first use', asked: ' (asked for {n} GB)', inv_copied: 'Sign-up link copied; your friend just opens it', dev_limit: ' (at most {n} at once)',
     paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once{lim}; the account is paused for 10 minutes. Close the extra ones and it resumes by itself.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
     expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.', slowed: 'This period\'s data is used up: slowed down to {mbps} Mbps until the next reset or more data.', capped: 'This account is limited to {mbps} Mbps.',
     security: 'Account security', rotate: 'New subscription link', rotate_tip: 'Shared your link by mistake? Get a new one; the old link stops working at once. Re-import it on every device.',
@@ -243,7 +243,7 @@ function requestsPanel() {
   const b = h('button', {class: 'btn primary', disabled: pend}, icon('plus'), t('send'));
   b.onclick = async () => { b.disabled = true; try { await api('request', {add_gb: Number(f.gb.value), reason: f.why.value}); toast(t('sent')); await renderHome(); } catch (e) { err(e); b.disabled = false; } };
   const list = me.requests.length ? h('div', {class: 'tl'}, me.requests.map(r => h('div', {class: 'tl-row'},
-    h('b', {class: 'num'}, '+' + r.add_gb + ' GB'), h('span', {class: 'muted'}, fmt.time(r.created_at) + (r.reason ? ' · ' + r.reason : '') + (r.answer ? ' — ' + r.answer : '')),
+    h('b', {class: 'num'}, '+' + r.add_gb + ' GB' + (r.asked_gb ? t('asked').replace('{n}', r.asked_gb) : '')), h('span', {class: 'muted'}, fmt.time(r.created_at) + (r.reason ? ' · ' + r.reason : '') + (r.answer ? ' — ' + r.answer : '')),
     chip(r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn', t(r.status))))) : h('div', {class: 'muted m-tip'}, t('req_none'));
   return panel(t('more'), null, pend ? chip('warn', t('pending')) : null, h('div', {class: 'stack'},
     h('p', {class: 'muted m-tip'}, t('more_tip')), h('div', {class: 'form-grid'}, field(t('add_gb'), f.gb), field(t('reason'), f.why)), h('div', null, b), list));

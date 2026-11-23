@@ -228,6 +228,7 @@ class Invites(tu.Base):
         u = db.user(u['id'])
         self.assertEqual((u['quota_gb'] + u['extra_gb'], u['enabled']), (25, 1))
         self.assertEqual(db.requests(u['id'])[0]['add_gb'], 15)
+        self.assertEqual(db.requests(u['id'])[0]['asked_gb'], 20)          # the member sees "asked for 20"
         self.assertEqual((u['quota_gb'], u['extra_gb']), (10, 15))         # a top-up, not a bigger plan
         self.assertEqual(members.effective_quota(u), 25)
         db.update_user(u['id'], used_up=0, used_down=0, extra_gb=0)          # what every reset does
@@ -247,6 +248,7 @@ class Invites(tu.Base):
         rid = members.request_more(u['id'], 5, '')
         members.decide(rid, True)                                          # 17 GB covers it
         self.assertEqual(db.user(u['id'])['enabled'], 1)
+        self.assertEqual(db.requests(u['id'])[0]['asked_gb'], 0)           # approved as asked: nothing to explain
 
     def test_an_approval_does_not_switch_an_expired_account_back_on(self):
         u = mk('finn', 10, enabled=0, disabled_reason='quota', used_down=11 * GIB,

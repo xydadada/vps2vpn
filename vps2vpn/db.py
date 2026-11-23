@@ -92,7 +92,8 @@ MIGRATIONS = {
     'invites': [('servers', "TEXT NOT NULL DEFAULT ''"),           # what accounts made with the code get
                 ('speed_mbps', 'REAL NOT NULL DEFAULT 0'),
                 ('throttle_mbps', 'REAL NOT NULL DEFAULT 0')],
-}
+    'requests': [('asked_gb', 'REAL NOT NULL DEFAULT 0')],         # what the member asked for, when the admin
+}                                                                    # approved a different amount (0 = as asked)
 
 MAIN_SERVER = 'main'        # this server in an account's server list; joined servers use their own ids
 SERVER_ID_RE = re.compile(r'[0-9a-z]{1,16}')
@@ -704,7 +705,7 @@ def end_all_member_sessions():
 INVITE_COLS = ('id', 'code', 'kind', 'inviter', 'quota_gb', 'expire_days', 'reset_day',
                'max_uses', 'uses', 'used_by', 'valid_until', 'status', 'note', 'created_at',
                'servers', 'speed_mbps', 'throttle_mbps')
-REQUEST_COLS = ('id', 'user_id', 'add_gb', 'reason', 'status', 'answer', 'created_at', 'decided_at')
+REQUEST_COLS = ('id', 'user_id', 'add_gb', 'reason', 'status', 'answer', 'created_at', 'decided_at', 'asked_gb')
 
 
 def invites(inviter=None):
@@ -770,8 +771,10 @@ def add_request(user_id, add_gb, reason):
 
 
 def decide_request(rid, status, answer='', add_gb=None):
-    x('UPDATE requests SET status=?, answer=?, decided_at=?%s WHERE id=?' % (', add_gb=?' if add_gb is not None else ''),
-      [status, answer, int(time.time())] + ([float(add_gb)] if add_gb is not None else []) + [rid])
+    # An approval for a different amount keeps what was asked in asked_gb, so the member can see why it differs.
+    x('UPDATE requests SET status=?, answer=?, decided_at=?%s WHERE id=?'
+      % (', asked_gb=CASE WHEN add_gb<>? THEN add_gb ELSE 0 END, add_gb=?' if add_gb is not None else ''),
+      [status, answer, int(time.time())] + ([float(add_gb), float(add_gb)] if add_gb is not None else []) + [rid])
 
 
 def add_event(kind, user_id=0, detail=''):
@@ -855,6 +858,9 @@ def _check_import_request(r, i):
     for k in ('created_at', 'decided_at'):
         if k in r and (type(r[k]) is not int or not 0 <= r[k] <= MAX_SQLITE_INT):
             raise ValueError('request %d: invalid %s' % (i, k))
+    if 'asked_gb' in r and (type(r['asked_gb']) not in (int, float) or not math.isfinite(r['asked_gb'])
+                            or not 0 <= r['asked_gb'] <= 1e9):
+        raise ValueError('request %d: invalid asked_gb' % i)
     if type(r.get('created_at')) is not int:
         raise ValueError('request %d: invalid created_at' % i)
     for k in ('reason', 'status', 'answer'):

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.35
+
+Member page walkthrough (invites and top-up requests).
+成员页走查（邀请和申请加流量）。
+
+- When the admin approves less (or more) than a member asked for, both the member page and the admin's request history show what was asked, e.g. "+5 GB (asked for 10 GB)", so the member can see why the amount differs.
+  管理员批准的流量和成员申请的不一样时，成员页和管理员的申请记录都会显示原来申请了多少，例如「+5 GB（申请了 10 GB）」，成员能看出为什么数量不同。
+- Chinese error messages no longer put a space between the field name and the message ("端口必须在…").
+  中文错误提示里，字段名和后面的话之间不再多一个空格（「端口必须在…」）。
+- English on a phone: a long app name in the member page's import box no longer makes the page wider than the screen.
+  英文界面在手机上：成员页「导入」框里长的 App 名字不会再把页面撑得比屏幕宽。
+
 ## 0.2.34
 
 - Windows and browser deployers: a pasted `ssh "ubuntu@203.0.113.10"` (or `-l "ubuntu"`, `'root'@203.0.113.10`) no longer leaves a quote in the user name or splits the address in two. All three deployers now read a pasted target the same way.

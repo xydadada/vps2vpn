@@ -142,5 +142,14 @@ class MemberImportOnPhones(unittest.TestCase):
         self.assertIn('.m-import .btn{min-width:0;white-space:normal', css)
 
 
+class SmallerApprovalIsExplained(unittest.TestCase):
+    def test_member_and_admin_see_what_was_asked(self):
+        for f in ('member.js', 'app.js'):
+            js = read('vps2vpn', 'static', f)
+            self.assertIn("(r.asked_gb ? t('asked').replace('{n}', r.asked_gb) : '')", js)
+            self.assertIn("asked: '（申请了 {n} GB）'", js)
+            self.assertIn("asked: ' (asked for {n} GB)'", js)
+
+
 if __name__ == '__main__':
     unittest.main()
