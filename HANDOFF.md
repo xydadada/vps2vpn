@@ -6,18 +6,19 @@
 
 ## 1. 现在的状态
 
-- **服务端最新版：v0.2.33**（GitHub Release 标为 Latest，CI 全绿）。
+- **服务端最新版：v0.2.34**（GitHub Release 标为 Latest，CI 全绿）。
   - 0.2.28：旧面板迁移工具、旧订阅链接、29–31 号重置、重置时区、名单上限 1 万。
   - 0.2.29：第七次外部审计（报告里编号 S8-xx）。
   - 0.2.30：修好 0.2.29 卸载会中途停下的问题。
   - 0.2.31、0.2.32：另一个会话发的（去掉 `global-client-fingerprint`、体检到网卡上查限速、新手走查修复）。
   - 0.2.33：第八次外部审计（报告里编号 S9-xx），见第 2 节。
+  - 0.2.34：部署器（`deploy.py`、`deploy.ps1`）粘贴带引号的 ssh 命令时用户名不再多一个引号；三个部署器共用 `tests/test_audit9_deployers.py` 的用例。
 - **客户端最新版：v1.0.26**（第八次审计客户端 C9-01~05 + C-32；Windows 安装包和便携版的更新签名由服务端维护者独立核对过）。
 - **安卓**：还没有正式包。CI 模拟器 API 31/33/34/35 全都在 VPN 连上约 1 秒后整机冻住（不是应用崩溃，原因没查清）。只发预发布 `test-android-1.0.26`（`vps2vpn-1.0.26-android-universal.apk`），**要用户先在真手机上试过**，再在服务端配置 `files.android`。
-- 离线测试：全量 478 项通过（含迁移工具 22 项）。命令见第 4 节。
+- 离线测试：全量 482 项通过（含迁移工具 22 项）。命令见第 4 节。
 - **限速 / 降速从来没在真实 Linux 服务器上跑过**，只有单元测试和模拟。上线前要在测试服务器上真跑一次。
 
-## 2. 最近做了什么（0.2.17 → 0.2.33）
+## 2. 最近做了什么（0.2.17 → 0.2.34）
 
 - 机场常用功能：流量倍率、每个账号可用的服务器、流量用完降速而不是停用、速度限制（tc HTB + ifb + nft connmark，见 `vps2vpn/shaper.py`）、限速节点、邀请与备份、体检项 `speed_limits`。
 - 第五、六次外部审计的服务端条目都已处理（0.2.26、0.2.27）。没采纳的及原因：
@@ -70,7 +71,7 @@
 离线测试（Windows 上要先指定 bash）：
 
 ```
-PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_beginner_ui
+PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_beginner_ui
 ```
 
 发版步骤：

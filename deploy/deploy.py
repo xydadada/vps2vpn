@@ -821,12 +821,16 @@ def parse_target(text):
     """What a beginner pastes into the IP box -> (host, user or '', port or ''). Takes a bare IP or name,
     "203.0.113.10:22", "root@203.0.113.10", "[v6]:2222", a whole "ssh -i key.pem -p 2222 ubuntu@203.0.113.10" copied from a
     cloud console, http://203.0.113.10/, and dots or digits typed by a Chinese input method (。．１２３)."""
-    t = unicodedata.normalize('NFKC', text or '').replace('。', '.').replace('｡', '.').strip().strip('\'"').strip()
+    t = unicodedata.normalize('NFKC', text or '').replace('。', '.').replace('｡', '.').strip()
+    if len(t) >= 2 and t[0] in '"\'' and t[-1] == t[0] and t[0] not in t[1:-1]:
+        t = t[1:-1].strip()                           # the whole paste in one pair of quotes
     user = port = ''
     words = t.split()
     if words and words[0].lower() in ('ssh', 'ssh.exe'):
+        # split before any quote is taken off: stripping first left ssh "ubuntu@203.0.113.10" with one quote
+        # that broke the split and came back in the user name
         try:
-            words = shlex.split(t)                    # -i "My Key.pem"
+            words = shlex.split(t)                    # -i "My Key.pem", -p "2222", "ubuntu@203.0.113.10"
         except ValueError:
             pass
         dest, i = '', 1
@@ -847,8 +851,10 @@ def parse_target(text):
                 dest = w
             i += 1
         t = dest
-    elif len(words) > 1:
+    words = t.strip('\'"').split()                    # quotes around what is left: "203.0.113.10"
+    if len(words) > 1:
         return '', '', ''
+    t = words[0] if words else ''
     t = re.sub(r'^[A-Za-z][A-Za-z0-9+.-]*://', '', t).split('/')[0]
     if '@' in t:
         u, t = t.rsplit('@', 1)

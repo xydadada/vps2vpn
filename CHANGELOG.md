@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.34
+
+- Windows and browser deployers: a pasted `ssh "ubuntu@203.0.113.10"` (or `-l "ubuntu"`, `'root'@203.0.113.10`) no longer leaves a quote in the user name or splits the address in two. All three deployers now read a pasted target the same way.
+  Windows 部署器和网页版部署器：粘贴 `ssh "ubuntu@203.0.113.10"`（或 `-l "ubuntu"`、`'root'@203.0.113.10`）时，用户名里不会再多出一个引号，地址也不会被拆成两段。三个部署器现在用同样的方式读粘贴进来的地址。
+
 ## 0.2.33
 
 Fixes from the eighth outside review.

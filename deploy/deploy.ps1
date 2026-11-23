@@ -46,11 +46,32 @@ function Parse-Target([string]$text) {
   # Takes "203.0.113.10:22", "root@203.0.113.10", "[v6]:2222", a whole "ssh -i key.pem -p 2222 ubuntu@203.0.113.10" from a cloud
   # console, http://203.0.113.10/, and dots or digits typed by a Chinese input method.
   $t = "$text".Normalize([Text.NormalizationForm]::FormKC).Replace([string][char]0x3002, '.').Replace([string][char]0xFF61, '.')
-  $t = $t.Trim().Trim('''', '"').Trim()
+  $t = $t.Trim()
+  if ($t.Length -ge 2 -and ($t[0] -eq [char]'"' -or $t[0] -eq [char]"'") -and $t[-1] -eq $t[0] -and
+      $t.Substring(1, $t.Length - 2).IndexOf($t[0]) -lt 0) { $t = $t.Substring(1, $t.Length - 2).Trim() }   # the whole paste quoted
   $user = ''; $port = ''
   $words = @($t -split '\s+' | Where-Object { $_ })
   if ($words.Count -and $words[0] -in 'ssh', 'ssh.exe') {
-    $words = @([regex]::Matches($t, '"[^"]*"|''[^'']*''|\S+') | ForEach-Object { $_.Value.Trim('"', '''') })
+    # its words as a shell splits them, before any quote is taken off: -i "My Key.pem", -p "2222",
+    # "ubuntu@203.0.113.10" and 'root'@203.0.113.10 keep what is inside the quotes. An unclosed quote: plain words.
+    $list = New-Object System.Collections.Generic.List[string]
+    $sb = New-Object System.Text.StringBuilder
+    $q = [char]0; $have = $false; $i = 0
+    while ($i -lt $t.Length) {
+      $c = $t[$i]
+      if ($q -eq [char]"'") { if ($c -eq [char]"'") { $q = [char]0 } else { [void]$sb.Append($c) } }
+      elseif ($q -eq [char]'"') {
+        if ($c -eq [char]'"') { $q = [char]0 }
+        elseif ($c -eq [char]'\' -and $i + 1 -lt $t.Length -and ($t[$i + 1] -eq [char]'"' -or $t[$i + 1] -eq [char]'\')) { $i++; [void]$sb.Append($t[$i]) }
+        else { [void]$sb.Append($c) }
+      }
+      elseif ([char]::IsWhiteSpace($c)) { if ($have) { $list.Add($sb.ToString()); [void]$sb.Clear(); $have = $false } }
+      elseif ($c -eq [char]'"' -or $c -eq [char]"'") { $q = $c; $have = $true }
+      else { [void]$sb.Append($c); $have = $true }
+      $i++
+    }
+    if ($have) { $list.Add($sb.ToString()) }
+    if ($q -eq [char]0) { $words = @($list) }
     $dest = ''; $i = 1
     while ($i -lt $words.Count) {
       $w = $words[$i]
@@ -64,7 +85,10 @@ function Parse-Target([string]$text) {
       $i++
     }
     $t = $dest
-  } elseif ($words.Count -gt 1) { return @('', '', '') }
+  }
+  $words = @($t.Trim('''', '"') -split '\s+' | Where-Object { $_ })    # quotes around what is left: "203.0.113.10"
+  if ($words.Count -gt 1) { return @('', '', '') }
+  $t = if ($words.Count) { $words[0] } else { '' }
   $t = ($t -replace '^[A-Za-z][A-Za-z0-9+.-]*://', '').Split('/')[0]
   $at = $t.LastIndexOf('@')
   if ($at -ge 0) { if (-not $user) { $user = $t.Substring(0, $at).ToLowerInvariant() }; $t = $t.Substring($at + 1) }
