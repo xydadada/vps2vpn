@@ -10,11 +10,11 @@
   - 0.2.28：旧面板迁移工具、旧订阅链接、29–31 号重置、重置时区、名单上限 1 万。
   - 0.2.29：第七次外部审计（报告里编号 S8-xx）。
   - 0.2.30：修好 0.2.29 卸载会中途停下的问题。
-- **客户端最新版：v1.0.23**（Windows 安装包和便携版，SHA256 和更新签名都核对过）。1.0.24 在测试中。
+- **客户端最新版：v1.0.25**（Windows 安装包和便携版，SHA256 和更新签名都由服务端维护者核对过）。安卓正式包还在 CI 里测。
 - 离线测试：全量 453 项通过（含迁移工具 16 项）。命令见第 4 节。
 - **限速 / 降速从来没在真实 Linux 服务器上跑过**，只有单元测试和模拟。上线前要在测试服务器上真跑一次。
 
-## 2. 最近做了什么（0.2.17 → 0.2.29）
+## 2. 最近做了什么（0.2.17 → 0.2.30）
 
 - 机场常用功能：流量倍率、每个账号可用的服务器、流量用完降速而不是停用、速度限制（tc HTB + ifb + nft connmark，见 `vps2vpn/shaper.py`）、限速节点、邀请与备份、体检项 `speed_limits`。
 - 第五、六次外部审计的服务端条目都已处理（0.2.26、0.2.27）。没采纳的及原因：
@@ -27,6 +27,8 @@
   - 其他已修：S8-02（代理域名走远程 DNS）、S8-03、S8-04、S8-05 订阅部分、S8-08、S8-12、S8-13；S8-09 在 0.2.27 已修。
   - 部署器会话做的（`bec0687`，随 0.2.29 发布）：S8-05 的 web 部分、S8-06（卸载清限速）、S8-07（拒绝布尔值当数字）、S8-10、S8-11。测试在 `tests/test_audit8.py` 和 `tests/test_beginner_ui.py`，都已加进 CI。
   - 仍不采纳：gstatic.cn / ggpht.cn（理由同上）。
+- 0.2.30：`install.sh` 里 `clear_speed_limits` 在 `set -euo pipefail` 下，`ip link del v2vifb0` 找不到设备就会让卸载中途退出。现在每一步都允许失败，`tests/test_audit8.py` 加了「ip/tc/nft 全部失败」的测试。
+  **教训：** 打 tag 就会发布，不管测试有没有过。所以先只推 main，等 `test` workflow（含各发行版容器里的安装和卸载）全绿，再推 tag。
 
 ## 3. 正在进行 / 没做完的事（按优先级）
 
@@ -49,8 +51,8 @@
 2. **和部署器会话共用一个目录**：它也改 `web.py`、`install.sh`、`member.js`、`app.js`，有时会自己在本地提交（不推送）。发版前看一眼 `git log origin/main..`，把它的提交审过、一起跑全量测试再推。
 3. **在真实服务器上测限速和降速**：Reality、TUIC 各测一次。还要测只开 Hysteria 的服务器：限速账号仍能用、只是不限速；降速账号在那台上应该被关掉。
 4. 客户端（详见客户端仓库的交接文档）：
-   - 1.0.24：管道权限 C-17，加上免责声明改成勾选同意。手机尺寸下点勾选框没反应的问题还在查。
-   - 安卓正式签名版：发布后，在服务端配置里加上 `files.android` 的文件名。
+   - 1.0.24（管道权限 C-17、免责声明改成勾选同意）和 1.0.25（第七次审计客户端 6 项）都已发布，签名核对过。
+   - 安卓正式签名版：第七轮 CI（运行 45092375494）在跑，产物名应为 `vps2vpn-1.0.25-android-universal.apk`。发布后核对签名，再在服务端配置里加上 `files.android` 的文件名。
 
 ## 4. 怎么测试、怎么发版
 
@@ -63,8 +65,8 @@ PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" pyt
 发版步骤：
 1. 改 `CHANGELOG.md`、`vps2vpn/__init__.py` 的 `VERSION`、`install.sh` 的 `PINNED_TAG`，以及 README 中英文两处测试数量。
 2. 提交时只 add 自己改的文件。
-3. `git tag vX.Y.Z && git push origin main vX.Y.Z`。
-4. 等 `test` 和 `release` 两个 workflow 都通过。
+3. 先 `git push origin main`，等 `test` workflow 全绿（容器里的安装和卸载只有 CI 能测）。
+4. 再 `git tag vX.Y.Z && git push origin vX.Y.Z`，等 `release` workflow 通过。`release` 不看测试结果，打 tag 就会发布。
 5. 用 `gh release edit vX.Y.Z --notes-file 说明.md` 写中英双语说明。
 6. 用 `gh api repos/xydadada/vps2vpn/releases/latest` 确认它是 Latest。
 
@@ -106,10 +108,14 @@ PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" pyt
 - 网页版部署页在内置浏览器里看过，只连过一个文档专用的假地址。
 - Windows 10 用户如果不装新版 OpenSSH，就只能用密钥登录。
 
-### 新手走查还没做完的
-- 三个部署器的输入和出错路径已经走完。
-- **成员页和管理面板还没有从新手角度走过**，这是下一步。
-- 在真实全新服务器上第一次部署的体验，要等用户提供测试服务器。
+### 新手走查
+- 三个部署器的输入和出错路径：已走完。
+- 成员页和管理面板：已在本地开发面板上用假账号走过一遍，改了三处，0.2.28 已发布。
+  - 空密码框点「设置密码」会悄悄取消登录：现在会拦下来。
+  - 中文界面上直接显示的英文报错：翻成了中文。
+  - 手机上成员页顶部的文字会被按钮盖住：已修。
+  - 测试在 `tests/test_beginner_ui.py`。
+- 还没走的：在真实全新服务器上第一次部署的体验，要等用户提供测试服务器。要不要再做一轮新手走查，由用户决定。
 
 ### tools/legend_import.py（迁移工具，5ba849a）
 在自己电脑上运行，只读旧系统文件的**副本**，不连接任何服务器：
