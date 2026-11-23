@@ -92,5 +92,41 @@ class MemberHeaderOnPhones(unittest.TestCase):
         self.assertRegex(css, r'@media\(max-width:420px\)\{\.m-top \.brand small\{display:none\}')
 
 
+class AdminOpensOurApp(unittest.TestCase):
+    def test_user_drawer_offers_the_vps2vpn_app_on_windows(self):
+        js = read('vps2vpn', 'static', 'app.js')
+        self.assertRegex(js, r"imp\.vps2vpn && /Windows/i\.test\(navigator\.userAgent[^)]*\) \?\s*h\('a', \{class: 'btn', href: imp\.vps2vpn")
+        self.assertIn("open_app: '在 vps2vpn 客户端中打开'", js)
+        self.assertIn("apps_hint: 'Windows 推荐 vps2vpn 客户端", js)
+
+
+class EmptyNumberBoxes(unittest.TestCase):
+    def test_an_empty_box_is_not_sent_as_zero(self):
+        js = read('vps2vpn', 'static', 'app.js')
+        self.assertIn("const numOrNull = v => (v === '' ? null : Number(v));", js)
+        self.assertIn('traffic_rate: numOrNull(r.value)', js)
+        self.assertIn("el.type === 'number' ? numOrNull(el.value)", js)
+        self.assertNotIn('traffic_rate: Number(', js)
+
+    def test_server_rejects_an_empty_traffic_rate(self):
+        from tests import test_unit  # noqa: F401  (sets VPS2VPN_ROOT / dev mode first)
+        from vps2vpn import db, web
+        s = db.settings()
+        self.assertIsInstance(web.validate_settings({'traffic_rate': None}, s), str)
+        self.assertEqual(web.validate_settings({'server_reset_day': None}, s)['server_reset_day'], 1)
+
+
+class SettingsOnPhones(unittest.TestCase):
+    def test_installer_folder_path_wraps(self):
+        js = read('vps2vpn', 'static', 'app.js')
+        self.assertIn("style: 'font-size:12.5px;overflow-wrap:anywhere'}, found)", js)
+
+    def test_two_button_rows_wrap_long_labels(self):
+        css = read('vps2vpn', 'static', 'style.css')
+        self.assertIn('.act-grid .btn{justify-content:flex-start;padding:10px 12px;min-width:0;white-space:normal', css)
+        js = read('vps2vpn', 'static', 'app.js')
+        self.assertIn("h('div', {style: 'display:flex;flex-wrap:wrap;gap:8px'}, rulesBtn, restartBtn)", js)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -22,7 +22,7 @@ const T = {
     used: '已用', unlimited: '不限', never: '永久', status: '状态', expires: '到期', last_seen: '最近使用', sub_fetched: '最近拉取订阅', sub_never: '还没有 App 拉取过', sub_app: '拉取订阅的 App',
     enabled: '正常', r_quota: '流量用完', r_expired: '已到期', r_manual: '手动停用', r_remote: '主服务器停用', search: '搜索名字或备注',
     share: '订阅', share_tip: '把链接或二维码发给使用者：手机扫码，或在 App 里「从 URL 导入」。',
-    copy: '复制订阅链接', open_page: '打开导入页面', rotate: '更换链接', reset: '清零流量',
+    copy: '复制订阅链接', open_page: '打开导入页面', open_app: '在 vps2vpn 客户端中打开', rotate: '更换链接', reset: '清零流量',
     confirm_del: '删除后他的链接立即失效，不能恢复。', confirm_rotate: '旧链接会立刻失效，需要把新链接重新发给他。',
     confirm_reset: '把本月已用流量清零？', enable: '启用', disable: '停用', edit: '编辑', usage: '用量', actions: '操作',
     s_basic: '基本', s_proto: '协议（可同时开，App 里随时切换）', s_route: '分流', s_cert: '证书',
@@ -46,7 +46,7 @@ const T = {
     days: '天', hours: '小时', minutes: '分钟', bbr: 'BBR 加速', yes: '已开启', no: '未开启',
     setup_bad: '这个设置链接无效。请用安装完成时屏幕上显示的完整链接打开。',
     pw_mismatch: '两次密码不一样', pw_short: '密码至少 8 位', done_title: '搞定！', done_sub: '下面是你的订阅，扫码或点按钮导入到 App 就能用了。',
-    import_to: '一键导入', apps_hint: '电脑用 Clash Verge Rev / FlClash，安卓用 FlClash / Hiddify，苹果用 Shadowrocket / Stash / Karing。',
+    import_to: '一键导入', apps_hint: 'Windows 推荐 vps2vpn 客户端（免费），也可以用 Clash Verge Rev / FlClash；Mac 用 Clash Verge Rev / FlClash，安卓用 FlClash / Hiddify，苹果手机用 Shadowrocket / Stash / Karing。',
     ai: 'AI 可用性', ai_tip: '从这台服务器测试能不能用 Claude、ChatGPT、Gemini。结果只作参考，封号还和支付方式、使用习惯有关。', ai_run: '重新检测', ai_never: '还没检测过，点「重新检测」（约 10 秒）。', ai_where: '位置', ai_net: '网络', ai_kind: 'IP 类型', ai_at: '检测时间', ai_others: '其他服务器', ai_ok: '能用', ai_blocked: '地区不支持', ai_unreachable: '连不上', ai_unknown: '不确定',
     doctor: '一键体检', doctor_tip: '连不上、变慢时先点这里，它会逐项检查并告诉你怎么修。', doctor_run: '开始体检', doctor_ok: '全部正常', doctor_bad: '个问题',
     fix: '怎么修', tg: 'Telegram 告警', tg_tip: '流量快用完、有人被停用、服务挂了、IP 变了时发消息给你。① 在 Telegram 找 @BotFather 发 /newbot 建一个机器人，把它给的 token 贴到下面；② 将下面的配对命令发给你与机器人的私聊；③ 点「连接」。',
@@ -133,7 +133,7 @@ const T = {
     used: 'Used', unlimited: 'unlimited', never: 'never', status: 'Status', expires: 'Expires', last_seen: 'Last seen', sub_fetched: 'Subscription last fetched', sub_never: 'Not fetched by an app yet', sub_app: 'App that fetched it',
     enabled: 'active', r_quota: 'quota used', r_expired: 'expired', r_manual: 'paused', r_remote: 'paused by main server', search: 'Search name or note',
     share: 'Subscription', share_tip: 'Send this link or QR code to the user. Scan it, or use "Import from URL" in the app.',
-    copy: 'Copy link', open_page: 'Open import page', rotate: 'New link', reset: 'Reset usage',
+    copy: 'Copy link', open_page: 'Open import page', open_app: 'Open in the vps2vpn app', rotate: 'New link', reset: 'Reset usage',
     confirm_del: 'Their link stops working immediately. This cannot be undone.', confirm_rotate: 'The old link stops working immediately; send them the new one.',
     confirm_reset: 'Reset this month\'s usage to zero?', enable: 'Enable', disable: 'Pause', edit: 'Edit', usage: 'Usage', actions: 'Actions',
     s_basic: 'Basics', s_proto: 'Protocols (turn on several and switch in the app)', s_route: 'Routing', s_cert: 'Certificate',
@@ -157,7 +157,7 @@ const T = {
     days: 'd', hours: 'h', minutes: 'min', bbr: 'BBR', yes: 'on', no: 'off',
     setup_bad: 'This setup link is not valid. Open the full link shown when installation finished.',
     pw_mismatch: 'Passwords do not match', pw_short: 'Password needs 8+ characters', done_title: 'Done!', done_sub: 'Here is your subscription. Scan it or tap a button to import it into an app.',
-    import_to: 'Import', apps_hint: 'Desktop: Clash Verge Rev / FlClash. Android: FlClash / Hiddify. iPhone: Shadowrocket / Stash / Karing.',
+    import_to: 'Import', apps_hint: 'Windows: the vps2vpn app (free, recommended), or Clash Verge Rev / FlClash. Mac: Clash Verge Rev / FlClash. Android: FlClash / Hiddify. iPhone: Shadowrocket / Stash / Karing.',
     ai: 'AI availability', ai_tip: 'Tests from this server whether Claude, ChatGPT and Gemini work. For reference only: bans also depend on payment and usage.', ai_run: 'Check again', ai_never: 'Not checked yet. Click "Check again" (about 10 s).', ai_where: 'Location', ai_net: 'Network', ai_kind: 'IP type', ai_at: 'Checked', ai_others: 'Other servers', ai_ok: 'works', ai_blocked: 'region blocked', ai_unreachable: 'unreachable', ai_unknown: 'unsure',
     doctor: 'Health check', doctor_tip: 'Not connecting or slow? Run this first: it checks everything and tells you how to fix it.', doctor_run: 'Run check', doctor_ok: 'All good', doctor_bad: 'problem(s)',
     fix: 'Fix', tg: 'Telegram alerts', tg_tip: 'Get a message when quota runs low, a user is paused, a service is down or the IP changes. 1) In Telegram, message @BotFather with /newbot and paste the token below. 2) Send the pairing command below to the bot in a private chat. 3) Press Connect.',
@@ -264,6 +264,9 @@ const panel = (title, sub, right, ...body) => h('div', {class: 'panel'},
 const tip = text => h('p', {class: 'muted m-tip', style: 'margin:0 0 12px'}, text);
 const chip = (kind, text) => h('span', {class: 'chip ' + kind}, text);
 const legend = () => h('div', {class: 'legend'}, h('span', {style: '--c:var(--down)'}, t('down')), h('span', {style: '--c:var(--up)'}, t('up_')));
+// an empty number box is sent as null, not Number('') === 0: the server rejects it or uses its default
+// (0 would quietly mean "not counted" for a traffic rate)
+const numOrNull = v => (v === '' ? null : Number(v));
 const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, 'vps2vpn'), h('small', null, 'SELF-HOSTED VPN')));
 const AVA = ['#e5432a', '#3f5fe6', '#0b9e86', '#d4860f', '#8b5cf6', '#db2777', '#0891b2'];
 const retryBox = (msg, fn) => h('div', {class: 'empty-state'}, h('p', null, msg), h('button', {class: 'btn sm', onclick: fn}, icon('refresh'), t('retry')));
@@ -850,6 +853,9 @@ async function openUser(id, first) {
         h('div', {class: 'creds'}, links.sub),
         h('div', {class: 'act-grid'}, h('button', {class: 'btn primary', onclick: () => copyText(links.sub, t('share'))}, icon('copy'), t('copy')),
           h('a', {class: 'btn', href: links.sub, target: '_blank', rel: 'noopener'}, icon('globe'), t('open_page'))),
+        // on Windows our own app takes the subscription in one click (vps2vpn://install-config), like the member page
+        imp.vps2vpn && /Windows/i.test(navigator.userAgent || '') ?
+          h('a', {class: 'btn', href: imp.vps2vpn, style: 'margin-top:8px;width:100%'}, icon('bolt'), t('open_app')) : null,
         h('div', {class: 'import-grid', style: 'margin-top:8px'}, [['Clash', imp.clash], ['Shadowrocket', imp.shadowrocket], ['Hiddify', imp.hiddify], ['sing-box', imp.singbox]].map(([n, href]) =>
           h('a', {class: 'btn', href}, t('import_to') + ' ' + n))),
         h('p', {class: 'muted', style: 'font-size:12px;margin:10px 0 0'}, t('apps_hint'))),
@@ -1071,13 +1077,13 @@ async function drawServers() {
       h('div', {class: 'form-grid'}, field(t('paste_code'), code), field(t('server_name'), name)), h('div', null, add),
       (() => { const r = h('input', {type: 'number', min: '0', max: '100', step: '0.1', value: s.traffic_rate ?? 1});
         return h('div', {class: 'form-grid'}, field(t('rate_this'), r), h('div', {style: 'display:flex;align-items:flex-end;gap:8px'},
-          h('button', {class: 'btn', onclick: () => saveSettings({traffic_rate: Number(r.value)}, drawServers)}, icon('check'), t('save')),
+          h('button', {class: 'btn', onclick: () => saveSettings({traffic_rate: numOrNull(r.value)}, drawServers)}, icon('check'), t('save')),
           h('small', {class: 'muted'}, t('rate_tip')))); })())),
     h('div', {class: 'grid g-2'},
       panel(t('server_month'), null, null, tip(t('cap_tip')), h('div', {class: 'usage-hero'}, ring, h('div', {class: 'stack'},
         h('div', {class: 'mini-stats'}, h('div', null, h('small', null, '↓ ' + t('down')), h('b', null, fmt.bytes(sm.tx || 0))), h('div', null, h('small', null, '↑ ' + t('up_')), h('b', null, fmt.bytes(sm.rx || 0)))),
         h('div', {class: 'form-grid'}, field(t('cap'), capIn), field(t('cap_day'), dayIn)),
-        h('div', null, h('button', {class: 'btn', onclick: () => saveSettings({server_cap_gb: Number(capIn.value), server_reset_day: Number(dayIn.value)}, drawServers)}, icon('check'), t('save')))))),
+        h('div', null, h('button', {class: 'btn', onclick: () => saveSettings({server_cap_gb: numOrNull(capIn.value), server_reset_day: numOrNull(dayIn.value)}, drawServers)}, icon('check'), t('save')))))),
       panel(t('join_code'), null, null, tip(t('join_tip')), h('div', {class: 'stack'}, h('div', {class: 'creds', style: 'max-height:90px;overflow:auto'}, sv.join_code),
         h('div', {class: 'act-grid'}, h('button', {class: 'btn primary', onclick: () => copyText(sv.join_code, t('join_code'))}, icon('copy'), t('copy_btn')), resetKeyBtn))))));
   const renewIn = h('input', {type: 'date', value: s.vps_renew_at || ''}), noteIn = h('input', {type: 'text', maxlength: '40', value: s.vps_renew_note || ''});
@@ -1176,7 +1182,7 @@ function drawSettings() {
   const saveBtn = h('button', {class: 'btn primary'}, icon('check'), t('save'));
   saveBtn.onclick = async () => {
     const body = {};
-    for (const el of inputs) body[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value;
+    for (const el of inputs) body[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? numOrNull(el.value) : el.value;
     if (!body.reality_enabled && !body.hy2_enabled && !body.tuic_enabled) return toast(t('proto_one'), 'err');
     const prevLang = L;
     saveBtn.disabled = true;
@@ -1218,8 +1224,9 @@ function clientPanel(s, inp) {
   const found = f ? t('client_found')(f.version, Object.keys(f.files).join(' / ')) : t('client_none')(c.dir || '/var/lib/vps2vpn/client');
   return panel(t('client_upd'), null, f || s.client_version ? chip('ok', 'v' + (s.client_version || f.version)) : chip('off', t('off')),
     tip(t('client_tip')), h('div', {class: 'stack'},
-      h('div', {class: 'muted', style: 'font-size:12.5px'}, found),
-      f && f.unsigned && f.unsigned.length ? h('div', {class: 'alert warn'}, icon('alert'), t('client_unsigned')(f.unsigned.join(', '))) : null,
+      // a folder path or long installer names must wrap, or they widen the whole page on a phone
+      h('div', {class: 'muted', style: 'font-size:12.5px;overflow-wrap:anywhere'}, found),
+      f && f.unsigned && f.unsigned.length ? h('div', {class: 'alert warn', style: 'overflow-wrap:anywhere'}, icon('alert'), t('client_unsigned')(f.unsigned.join(', '))) : null,
       (() => { const e = h('input', {type: 'checkbox', checked: s.client_auto_update !== false}); e.onchange = () => saveSettings({client_auto_update: e.checked}); return check(t('client_auto_update'), e); })(),
       h('div', {class: 'form-grid'}, field(t('client_ver'), inp('client_version')), field(t('client_url'), inp('client_url'))),
       field(t('client_notes'), inp('client_notes'))));
@@ -1405,7 +1412,7 @@ function drawSystem() {
         h('div', {class: 'act-grid'}, h('a', {class: 'btn', href: 'api/backup'}, icon('arrowDown'), t('download_backup')),
           h('label', {class: 'btn'}, icon('arrowUp'), t('restore'), restore)))),
     panel(t('logs'), `${t('rules_age')} ${d.rules_age == null ? '—' : dur(d.rules_age) + ' ' + t('ago')} · ${t('version')} ${d.version} · ${d.os}`,
-      h('div', {style: 'display:flex;gap:8px'}, rulesBtn, restartBtn),
+      h('div', {style: 'display:flex;flex-wrap:wrap;gap:8px'}, rulesBtn, restartBtn),   // the English labels need two rows on a phone
       h('div', {class: 'log'}, d.log.join('\n') || '—'))));
 }
 
