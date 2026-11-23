@@ -206,9 +206,13 @@ def speed_limits():
         st = shaper.status()
         ok = not st['error']
         # `vps2vpn doctor` runs in its own process, where nothing has been applied yet: name the card it would use
-        dev = st['dev'] or shaper.default_dev() or '?'
-        return [_check('speed_limits', ok, '%d account(s) limited on %s' % (len(limited), dev)
-                       if ok else st['error'], 'vps2vpn apply --force   (then see journalctl -u vps2vpn)')]
+        dev = st['dev'] or shaper.default_dev()
+        detail = st['error']
+        if ok and not (dev and shaper._ours(dev)):
+            # checked on the card itself: this process applied nothing, the panel may have failed to
+            ok, detail = False, 'the speed limits are not set up on %s' % (dev or 'the network card')
+        return [_check('speed_limits', ok, '%d account(s) limited on %s' % (len(limited), dev) if ok else detail,
+                       'vps2vpn apply --force   (then see journalctl -u vps2vpn)')]
     if not shaper.available():
         return [_check('speed_limits', None, '%d account(s) have a speed limit, but this kernel has no tc/ifb '
                        '(container VPS?): they run at full speed' % len(limited))]

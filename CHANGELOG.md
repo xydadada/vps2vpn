@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.31
+
+- Clash subscriptions no longer carry `global-client-fingerprint`. Current mihomo removed it and logs an error for it on every start; the Reality line still sets its own fingerprint.
+  Clash 订阅去掉了 `global-client-fingerprint`。新版 mihomo 已删除这个设置，每次启动都会报错；Reality 线路仍然在自己的配置里带指纹。
+- `vps2vpn doctor` checks on the network card that speed limits are really set up, and names the card. Before, run on its own it always said OK and showed "limited on ?".
+  `vps2vpn doctor` 会到网卡上确认限速真的设好了，并显示网卡名。以前单独运行时总是显示正常，网卡名显示成「?」。
+
 ## 0.2.30
 
 - **Uninstall works again.** In 0.2.29 it stopped half way on a server where no speed limits were set: the services stopped, but the files stayed. Each speed-limit cleanup step may now fail without ending it. If you ran the 0.2.29 uninstall, run uninstall again.

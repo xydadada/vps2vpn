@@ -363,7 +363,6 @@ def clash(s, u, base_url):
     return {
         'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule', 'log-level': 'warning', 'ipv6': True,
         'unified-delay': True, 'tcp-concurrent': True, 'find-process-mode': 'strict',
-        'global-client-fingerprint': 'chrome',
         'profile': {'store-selected': True, 'store-fake-ip': True},
         'sniffer': {'enable': True, 'sniff': {'HTTP': {'ports': [80, '8080-8880'], 'override-destination': True},
                                               'TLS': {'ports': [443, 8443]}, 'QUIC': {'ports': [443, 8443]}},

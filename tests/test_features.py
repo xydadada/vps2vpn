@@ -2343,11 +2343,16 @@ class AirportFeatures(tu.Base):
             r = doctor.speed_limits()[0]
             self.assertFalse(r['ok'])
             self.assertIn('install.sh', r['fix'])
-        with mock.patch.object(shaper, 'active', return_value=True):
+        with mock.patch.object(shaper, 'active', return_value=True),                 mock.patch.object(shaper, 'default_dev', return_value='eth0'),                 mock.patch.object(shaper, '_ours', return_value=True):
             self.assertTrue(doctor.speed_limits()[0]['ok'])
         # a separate process (`vps2vpn doctor`) has applied nothing itself: it still names the network card
-        with mock.patch.object(shaper, 'active', return_value=True),                 mock.patch.object(shaper, 'default_dev', return_value='eth0'),                 mock.patch.dict(shaper._state, dev=''):
+        with mock.patch.object(shaper, 'active', return_value=True),                 mock.patch.object(shaper, 'default_dev', return_value='eth0'),                 mock.patch.object(shaper, '_ours', return_value=True),                 mock.patch.dict(shaper._state, dev=''):
             self.assertIn('limited on eth0', doctor.speed_limits()[0]['detail'])
+        # ... and says so when the classes are not on the card (the panel never applied them, or a reboot)
+        with mock.patch.object(shaper, 'active', return_value=True),                 mock.patch.object(shaper, 'default_dev', return_value='eth0'),                 mock.patch.object(shaper, '_ours', return_value=False),                 mock.patch.dict(shaper._state, dev='', error=''):
+            r = doctor.speed_limits()[0]
+            self.assertFalse(r['ok'])
+            self.assertIn('not', r['detail'])
 
 
 class AirportFeaturesAudit5Leftovers(tu.Base):

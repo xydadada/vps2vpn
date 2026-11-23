@@ -465,6 +465,9 @@ class Subscriptions(Base):
         self.assertEqual(len(hy['fingerprint']), 64)
         self.assertEqual(c['x-vps2vpn-pin'], hy['fingerprint'])     # the app trusts the panel by it
         self.assertEqual(c['rules'][-1], 'MATCH,漏网之鱼')
+        # current mihomo logs an error for the removed global key; Reality carries its own fingerprint
+        self.assertNotIn('global-client-fingerprint', c)
+        self.assertEqual(c['proxies'][1]['client-fingerprint'], 'chrome')
         used = {r.split(',')[1] for r in c['rules'] if r.startswith('RULE-SET')}
         self.assertEqual(used, set(c['rule-providers']))
         self.assertTrue(all(p['url'].startswith('https://203.0.113.7:54321/rules/') for p in c['rule-providers'].values()))
