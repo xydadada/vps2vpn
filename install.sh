@@ -19,7 +19,7 @@ SINGBOX_VERSION="v1.14.4"   # TUIC v5 server; release hashes pinned below (sing-
 SINGBOX_SHA256_amd64="699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968"
 SINGBOX_SHA256_arm64="436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26"
 REPO="${V2V_REPO:-xydadada/vps2vpn}"          # where the panel code is downloaded from when not run from a checkout
-PINNED_TAG="v0.2.29"   # release used when GitHub's API cannot be reached; bump it with every release
+PINNED_TAG="v0.2.30"   # release used when GitHub's API cannot be reached; bump it with every release
 REF="${V2V_REF:-${V2V_BRANCH:-}}"   # development only: install this branch/tag/commit instead, UNVERIFIED
 LIB=/usr/local/lib/vps2vpn
 ETC=/etc/vps2vpn
@@ -670,17 +670,25 @@ clear_speed_limits() {   # speed limits live in the kernel, not in files: take o
       >/dev/null 2>&1 || true
   fi
   # fallback (no Python, or the default route moved since the limits were set): our HTB root 1a5: on any card,
-  # an ingress qdisc that redirects to our ifb device, the ifb device and our nft table
+  # an ingress qdisc that redirects to our ifb device, the ifb device and our nft table. Most of them are not
+  # there (no limits were set, a container without tc): every step may fail, and under set -e that must not end
+  # the uninstall half way.
   if command -v tc >/dev/null 2>&1 && command -v ip >/dev/null 2>&1; then
     local dev
-    for dev in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1); do
+    for dev in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 || true); do
       [ "$dev" = v2vifb0 ] && continue
-      tc qdisc show dev "$dev" 2>/dev/null | grep -q 'htb 1a5:' && tc qdisc del dev "$dev" root 2>/dev/null
-      tc filter show dev "$dev" parent ffff: 2>/dev/null | grep -q v2vifb0 && tc qdisc del dev "$dev" ingress 2>/dev/null
+      if (tc qdisc show dev "$dev" 2>/dev/null || true) | grep -q 'htb 1a5:'; then
+        tc qdisc del dev "$dev" root 2>/dev/null || true
+      fi
+      if (tc filter show dev "$dev" parent ffff: 2>/dev/null || true) | grep -q v2vifb0; then
+        tc qdisc del dev "$dev" ingress 2>/dev/null || true
+      fi
     done
-    ip link del v2vifb0 2>/dev/null
+    ip link del v2vifb0 2>/dev/null || true
   fi
-  command -v nft >/dev/null 2>&1 && nft delete table inet vps2vpn_shape 2>/dev/null
+  if command -v nft >/dev/null 2>&1; then
+    nft delete table inet vps2vpn_shape 2>/dev/null || true
+  fi
   return 0
 }
 

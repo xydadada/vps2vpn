@@ -84,6 +84,16 @@ class UninstallClearsSpeedLimits(unittest.TestCase):
         self.assertIn('ip link del v2vifb0', calls)
         self.assertIn('nft delete table inet vps2vpn_shape', calls)
 
+    def test_nothing_to_clear_does_not_stop_the_uninstall(self):
+        # in CI's containers every tool fails (no ifb device, no table): set -e must not end the uninstall there
+        for name in ('ip', 'tc', 'nft'):
+            with open(os.path.join(self.tmp, 'stubs', name), 'a', encoding='utf-8', newline='\n') as f:
+                f.write('exit 1\n')
+        calls = self.calls('set -euo pipefail\nclear_speed_limits\necho after >> "$FIX/calls"')
+        self.assertIn('ip link del v2vifb0', calls)
+        self.assertIn('nft delete table inet vps2vpn_shape', calls)
+        self.assertEqual(calls[-2:], ['after', 'shaper.clear'])
+
     def test_without_the_panel_code_the_fallback_still_runs(self):
         shutil.rmtree(os.path.join(self.tmp, 'lib'))
         calls = self.calls('clear_speed_limits')

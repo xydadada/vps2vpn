@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.30
+
+- **Uninstall works again.** In 0.2.29 it stopped half way on a server where no speed limits were set: the services stopped, but the files stayed. Each speed-limit cleanup step may now fail without ending it. If you ran the 0.2.29 uninstall, run uninstall again.
+  **卸载恢复正常。** 0.2.29 在没设过限速的服务器上卸载会中途停下：服务停了，但文件还在。现在限速清理的每一步失败都不会打断卸载。用 0.2.29 卸载过的，请再执行一次卸载。
+
 ## 0.2.29
 
 - **Slowed-down accounts stay slow on every server.** An account whose quota is used up and that slows down instead of stopping now runs only on servers that can hold it to that speed (speed limits work there and it has Reality or TUIC). Other servers switch it off until the next reset or more quota, and leave it out of the subscription. Before, a joined server without speed limits (a container, or Hysteria 2 only) let it run at full speed. An account with no such server stops, as before.
