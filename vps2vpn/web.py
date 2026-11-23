@@ -30,7 +30,7 @@ import time
 import urllib.error
 import urllib.parse
 
-from . import (VERSION, abuse, aicheck, certs, cluster, cores, db, doctor, jobs, members, monitor, notify, paths, qr, rules,
+from . import (VERSION, abuse, aicheck, certs, clock, cluster, cores, db, doctor, jobs, members, monitor, notify, paths, qr, rules,
                secure, shaper, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
@@ -151,9 +151,8 @@ def _propagate_lifetime(uid, old_expire, new_expire=None, old_reset=None, new_re
     if hasattr(members, 'propagate_lifetime'):
         updated = members.propagate_lifetime(uid, new_expire, new_reset)
         if updated and new_reset and not old_reset:
-            t_now = time.localtime()
-            if t_now.tm_mday >= new_reset:
-                month = time.strftime('%Y-%m', t_now)
+            if clock.reached(new_reset):
+                month = clock.month()
                 for cid in updated:
                     child = db.user(cid)
                     if child and not child['last_reset']:
@@ -165,8 +164,8 @@ def _propagate_lifetime(uid, old_expire, new_expire=None, old_reset=None, new_re
             by_inviter.setdefault(x['invited_by'], []).append(x)
     queue = [uid]
     seen = {uid}
-    t_now = time.localtime()
-    month = time.strftime('%Y-%m', t_now)
+    month = clock.month()
+    reached = clock.reached(new_reset) if new_reset else False
     while queue:
         cur = queue.pop(0)
         for child in by_inviter.get(cur, ()):
@@ -181,7 +180,7 @@ def _propagate_lifetime(uid, old_expire, new_expire=None, old_reset=None, new_re
                     upd['expire_after_days'] = 0
             if new_reset is not None:
                 upd['reset_day'] = int(new_reset)
-                if new_reset > 0 and child['reset_day'] == 0 and not child['last_reset'] and t_now.tm_mday >= new_reset:
+                if new_reset > 0 and child['reset_day'] == 0 and not child['last_reset'] and reached:
                     upd['last_reset'] = month
             if upd:
                 db.update_user(cid, **upd)
@@ -706,6 +705,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.fullmatch(r'/s/([A-Za-z0-9_-]{16,64})(?:/(qr\.svg))?', path)
             if m and method == 'GET':
                 return self.subscription(s, m.group(1), m.group(2))
+            # Links of the old panel accounts were moved from (tools/legend_import.py keeps their tokens).
+            m = re.fullmatch(r'/(sub|import)/([A-Za-z0-9_-]{16,64})(\.ipv4\.yaml|\.yaml|\.conf|\.html)', path)
+            if m and method == 'GET' and (m.group(1) == 'sub' or m.group(3) == '.html'):
+                return self.legacy_subscription(s, m.group(2), m.group(3))
             m = re.fullmatch(r'/s/([A-Za-z0-9_-]{16,64})(/.*)', path)
             if m:
                 u = db.user_by_token(m.group(1))
@@ -764,6 +767,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         account's credentials, and the panel and member-centre paths are meant to stay unguessable."""
         path = self.path.split('?')[0]
         path = re.sub(r'^/s/[^/]*', '/s/<token>', path)
+        path = re.sub(r'^/(sub|import)/[^/]*?(\.ipv4\.yaml|\.yaml|\.conf|\.html)?$', r'/\1/<token>\2', path)
         s = self._s or {}
         for key, label in (('panel_path', '/<panel>'), ('member_path', '/<member>')):
             prefix = '/' + str(s.get(key) or '')
@@ -777,7 +781,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.is_tls or (paths.DEV and self.client_ip() in ('127.0.0.1', '::1'))
 
     # --- public: subscriptions ------------------------------------------------------
-    def subscription(self, s, token, qr_svg):
+    def legacy_subscription(self, s, token, ext):
+        """The old panel's addresses: .yaml (Clash), .ipv4.yaml (Clash, IPv4 entries only), .conf (Shadowrocket)
+        and .html (its import page, now the account's own page). Like the old panel, a switched-off account gets
+        403 for the .conf and .html links; the Clash ones still carry the usage header with no proxies in them."""
+        u = db.user_by_token(token)
+        if not u or not s['setup_done']:
+            return self.not_found()
+        if ext in ('.conf', '.html') and not u['enabled']:
+            return self.send(403, 'account disabled / 账号已停用', 'text/plain; charset=utf-8', {'Cache-Control': 'no-store'})
+        if ext == '.html':
+            return self.send(302, '', headers={'Location': '/s/%s' % token, 'Cache-Control': 'no-store'})
+        fmt = 'shadowrocket' if ext == '.conf' else 'clash'
+        return self.subscription(dict(s, ipv4_only=ext == '.ipv4.yaml'), token, None, fmt)
+
+    def subscription(self, s, token, qr_svg, force_fmt=None):
         u = db.user_by_token(token)
         if not u or not s['setup_done']:
             return self.not_found()
@@ -801,7 +819,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.send(200, image, 'image/svg+xml',
                              {'Cache-Control': 'no-store', 'Content-Security-Policy': _SVG_CSP})
         ua = self.headers.get('User-Agent')
-        fmt = subscription.detect_format(ua, self.query.get('format', ''), self.headers.get('Accept') or '')
+        fmt = force_fmt or subscription.detect_format(ua, self.query.get('format', ''), self.headers.get('Accept') or '')
         if not fmt:
             if self.secure_ok():          # the person's own page (usage, import buttons, requests, invites)
                 return self.member_page('/s/%s/' % token)
@@ -1513,9 +1531,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if fields['enabled']:
                     fields['paused_until'] = 0
             if 'reset_day' in fields and fields['reset_day'] > 0 and u['reset_day'] == 0 and not u['last_reset']:
-                t_now = time.localtime()
-                if t_now.tm_mday >= fields['reset_day']:
-                    fields['last_reset'] = time.strftime('%Y-%m', t_now)
+                if clock.reached(fields['reset_day']):
+                    fields['last_reset'] = clock.month()
             other = db.user_by_name(fields['name']) if 'name' in fields else None
             if other and other['id'] != uid:
                 return self.json({'error': 'name already used'}, 400)
@@ -1829,12 +1846,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         dl_url = 'https://' + sub_url[7:] if sub_url.startswith('http://') else sub_url
         names = db.user_names()
         invitees = members.invitee_index(db.invite_tree(u['id']))    # this account's invite chain only
-        nxt = 0
-        if u['reset_day']:
-            t = time.localtime()
-            y, mth = (t.tm_year, t.tm_mon) if t.tm_mday < u['reset_day'] else \
-                ((t.tm_year + 1, 1) if t.tm_mon == 12 else (t.tm_year, t.tm_mon + 1))
-            nxt = int(time.mktime((y, mth, u['reset_day'], 0, 0, 0, 0, 0, -1)))
+        nxt = clock.next_reset(u['reset_day'])
         reg = '%s/%s/' % (base, s['member_path'])
         online = (cores.online_detail(s) or {}).get(u['id'])
         return {
@@ -2023,8 +2035,8 @@ def user_fields(d):
             out['expire_at'] = max(0, expiry)
         if 'reset_day' in d:
             out['reset_day'] = int(d['reset_day'] or 0)
-            if not 0 <= out['reset_day'] <= 28:
-                return 'reset day must be 1-28 (0 = never)'
+            if not 0 <= out['reset_day'] <= 31:
+                return 'reset day must be 1-31 (0 = never)'
         if 'enabled' in d:
             try:
                 out['enabled'] = int(as_bool(d['enabled']))
@@ -2064,6 +2076,7 @@ def user_fields(d):
 
 
 HOST_RE = re.compile(r'^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$')
+CUSTOM_LIST_MAX = 10000           # domains per custom direct / proxy / block list
 
 
 def as_bool(v):
@@ -2105,8 +2118,9 @@ def validate_settings(d, s):
                     return 'not a domain: %s' % item[:60]
                 if item not in clean:
                     clean.append(item)
-            if len(clean) > 500:
-                return 'at most 500 domains per list'
+            # room for a whole imported rule set (an old panel's template is ~9000 lines over three lists)
+            if len(clean) > CUSTOM_LIST_MAX:
+                return 'at most %d domains per list' % CUSTOM_LIST_MAX
             out[k] = clean
     if 'traffic_rate' in d:
         try:
@@ -2182,6 +2196,11 @@ def validate_settings(d, s):
             return 'invalid number'
         if not 1 <= out['server_reset_day'] <= 28:
             return 'reset day must be 1-28'
+    if 'time_zone' in d:
+        tz = clock.valid(d['time_zone'])
+        if tz is None:
+            return 'unknown time zone (use e.g. UTC+8)'
+        out['time_zone'] = tz
     if 'vps_renew_at' in d:
         v = str(d['vps_renew_at'] or '').strip()
         if v:

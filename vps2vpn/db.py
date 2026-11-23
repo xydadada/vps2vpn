@@ -206,6 +206,7 @@ DEFAULTS = {
     'tune_network': True,
     'ipv6_nodes': False,        # also list IPv6 entries (when the server has public IPv6)
     'tcp_first': False,         # line order in subscriptions: Reality (TCP) before Hysteria 2 / TUIC (UDP)
+    'time_zone': '',            # monthly resets follow this ("UTC+8", "Asia/Shanghai"); '' = the server's clock
     # Telegram alerts
     'tg_token': '',
     'tg_chat': '',
@@ -294,6 +295,8 @@ def close():
             _conn.close()
             _conn = None
             _tx_depth = 0
+    from . import clock              # another database may hold another time zone
+    clock.forget()
 
 
 @contextlib.contextmanager
@@ -382,6 +385,9 @@ def set_settings(**kv):
                 raise KeyError(k)
             c.execute('INSERT INTO settings(key, value) VALUES(?, ?) '
                       'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (k, json.dumps(v)))
+    if 'time_zone' in kv:
+        from . import clock          # the reset calendar re-reads it at most every 30 s otherwise
+        clock.forget()
 
 
 def ensure_secrets():
@@ -876,7 +882,7 @@ def _check_import_invite(inv, i, codes):
             raise ValueError('invite %d: invalid %s' % (i, k))
     if 'id' in inv and inv['id'] == 0:
         raise ValueError('invite %d: invalid id' % i)
-    if not 0 <= inv.get('reset_day', 0) <= 28 or inv.get('max_uses', 1) < 1:
+    if not 0 <= inv.get('reset_day', 0) <= 31 or inv.get('max_uses', 1) < 1:
         raise ValueError('invite %d: invalid reset_day or max_uses' % i)
     gb = inv.get('quota_gb', 0)
     if type(gb) not in (int, float) or not 0 <= gb <= 1e9 or not math.isfinite(gb):
@@ -945,7 +951,7 @@ def _check_import_user(u, i):
         v = u.get(k, 0)
         if type(v) not in (int, float) or not 0 <= v <= 1e9 or not math.isfinite(v):
             raise ValueError('user %d: %s must be a number' % (i, k))
-    if u.get('enabled', 1) not in (0, 1) or not 0 <= u.get('reset_day', 0) <= 28:
+    if u.get('enabled', 1) not in (0, 1) or not 0 <= u.get('reset_day', 0) <= 31:
         raise ValueError('user %d: invalid enabled or reset day' % i)
     if u.get('throttled', 0) not in (0, 1):
         raise ValueError('user %d: invalid throttled' % i)
@@ -976,6 +982,10 @@ def import_all(data):
             raise ValueError('invalid %s in backup' % flag)
     if 'traffic_rate' in keep and not valid_rate(keep['traffic_rate']):
         raise ValueError('invalid traffic_rate in backup')
+    from . import clock
+    if 'time_zone' in keep:
+        keep['time_zone'] = clock.valid(keep['time_zone']) or ''   # a zone this system lacks: the server's clock
+    clock.forget()
     for key in ('panel_path', 'member_path'):
         value = keep.get(key, DEFAULTS[key])
         if not isinstance(value, str) or (value and not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value)):

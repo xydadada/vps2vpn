@@ -366,6 +366,8 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 - **Telegram 告警和命令**：见 [Telegram 机器人](#telegram-机器人)。
 - 可选同时提供 **IPv6 节点**：IPv4 线路卡的时候换着用。
 - **线路优先顺序**：可选「TCP 优先」，订阅里每台服务器先用 Reality（TCP），再用 Hysteria 2 / TUIC（UDP），适合 UDP 常被限速的网络。
+- **每月重置**：可以设 1–31 号（小月在月底那天重置），可以选按哪个时区换月（默认服务器自己的时间）。
+- **从旧面板搬家**：`tools/legend_import.py` 把旧面板的账号和分流规则合并进备份文件，原来的订阅链接（`/sub/<token>.yaml`、`.conf` 等）照样能用。
 - **会员中心、邀请码、申请加流量**：见[添加使用者](#添加使用者)。
 - **在线状态**：三种协议都能看到谁在线、几台设备、哪些 IP。
 - **网站监控**：每 5 分钟从服务器测 GitHub、YouTube、ChatGPT（含地区是否被封）、Google、X、Telegram 的 IPv4 / IPv6 延迟和测速，保留 24 小时曲线。
@@ -381,7 +383,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 ## 实测（本项目的测试都是真程序真流量）
 
-`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page` —— 404 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
+`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import` —— 428 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
 
 `python tests/e2e_local.py <放官方程序的目录>` —— 在一台电脑上启动**真的** Xray、Hysteria 和 sing-box（TUIC）服务端，再用**真的** mihomo（Clash 内核）和 sing-box 客户端发流量，共 54 项检查：
 
@@ -517,7 +519,7 @@ Health & upkeep → Telegram alerts: create a bot with @BotFather, paste the tok
 
 ### Tested
 
-404 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
+428 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
 
 Standard-library Python panel: no Docker, no database server, no third-party scripts in the browser.
 

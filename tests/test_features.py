@@ -624,6 +624,45 @@ class ServerMonth(tu.Base):
         self.assertEqual((rec['period'], rec['rx'], rec['tx']), ('2026-03-15', 100, 100))
         self.assertEqual(jobs.period_of(time.mktime((2026, 1, 3, 0, 0, 0, 0, 0, -1)), 15), '2025-12-15')
 
+    def test_reset_days_past_month_end_and_the_owners_time_zone(self):
+        from vps2vpn import clock
+        self.addCleanup(clock.forget)
+        db.set_settings(time_zone='UTC+8')
+        at = lambda y, m, d, h=0: int(clock.midnight(y, m, d)) + h * 3600
+        # a reset on the 31st falls on the last day of shorter months
+        self.assertEqual(jobs.period_of(at(2026, 2, 27), 31), '2026-01-31')
+        self.assertEqual(jobs.period_of(at(2026, 2, 28), 31), '2026-02-28')
+        self.assertEqual(jobs.period_of(at(2026, 4, 30), 31), '2026-04-30')
+        self.assertEqual(jobs.period_of(at(2026, 5, 30), 31), '2026-04-30')
+        self.assertEqual(clock.next_reset(31, at(2026, 2, 10)), at(2026, 2, 28))
+        self.assertEqual(clock.next_reset(31, at(2026, 2, 28, 1)), at(2026, 3, 31))
+        u = db.user(db.add_user('late', 10, 0, 30))
+        self.assertEqual(jobs.monthly_reset(u, at(2026, 2, 27, 23)), (False, '2026-02'))
+        self.assertEqual(jobs.monthly_reset(u, at(2026, 2, 28)), (True, '2026-02'))
+        # midnight on the 1st in UTC+8 is still the previous month in UTC
+        first = at(2026, 3, 1)
+        self.assertEqual(time.strftime('%Y-%m-%d %H', time.gmtime(first)), '2026-02-28 16')
+        self.assertEqual(clock.month(first), '2026-03')
+        db.set_settings(time_zone='UTC-5')
+        self.assertEqual(clock.month(first), '2026-02')
+        # the panel takes offsets and refuses what it cannot use; a bad zone in a backup falls back to the server
+        for good in ('', 'UTC', 'UTC+8', 'UTC-3:30', 'UTC+14'):
+            self.assertEqual(web.validate_settings({'time_zone': good}, db.settings()), {'time_zone': good})
+        for bad in ('UTC+15', 'Mars/Olympus', '../etc', 'GMT+8;rm', 8):
+            self.assertIsInstance(web.validate_settings({'time_zone': bad}, db.settings()), str, bad)
+        self.assertEqual(web.user_fields({'reset_day': 31})['reset_day'], 31)
+        self.assertIsInstance(web.user_fields({'reset_day': 32}), str)
+        self.assertEqual(members.create_invite('admin', 5, 7, reset_day=31)['reset_day'], 31)
+        with self.assertRaises(members.Refused):
+            members.create_invite('admin', 5, 7, reset_day=32)
+
+    def test_custom_lists_take_a_whole_imported_rule_set(self):
+        many = ['d%d.example.com' % i for i in range(web.CUSTOM_LIST_MAX)]
+        self.assertEqual(len(web.validate_settings({'custom_proxy': many}, db.settings())['custom_proxy']),
+                         web.CUSTOM_LIST_MAX)
+        self.assertIsInstance(web.validate_settings({'custom_proxy': many + ['one-more.example.com']},
+                                                    db.settings()), str)
+
 
     def test_an_interface_going_away_is_not_a_reboot(self):
         s = db.settings()
@@ -2828,6 +2867,35 @@ class SubscriptionUXWeb(tu.Base):
         self.assertIn(('<base href="/s/%s/">' % u['sub_token']).encode(), body)
         st, body, r = self.req('GET', path, headers={'User-Agent': 'clash-verge/2.0', 'Accept': 'text/html'})
         self.assertIn(b'"proxies"', body)                        # a recognised app stays an app
+
+    def test_old_panel_links_keep_working(self):
+        u = mk('moved', 10)
+        tok = u['sub_token']
+        db.set_settings(public_ipv6='2001:db8::5', ipv6_nodes=True)
+        st, body, r = self.req('GET', '/sub/%s.yaml' % tok, headers={'User-Agent': 'Mozilla/5.0'})
+        self.assertEqual(st, 200)
+        self.assertIn(b'"proxies"', body)                         # Clash, whatever the User-Agent says
+        self.assertIn(b'2001:db8::5', body)
+        self.assertTrue(r.getheader('Subscription-Userinfo'))
+        st, body, _ = self.req('GET', '/sub/%s.ipv4.yaml' % tok)
+        self.assertEqual(st, 200)
+        self.assertIn(b'"proxies"', body)
+        self.assertNotIn(b'2001:db8::5', body)
+        st, conf, _ = self.req('GET', '/sub/%s.conf' % tok, headers={'User-Agent': 'Mozilla/5.0'})
+        self.assertEqual(st, 200)
+        self.assertNotIn(b'"proxies"', conf)
+        self.assertTrue(conf.strip())
+        for p in ('/sub/%s.html' % tok, '/import/%s.html' % tok):
+            st, _, r = self.req('GET', p)
+            self.assertEqual((st, r.getheader('Location')), (302, '/s/%s' % tok))
+        self.assertEqual(self.req('GET', '/sub/%s.yaml' % ('x' * 43))[0], 404)
+        self.assertEqual(self.req('GET', '/import/%s.yaml' % tok)[0], 404)
+        db.update_user(u['id'], enabled=0, disabled_reason='manual')
+        self.assertEqual(self.req('GET', '/sub/%s.conf' % tok)[0], 403)
+        self.assertEqual(self.req('GET', '/import/%s.html' % tok)[0], 403)
+        st, body, r = self.req('GET', '/sub/%s.yaml' % tok)
+        self.assertEqual(st, 200)                                 # usage header still there, no proxies
+        self.assertTrue(r.getheader('Subscription-Userinfo'))
 
     def test_fetch_recorded_and_shown_to_admin(self):
         u = mk('seen', 10)

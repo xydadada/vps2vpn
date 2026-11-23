@@ -34,7 +34,7 @@ NAME_RE = re.compile(r'^[\w.\-一-鿿]{2,32}$')       # vps2vpn members.NAME_RE
 HOST_RE = re.compile(r'^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$')
 MAX_PBKDF2_ROUNDS = 5_000_000       # vps2vpn secure.MAX_PBKDF2_ROUNDS
 MAX_MBPS = 100000
-PANEL_LIST_MAX = 500                # what the panel's settings page accepts per list today
+PANEL_LIST_MAX = 10000              # what the panel's settings page accepts per list (web.CUSTOM_LIST_MAX)
 
 # Old policy-group names -> vps2vpn list. "ai" is left to vps2vpn's own AI group.
 TARGETS = {
@@ -214,12 +214,11 @@ def import_users(base, legend, usage, now):
             report['no_login'].append(u['id'])
         day = int(u.get('cycle_day', 20))
         cycle_key(day, now)                                   # rejects an impossible day
-        reset_day = min(day, 28)
-        if day > 28:
-            report['reset_day'].append((u['id'], day))
+        reset_day = day                                       # 29-31 fall on a short month's last day, as before
         here = dt.datetime.fromtimestamp(now, SG)
         prev = (here.year - 1, 12) if here.month == 1 else (here.year, here.month - 1)
-        last_reset = '%04d-%02d' % ((here.year, here.month) if here.day >= reset_day else prev)
+        this_month = min(day, calendar.monthrange(here.year, here.month)[1])
+        last_reset = '%04d-%02d' % ((here.year, here.month) if here.day >= this_month else prev)
         total = int(u.get('total') or 0)
         bonus = u.get('quota_bonus') or {}
         extra = int(bonus.get('bytes', 0)) if total and bonus.get('cycle') == cycle_key(day, now) else 0
@@ -252,6 +251,12 @@ def import_users(base, legend, usage, now):
     report['count'] = len(new)
     out = dict(base)
     out['users'] = users + new
+    # the old panel changed months at midnight Singapore time; keep that unless the new panel already chose a zone
+    s = dict(base.get('settings') or {})
+    report['time_zone'] = s.get('time_zone') or ''
+    if not report['time_zone']:
+        s['time_zone'] = 'UTC+8'
+        out['settings'] = s
     return out, report
 
 
@@ -357,7 +362,10 @@ def describe(report, rules_report, settings):
         lines.append('  · %s：它邀请的人已停用，但那人又邀请了别人；vps2vpn 会继续从 %s 扣这部分流量，旧系统不扣。' % (oid, oid))
     if report['legacy']:
         lines.append('  · 旧系统里还有一个公用的 legacy Hysteria 账号，它没有订阅链接，不会导入。')
-    lines.append('  · 旧系统按新加坡时间零点换月，vps2vpn 按服务器自己的时区：服务器不是 UTC+8 时，重置会早或晚几个小时。')
+    if report.get('time_zone'):
+        lines.append('  · 新面板已经设了重置时区 %s，保留不动；旧系统按 UTC+8（新加坡时间）零点换月。' % report['time_zone'])
+    else:
+        lines.append('  · 面板的「每月重置按哪个时区」设成了 UTC+8，和旧系统一样按新加坡时间零点换月。')
     lines.append('  · TUIC 改用每个人的 Reality UUID 和 Hysteria 2 密码：用订阅的人更新一次订阅就好，手填 TUIC 的要重新填。')
     if rules_report:
         r = rules_report

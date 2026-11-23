@@ -413,6 +413,9 @@ textarea.mono{font:12.5px/1.7 var(--mono)}
 .m-wrap{max-width:1080px;margin:0 auto;padding:20px 16px 48px}
 .m-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
 .m-acts{display:flex;gap:8px;align-items:center}
+/* On a phone the theme switch and sign-out button left no room: the brand text ran under them. */
+.m-top .brand>div{min-width:0}
+@media(max-width:420px){.m-top .brand small{display:none}.m-top .brand b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .m-hero .panel-b{display:flex;flex-direction:column;gap:18px;background:linear-gradient(135deg,color-mix(in srgb,var(--down) 10%,var(--panel)),var(--panel) 55%);border-radius:var(--r)}
 .m-hello{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
 .m-hello h1{font-size:28px;font-weight:800;margin:2px 14px 0 0}

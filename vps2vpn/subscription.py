@@ -92,6 +92,8 @@ def nodes(s, u):
         for n in more:
             n['ai_score'] = info.get('ai_score', -1)
         out += _ordered(s, more)
+    if s.get('ipv4_only'):            # the old panel's ".ipv4.yaml" link
+        out = [n for n in out if ':' not in n['server']]
     return out
 
 

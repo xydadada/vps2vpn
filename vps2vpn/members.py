@@ -236,7 +236,7 @@ def create_invite(kind, quota_gb, valid_days, max_uses=1, inviter=0, expire_days
         low, high = ADMIN_VALID_DAYS
         rec.update(quota_gb=_num(quota_gb, 0, 100000, 'quota (GB)'),
                    expire_days=_num(expire_days, 0, 3650, 'account lifetime (days)', True),
-                   reset_day=_num(reset_day, 0, 28, 'reset day', True),
+                   reset_day=_num(reset_day, 0, 31, 'reset day', True),
                    max_uses=_num(max_uses, 1, ADMIN_MAX_USES, 'uses', True),
                    speed_mbps=_num(speed_mbps or 0, 0, db.MAX_MBPS, 'speed limit (Mbps)'),
                    throttle_mbps=_num(throttle_mbps or 0, 0, db.MAX_MBPS, 'slow-down speed (Mbps)'))

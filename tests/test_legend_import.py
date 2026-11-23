@@ -200,6 +200,15 @@ class LegendImport(unittest.TestCase):
         alice = self.user(USERS[0])
         self.assertTrue(jobs.monthly_reset(alice, int(dt.datetime(2026, 12, 20, 23, tzinfo=SG).timestamp()))[0])
         self.assertFalse(jobs.monthly_reset(alice, int(dt.datetime(2026, 12, 19, 12, tzinfo=SG).timestamp()))[0])
+        # the panel now changes months on Singapore's clock too: midnight there, whatever the server's zone
+        self.assertEqual(db.settings()['time_zone'], 'UTC+8')
+        self.assertTrue(jobs.monthly_reset(alice, int(dt.datetime(2026, 12, 20, 0, 0, 1, tzinfo=SG).timestamp()))[0])
+        self.assertFalse(jobs.monthly_reset(alice, int(dt.datetime(2026, 12, 19, 23, 59, tzinfo=SG).timestamp()))[0])
+        # bob resets on the 31st: the 30th in November, as on the old panel
+        bob = self.user(USERS[1])
+        self.assertEqual(bob['reset_day'], 31)
+        self.assertTrue(jobs.monthly_reset(bob, int(dt.datetime(2026, 11, 30, 1, tzinfo=SG).timestamp()))[0])
+        self.assertFalse(jobs.monthly_reset(bob, int(dt.datetime(2026, 11, 29, 23, tzinfo=SG).timestamp()))[0])
 
     def test_top_up_only_for_the_current_period(self):
         self.assertEqual(self.user(USERS[0])['extra_gb'] * (1 << 30), 5 * GB)
@@ -238,7 +247,7 @@ class LegendImport(unittest.TestCase):
 
     def test_report_names_what_did_not_carry_over(self):
         r = self.report
-        for text in ('28 号', 'legacy', 'TUIC', 'DOMAIN-KEYWORD', 'IP 规则', '某个分组', 'cdn.cn-site.com',
+        for text in ('UTC+8', 'legacy', 'TUIC', 'DOMAIN-KEYWORD', 'IP 规则', '某个分组', 'cdn.cn-site.com',
                      '部分节点', '导入了 6 个旧账号'):
             self.assertIn(text, r)
 
@@ -272,11 +281,13 @@ class LegendRules(unittest.TestCase):
         self.assertEqual(rep['unknown_target'], {})
 
     def test_long_lists_are_flagged(self):
-        lists, _ = li.convert_rules(['DOMAIN-SUFFIX,site%d.com,DIRECT' % i for i in range(600)])
+        from vps2vpn import web
+        self.assertEqual(li.PANEL_LIST_MAX, web.CUSTOM_LIST_MAX)        # the tool warns at the panel's own limit
+        lists, _ = li.convert_rules(['DOMAIN-SUFFIX,site%d.com,DIRECT' % i for i in range(li.PANEL_LIST_MAX + 1)])
         text = li.describe({'renamed': [], 'login_renamed': [], 'reset_day': [], 'exempt': [], 'free_gb': [],
                             'updown': [], 'nodes': [], 'orphans': [], 'chain': [], 'no_login': [], 'legacy': False,
                             'count': 0}, li.convert_rules([])[1], {'custom_direct': lists['direct']})
-        self.assertIn('超过 500 条', text)
+        self.assertIn('超过 %d 条' % li.PANEL_LIST_MAX, text)
 
 
 class LegendRefuses(unittest.TestCase):

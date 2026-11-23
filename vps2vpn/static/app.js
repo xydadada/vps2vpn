@@ -9,6 +9,7 @@ const T = {
     first_user: '第一个使用者的名字', server_addr: '服务器地址（IP 或域名，已自动识别）',
     next: '下一步', back: '上一步', build: '一键建好 VPN', building: '正在搭建，大约 10 秒…',
     advanced: '高级选项（不懂就别动）', lang: '语言 / Language',
+    time_zone: '每月重置按哪个时区', tz_server: '服务器自己的时间',
     login: '登录', login_intro: '输入安装时设置的管理员账号。连续输错 8 次会锁定 10 分钟。', logout: '退出登录', wrong: '用户名或密码错误',
     nav_main: '运营', nav_infra: '服务器', nav_home: '总览', nav_users: '使用者', nav_settings: '协议与设置', nav_system: '体检与维护',
     k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
@@ -58,7 +59,7 @@ const T = {
     tab_home: '总览', tab_users: '用户', tab_members: '会员', tab_servers: '服务器', tab_monitor: '监控', tab_settings: '设置', tab_system: '体检',
     online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', extra_now: '本期临时加量（下次重置或手动清零时取消）', extra_gone: '本期临时加量也会一起取消。', invited_by: '邀请人', eff_quota: '实际可用额度', plan: '套餐', history: '每日用量', history_sub: '近 30 天',
     member_login: '会员中心登录', member_login_tip: '设置密码后，他可以用名字 + 密码登录会员中心（看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
-    login_on: '已设置密码', login_off: '未设置密码', set_pw: '设置 / 重置密码', clear_pw: '取消密码登录', pw_cleared: '已取消',
+    login_on: '已设置密码', login_off: '未设置密码', set_pw: '设置 / 重置密码', clear_pw: '取消密码登录', pw_cleared: '已取消', pw_ph: '新密码（至少 8 位）', pw_first: '先在左边输入新密码（至少 8 位），再点「设置 / 重置密码」',
     requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '只加到本期：下次重置日（或手动清零流量时）自动取消；没设重置日的账号会一直保留到手动清零。想长期提高，请在用户编辑里改「流量上限」。', answer: '回复（可选）',
     pending: '待处理', approved: '已批准', rejected: '已拒绝',
     invites: '邀请码', inv_tip: '管理员邀请码：自定义额度和有效期，不扣任何人的流量。会员也可以在会员中心用自己的额度生成邀请码。',
@@ -119,6 +120,7 @@ const T = {
     first_user: 'Name of the first user', server_addr: 'Server address (IP or domain, detected automatically)',
     next: 'Next', back: 'Back', build: 'Build my VPN', building: 'Building, about 10 seconds…',
     advanced: 'Advanced (safe to skip)', lang: 'Language / 语言',
+    time_zone: 'Time zone for monthly resets', tz_server: "The server's own clock",
     login: 'Log in', login_intro: 'Use the admin account you created during setup. 8 wrong tries lock sign-in for 10 minutes.', logout: 'Log out', wrong: 'Wrong username or password',
     nav_main: 'Operate', nav_infra: 'Server', nav_home: 'Overview', nav_users: 'Users', nav_settings: 'Protocols & settings', nav_system: 'Health & upkeep',
     k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
@@ -168,7 +170,7 @@ const T = {
     tab_home: 'Home', tab_users: 'Users', tab_members: 'Members', tab_servers: 'Servers', tab_monitor: 'Monitor', tab_settings: 'Settings', tab_system: 'Health',
     online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset or manual reset)', extra_gone: 'The top-up for this period ends too.', invited_by: 'Invited by', eff_quota: 'Effective quota', plan: 'plan', history: 'Daily usage', history_sub: 'last 30 days',
     member_login: 'Member centre login', member_login_tip: 'With a password they can log in to the member centre by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
-    login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password login', pw_cleared: 'Removed',
+    login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password login', pw_cleared: 'Removed', pw_ph: 'New password (8+ characters)', pw_first: 'Type the new password first (8+ characters), then press "Set / reset password"',
     requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'For the current period only: it ends at the next reset day or a manual traffic reset (accounts without a reset day keep it until a manual reset). To raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)',
     pending: 'pending', approved: 'approved', rejected: 'declined',
     invites: 'Invite codes', inv_tip: 'Admin codes: any quota and lifetime, nobody is charged. Members can also make codes from their own quota in the member centre.',
@@ -777,7 +779,7 @@ function drawUsers() {
 function batchAdd() {
   S.drawerSeq++;
   const f = {prefix: h('input', {type: 'text', maxlength: '24', value: L === 'zh' ? '用户' : 'user'}), count: h('input', {type: 'number', min: '1', max: '200', value: '10'}),
-    quota: h('input', {type: 'number', min: '0', value: '100'}), reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}),
+    quota: h('input', {type: 'number', min: '0', value: '100'}), reset: h('input', {type: 'number', min: '0', max: '31', value: '0'}),
     mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'days'}, t('exp_days')), h('option', {value: 'first'}, t('exp_first'))),
     days: h('input', {type: 'number', min: '1', max: '3650', value: '30'}), ips: h('input', {type: 'number', min: '0', max: '100', value: '0'}),
     note: h('input', {type: 'text', maxlength: '200'})};
@@ -828,7 +830,7 @@ async function openUser(id, first) {
   if (seq !== S.drawerSeq || !$('drawer')) return;
   const used = u.used_up + u.used_down, q = quotaBytes(u);
   const histBox = h('div', {class: 'chart h160'});
-  const pwIn = h('input', {type: 'password', autocomplete: 'new-password', placeholder: '8+'});
+  const pwIn = h('input', {type: 'password', autocomplete: 'new-password', placeholder: t('pw_ph'), 'aria-label': t('pw_ph')});
   const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
   const act = async (btn, fn, ok) => {
     if (btn) btn.disabled = true;
@@ -867,7 +869,9 @@ async function openUser(id, first) {
       u.remote_id ? null : h('div', {class: 'dr-sec'}, h('h4', null, t('member_login'), h('span', {class: 'right'}, u.has_login ? chip('ok', t('login_on')) : chip('off', t('login_off')))),
         h('p', {class: 'muted', style: 'font-size:12.5px;margin:0 0 10px;line-height:1.7'}, t('member_login_tip')),
         h('div', {style: 'display:flex;gap:8px;flex-wrap:wrap'}, pwIn,
-          actBtn('btn', 'lock', t('set_pw'), b => act(b, () => api(`users/${u.id}/login`, {password: pwIn.value}))),
+          // An empty box would send password '' - which removes the sign-in - while the page said "saved".
+          actBtn('btn', 'lock', t('set_pw'), b => { if (!pwIn.value) { toast(t('pw_first'), 'err'); pwIn.focus(); return; }
+            act(b, () => api(`users/${u.id}/login`, {password: pwIn.value})); }),
           u.has_login ? actBtn('btn ghost', null, t('clear_pw'), b => act(b, () => api(`users/${u.id}/login`, {password: ''}), t('pw_cleared'))) : null),
         S.data.member_url ? h('div', {class: 'muted', style: 'font-size:12px;margin-top:8px;word-break:break-all'}, t('member_centre') + sep + S.data.member_url) : null),
       u.remote_id && S.data.node_master ? h('div', {class: 'dr-sec'}, h('div', {class: 'alert'}, icon('server'), t('remote_user').replace('{m}', S.data.node_master))) :
@@ -915,7 +919,7 @@ function editUser(u) {
   S.drawerSeq++;
   const isNew = !u; u = u || {name: '', quota_gb: 0, expire_at: 0, reset_day: 0, note: '', max_ips: 0, expire_after_days: 0, speed_mbps: 0, throttle_mbps: 0, servers: null};
   const f = {name: h('input', {type: 'text', value: u.name, maxlength: '32'}), quota: h('input', {type: 'number', min: '0', step: 'any', value: u.quota_gb || 0}),
-    exp: h('input', {type: 'date', value: u.expire_at ? dateStr(u.expire_at) : ''}), reset: h('input', {type: 'number', min: '0', max: '28', value: u.reset_day || 0}),
+    exp: h('input', {type: 'date', value: u.expire_at ? dateStr(u.expire_at) : ''}), reset: h('input', {type: 'number', min: '0', max: '31', value: u.reset_day || 0}),
     note: h('input', {type: 'text', value: u.note || '', maxlength: '200'}), ips: h('input', {type: 'number', min: '0', max: '100', value: u.max_ips || 0}),
     mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'date'}, t('exp_date')), h('option', {value: 'first'}, t('exp_first'))),
     first: h('input', {type: 'number', min: '1', max: '3650', value: u.expire_after_days || 30}),
@@ -985,7 +989,7 @@ async function drawMembers() {
     h('span', {class: 'muted'}, fmt.time(r.decided_at) + (r.answer ? ' · ' + r.answer : '')), h('span', {class: 'tl-acts'}, chip(r.status === 'approved' ? 'ok' : 'off', t(r.status)))));
   const f = {quota: h('input', {type: 'number', min: '0', step: 'any', value: '100'}), life: h('input', {type: 'number', min: '0', value: '30'}),
     uses: h('input', {type: 'number', min: '1', max: '1000', value: '1'}), valid: h('input', {type: 'number', min: '1', max: '90', value: '7'}),
-    reset: h('input', {type: 'number', min: '0', max: '28', value: '0'}), note: h('input', {type: 'text', maxlength: '100'}),
+    reset: h('input', {type: 'number', min: '0', max: '31', value: '0'}), note: h('input', {type: 'text', maxlength: '100'}),
     speed: h('input', {type: 'number', min: '0', step: 'any', value: '0'}), slow: h('input', {type: 'number', min: '0', step: 'any', value: '0'})};
   const pick = serverPicker(null);
   const mk = h('button', {class: 'btn primary'}, icon('key'), t('inv_make'));
@@ -1188,7 +1192,10 @@ function drawSettings() {
       proto('tuic_enabled', t('tuic'), t('tuic_d'), field(t('tuic_port'), inp('tuic_port', 'number')), portBtn('tuic', 'TUIC v5')))),
     h('div', {class: 'grid g-2'},
       panel(t('s_basic'), null, null, h('div', {class: 'stack'},
-        field(t('lang'), sel('language', [['zh', '中文'], ['en', 'English']])), field(t('node_name'), inp('node_name')), field(t('server_addr'), inp('public_host')),
+        field(t('lang'), sel('language', [['zh', '中文'], ['en', 'English']])),
+        field(t('time_zone'), sel('time_zone', [['', t('tz_server')], ['UTC+8', 'UTC+8 · 北京 / 新加坡 / 台北'], ['UTC+9', 'UTC+9 · 东京 / 首尔'],
+          ['UTC+7', 'UTC+7 · 曼谷'], ['UTC', 'UTC'], ['UTC-5', 'UTC-5'], ['UTC-8', 'UTC-8']].concat(
+          s.time_zone && !/^(UTC([+-](5|7|8|9))?)$/.test(s.time_zone) ? [[s.time_zone, s.time_zone]] : []))), field(t('node_name'), inp('node_name')), field(t('server_addr'), inp('public_host')),
         field(t('support_url'), inp('support_url', 'url')), field(t('sub_update_hours'), inp('sub_update_hours', 'number')),
         check(t('tune'), cb('tune_network')), s.public_ipv6 ? check(t('ipv6_nodes') + ' · ' + s.public_ipv6, cb('ipv6_nodes')) : null,
         check(t('ip_limit_pause'), cb('ip_limit_pause')))),

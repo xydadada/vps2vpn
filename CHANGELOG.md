@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.28
+
+- **Moving from an older panel.** `tools/legend_import.py` merges an old panel's accounts (and its routing rules) into a vps2vpn backup that you restore in Settings. Each account keeps its subscription link, credentials, quota, this period's usage and top-up, expiry, invites and member password; whatever cannot be carried over exactly is listed.
+  **从旧面板搬过来。** `tools/legend_import.py` 把旧面板的账号（和分流规则）合并进 vps2vpn 备份，在「设置 → 恢复备份」里导入。订阅链接、密码、流量、本期用量和加量、到期时间、邀请关系都保留；带不过来的会逐条列出。
+- **Old subscription links keep working:** `/sub/<token>.yaml`, `.ipv4.yaml` (IPv4 entries only), `.conf` (Shadowrocket) and `/import/<token>.html`, `/sub/<token>.html` (the account's page). A switched-off account gets 403 for `.conf` and `.html`, as before.
+  **旧订阅链接照样能用**（Clash、只要 IPv4 的 Clash、小火箭、导入页）；停用的账号访问 `.conf` 和 `.html` 返回 403。
+- **Reset on the 29th, 30th or 31st:** in a shorter month the reset falls on its last day.
+  **重置日可以设 29–31 号**：小月就在月底那天重置。
+- **Time zone for monthly resets** (Settings → basics): UTC+8 and other offsets, or a zone name. Empty keeps the server's own clock, as before.
+  **每月重置的时区**（设置 → 基本）：默认仍按服务器自己的时间。
+- Custom direct / proxy / block lists take up to 10,000 domains each (was 500).
+  自定义直连 / 代理 / 拦截名单每个最多 1 万条（原来 500）。
+- Deployers: the IP box takes `user@host:port` or a whole pasted `ssh` command; clearer hints for a closed connection or a mistyped address.
+  部署器：IP 框可以填 `用户名@IP:端口`，或者直接粘贴整条 ssh 命令；连接被断开、地址写错时提示更清楚。
+
 ## 0.2.27
 
 - **Line order: TCP first.** A new switch under routing in the panel puts Reality (TCP) ahead of Hysteria 2 and TUIC (UDP) on every server in the subscription, for networks that slow UDP down. IPv4 entries stay ahead of their IPv6 copies. Off by default; nothing changes until you turn it on.

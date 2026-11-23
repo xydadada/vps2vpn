@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from . import abuse, aicheck, certs, clientsync, cluster, cores, db, members, monitor, notify, paths, rules, shaper, system
+from . import abuse, aicheck, certs, clientsync, clock, cluster, cores, db, members, monitor, notify, paths, rules, shaper, system
 
 LOG = []          # recent events shown in the panel
 _log_lock = threading.Lock()
@@ -45,10 +45,10 @@ def over_limit(u, now=None, quota=None):
 
 
 def monthly_reset(u, now=None):
-    """Reset usage on the user's reset day, once per month."""
-    t = time.localtime(now or time.time())
-    month = time.strftime('%Y-%m', t)
-    return bool(u['reset_day']) and t.tm_mday >= u['reset_day'] and u['last_reset'] != month, month
+    """Reset usage on the user's reset day, once per month (in the owner's time zone; see clock)."""
+    now = now or time.time()
+    month = clock.month(now)
+    return clock.reached(u['reset_day'], now) and u['last_reset'] != month, month
 
 
 def quota_alert_key(u, quota, now):
@@ -187,11 +187,7 @@ def collect():
 
 def period_of(now, reset_day):
     """Billing period label (its first day, YYYY-MM-DD) for a reset on `reset_day` of each month."""
-    t = time.localtime(now)
-    y, m = t.tm_year, t.tm_mon
-    if t.tm_mday < reset_day:
-        y, m = (y - 1, 12) if m == 1 else (y, m - 1)
-    return '%04d-%02d-%02d' % (y, m, reset_day)
+    return '%04d-%02d-%02d' % clock.period_start(reset_day, now)
 
 
 def server_month(s, health=None, now=None):
