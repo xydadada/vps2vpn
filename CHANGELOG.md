@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.29
+
+- **Slowed-down accounts stay slow on every server.** An account whose quota is used up and that slows down instead of stopping now runs only on servers that can hold it to that speed (speed limits work there and it has Reality or TUIC). Other servers switch it off until the next reset or more quota, and leave it out of the subscription. Before, a joined server without speed limits (a container, or Hysteria 2 only) let it run at full speed. An account with no such server stops, as before.
+  **降速的账号在每台服务器上都是慢的。** 流量用完后降速（不停用）的账号，只在能限速的服务器上运行（那台能限速，且开了 Reality 或 TUIC）。其他服务器在重置或加量前把它关掉，订阅里也不再列出这些服务器。以前，不能限速的子服务器（容器，或只开了 Hysteria 2）会让它全速跑。一台能限速的服务器都没有的账号照旧停用。
+- "Sync now" on a paused server keeps every account off there, as the regular sync does.
+  对已暂停的子服务器点「立即同步」，上面的账号仍保持关闭，和定时同步一致。
+- An account removed from a joined server has its last traffic there billed. Before, up to a minute of it was lost.
+  账号从子服务器移除时，最后一段流量也会记账（以前最多丢一分钟）。
+- A device pause that ends on a used-up account that slows down now starts it again, slowed down. Before, it stayed stopped.
+  设备超限暂停结束时，如果流量已用完且设了降速，账号会直接以降速状态恢复（以前会一直停着）。
+- DNS: names the proxy carries (Google's `.cn` names and your own proxy list) are looked up by the remote resolver, not the Chinese one. Your direct list still wins.
+  DNS：走代理的域名（Google 的 `.cn` 域名和你自己的代理名单）改用海外 DNS 解析，不再问国内 DNS；直连名单仍然优先。
+- "Cannot connect" alerts are per server: one server's broken Hysteria 2 no longer silences alerts about another for six hours.
+  「连不上」告警按服务器分开：一台服务器的 Hysteria 2 出问题，不会再把其他服务器的同类告警静音 6 小时。
+- Uninstalling now also takes down the speed limits (the kernel queues, the helper interface and their firewall table). Before, traffic stayed shaped until a reboot.
+  卸载时一并清掉限速（内核队列、虚拟网卡和防火墙表），以前要重启才消失。
+- The panel refuses `true` / `false` where a number is expected. Before, `true` quietly became 1: a port of 1, or a quota of 1 GB.
+  面板里要填数字的地方不再接受 true / false（以前会被当成 1，比如端口变成 1、流量变成 1 GB）。
+- Member page: a plan that shared all its quota shows 0 B, not unlimited. The member QR code gets the same protections as the panel's.
+  成员页：额度全部分出去的账号显示 0 B，不再显示不限；成员页二维码和面板的一样加了防护。
+- On a server without speed limits, the panel now says correctly what happens to accounts that slow down.
+  在不能限速的服务器上，面板对「用完后降速」的说明改正了。
+- Smaller fixes:
+  - A line break in an account name can no longer break the Clash file's first line.
+  - The network rates in the status view no longer freeze when the clock is set back.
+  - In a container, the slow-down's helper interface no longer doubles the download counter.
+  - Two apps fetching one subscription in turn no longer write to the database on every fetch.
+  - Restoring a backup signs out panel sessions as well.
+  - Renaming an account drops control characters, as creating one does.
+  - A new node key is set under the sync lock.
+  小修复：账号名里的换行不会再破坏 Clash 配置第一行；系统时钟回拨时网速显示不再卡住；容器里降速用的虚拟网卡不再让下行统计翻倍；两个 App 交替拉同一个订阅不再每次都写数据库；恢复备份时面板登录也一并退出。
+
 ## 0.2.28
 
 - **Moving from an older panel.** `tools/legend_import.py` merges an old panel's accounts (and its routing rules) into a vps2vpn backup that you restore in Settings. Each account keeps its subscription link, credentials, quota, this period's usage and top-up, expiry, invites and member password; whatever cannot be carried over exactly is listed.

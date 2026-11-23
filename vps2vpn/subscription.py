@@ -68,11 +68,13 @@ def server_nodes(s, tls, label, local_id, u):
 
 def nodes(s, u):
     """Protocol-neutral description of this user's proxies: this server first, then joined servers."""
-    from . import aicheck, cluster, shaper
+    from . import aicheck, cluster, cores, shaper
+    # a slowed-down account gets only the servers that hold it to its speed: elsewhere it is switched off
+    slowed = bool(u.get('throttled')) and not u.get('remote_id')
     main_label = rate_label(s['node_name'] or 'vps2vpn', float(s.get('traffic_rate', 1))
                             if db.valid_rate(s.get('traffic_rate', 1)) else 1.0)
     out = []
-    if db.allowed_on(u, db.MAIN_SERVER):
+    if db.allowed_on(u, db.MAIN_SERVER) and not (slowed and not cores.can_slow_here(s)):
         out = _ordered(s, server_nodes(dict(s, hy2_hop=system.hopping_listed(s), shaping=shaper.active()),
                                        tls_info(s), main_label, u['id'], u))
     for n in out:
@@ -82,6 +84,8 @@ def nodes(s, u):
         info, lid = x.get('info'), (x.get('idmap') or {}).get(str(u['id']))
         if not x.get('enabled', True) or not info or lid is None or not db.allowed_on(u, x['id']):
             continue                       # not synced yet: the next sync (within a minute) adds it
+        if slowed and not cluster.server_can_slow(info):
+            continue
         label = rate_label(x['name'], cluster.server_rate(x))
         if label in seen_labels:
             label = rate_label('%s %s' % (x['name'], x['id'][:4]), cluster.server_rate(x))
@@ -348,9 +352,14 @@ def clash(s, u, base_url):
                      'proxies': dead, 'proxy-groups': groups, 'rule-providers': {},
                      'rules': ['MATCH,REJECT']}, **_panel_pin(s))
     cn_dns = ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query']
-    ns_policy = {'rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private': cn_dns}
-    for d in list(rules.CN_DIRECT_SUFFIX) + list(s.get('custom_direct') or []):
-        ns_policy['+.' + d] = cn_dns
+    remote_dns = ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query']
+    # in route_plan's order (first match wins): direct names, proxied names, then the Chinese lists
+    ns_policy = {}
+    for d in list(s.get('custom_direct') or []) + list(rules.CN_DIRECT_SUFFIX):
+        ns_policy.setdefault('+.' + d, cn_dns)
+    for d in rules.proxied_suffixes(s):
+        ns_policy.setdefault('+.' + d, remote_dns)
+    ns_policy['rule-set:cn,cn-download,steam-cn,apple-cn,microsoft-cn,private'] = cn_dns
     return {
         'mixed-port': 7890, 'allow-lan': False, 'mode': 'rule', 'log-level': 'warning', 'ipv6': True,
         'unified-delay': True, 'tcp-concurrent': True, 'find-process-mode': 'strict',
@@ -369,7 +378,7 @@ def clash(s, u, base_url):
             # with respect-rules, names whose traffic goes DIRECT are resolved here instead of through the proxy
             'direct-nameserver': cn_dns,
             # Foreign lookups go through the proxy, so neither the ISP nor a Chinese resolver sees them.
-            'nameserver': ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
+            'nameserver': remote_dns,
             'nameserver-policy': ns_policy,
         },
         'proxies': proxies,
@@ -389,7 +398,9 @@ def _panel_pin(s):
 
 def clash_yaml(s, u, base_url):
     """JSON is valid YAML 1.2, and every Clash/mihomo build reads it as a YAML profile."""
-    return '# vps2vpn %s - %s\n' % (u['name'], time.strftime('%Y-%m-%d %H:%M')) + \
+    # a comment line: a line break in the name (older panels let a rename through) would end it and add YAML
+    name = re.sub(r'[\x00-\x1f\x7f\u0085  ]+', ' ', str(u['name']))
+    return '# vps2vpn %s - %s\n' % (name, time.strftime('%Y-%m-%d %H:%M')) + \
         json.dumps(clash(s, u, base_url), ensure_ascii=False, indent=1)
 
 
@@ -482,10 +493,13 @@ def singbox(s, u, base_url):
                               'url': '%s/rules/%s.srs' % (base_url, value), 'download_detour': 'direct',
                               'update_interval': '1d'})
     cn_sets = ['private', 'cn', 'cn-download', 'steam-cn', 'apple-cn', 'microsoft-cn']
-    direct_suffixes = list(rules.CN_DIRECT_SUFFIX) + list(s.get('custom_direct') or [])
-    dns_rules = [{'rule_set': cn_sets, 'server': 'local'}]
-    if direct_suffixes:
-        dns_rules.append({'domain_suffix': direct_suffixes, 'server': 'local'})
+    # in route_plan's order (first match wins): direct names, proxied names, then the Chinese lists
+    direct_suffixes = list(s.get('custom_direct') or []) + list(rules.CN_DIRECT_SUFFIX)
+    dns_rules = [{'domain_suffix': direct_suffixes, 'server': 'local'}] if direct_suffixes else []
+    proxied = rules.proxied_suffixes(s)
+    if proxied:
+        dns_rules.append({'domain_suffix': proxied, 'server': 'remote'})
+    dns_rules.append({'rule_set': cn_sets, 'server': 'local'})
     return {
         'log': {'level': 'warn'},
         'dns': {

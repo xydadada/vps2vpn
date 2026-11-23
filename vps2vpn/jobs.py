@@ -74,13 +74,21 @@ def enforce(now=None):
         by_id = {u['id']: u for u in users}
         invitees = members.invitee_index(users)       # once: per-user rebuilding was O(n^2)
         t_now = now or time.time()
+        # Slowing down only means something where speed limits hold; elsewhere (a container without tc)
+        # "slow down instead of stopping" would be "never stop". An account slows down where at least one server
+        # it may use holds it to that speed; the others leave it out meanwhile (cores.active_users, push_users,
+        # subscription.nodes). With none it stops as before.
         try:
-            # Slowing down only means something where speed limits hold; elsewhere (a container without tc)
-            # "slow down instead of stopping" would be "never stop", so such accounts stop as before.
             st = db.settings()
-            can_slow = shaper.active() and bool(st['reality_enabled'] or st.get('tuic_enabled'))
+            main_slow = cores.can_slow_here(st)
+            slow_servers = [x['id'] for x in st.get('servers') or []
+                            if x.get('enabled', True) and cluster.server_can_slow(x.get('info'))]
         except Exception:
-            can_slow = False
+            main_slow, slow_servers = False, []
+
+        def can_slow(u):
+            return ((main_slow and db.allowed_on(u, db.MAIN_SERVER))
+                    or any(db.allowed_on(u, sid) for sid in slow_servers))
         # Usually one pass; quota shared down an invite tree may need one more per level (stops when nothing moves).
         for _pass in range(max(2, min(len(users), 32))):
             pass_changed = False
@@ -117,10 +125,10 @@ def enforce(now=None):
                 reason = over_limit(u, now, quota)
                 # Quota used up on an account that slows down instead of stopping: it keeps working, held to
                 # its slow-down speed until the next reset or more quota.
-                # only an account that runs, or one stopped for its quota: switched off by hand or paused for
-                # devices it stays so (and is not reported as slowed down)
-                slow = int(reason == 'quota' and (u['throttle_mbps'] or 0) > 0 and can_slow
-                           and (u['enabled'] or u['disabled_reason'] == 'quota'))
+                # only an account that runs, one stopped for its quota or one whose device pause is over: switched
+                # off by hand or still paused for devices it stays so (and is not reported as slowed down)
+                slow = int(reason == 'quota' and (u['throttle_mbps'] or 0) > 0 and can_slow(u)
+                           and (u['enabled'] or u['disabled_reason'] == 'quota' or device_due))
                 if slow:
                     reason = ''
                 if slow != (u['throttled'] or 0):
@@ -421,7 +429,9 @@ def report_line(uid, line, ok, host='', now=None):
             where = (' (%s)' % host) if host else ''
             hint = '，可在面板一键换端口' if is_local else ''
             notify.send('%d accounts cannot connect over %s%s / %d 个使用者报告 %s%s 连不上%s' % (
-                n, LINES[line][2], where, n, LINES[line][2], where, hint), key='line-' + line, every=6 * 3600)
+                n, LINES[line][2], where, n, LINES[line][2], where, hint),
+                # per server: one server's broken line must not silence alerts about another's
+                key='line-%s-%s' % (line, host or 'local'), every=6 * 3600)
 
 
 def _prune(reps, now):

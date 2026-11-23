@@ -2189,6 +2189,122 @@ class AirportFeatures(tu.Base):
         u = mk('pushed', 1, throttle_mbps=4, throttled=1)
         self.assertEqual(cluster.push_users(None, [u])[0]['limit_mbps'], 4.0)
 
+    def test_slowed_down_accounts_run_only_where_they_are_held_to_their_speed(self):
+        # audit 8 S8-01: a server that cannot shape must not carry a slowed-down account at full speed
+        u = mk('slowed', 1, throttle_mbps=5)
+        db.update_user(u['id'], used_down=2 << 30)
+        tokyo = self._node(u)                                     # cannot shape (a container, no tc)
+        tokyo['info']['shaping'] = False
+        paris = self._node(u, 'ffff0000', 'Paris')
+        paris['info']['shaping'] = True
+        db.set_settings(servers=[tokyo, paris])
+        with mock.patch('vps2vpn.shaper.active', return_value=False), mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()                                        # this server cannot either, Paris can
+            got = db.user(u['id'])
+            self.assertEqual((got['enabled'], got['throttled']), (1, 1))
+            self.assertNotIn(u['id'], [x['id'] for x in cores.active_users()])
+            self.assertEqual({n['group'] for n in subscription.nodes(db.settings(), got)}, {'Paris'})
+        self.assertFalse(cluster._pushed(tokyo)[0]['enabled'])
+        self.assertEqual((cluster._pushed(paris)[0]['enabled'], cluster._pushed(paris)[0]['limit_mbps']), (True, 5.0))
+        with mock.patch('vps2vpn.shaper.active', return_value=True):
+            self.assertIn(u['id'], [x['id'] for x in cores.active_users()])
+            groups = {n['group'] for n in subscription.nodes(db.settings(), got)}
+            self.assertEqual((len(groups), 'Paris' in groups, 'Tokyo' in groups), (2, True, False))
+        # only a server that cannot hold it, or a paused one: no slowing down, it stops as before
+        db.update_user(u['id'], servers='abcd1234')
+        with mock.patch('vps2vpn.shaper.active', return_value=True), mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        got = db.user(u['id'])
+        self.assertEqual((got['enabled'], got['throttled'], got['disabled_reason']), (0, 0, 'quota'))
+        db.update_user(u['id'], servers='ffff0000')
+        db.set_settings(servers=[tokyo, dict(paris, enabled=False)])
+        with mock.patch('vps2vpn.shaper.active', return_value=False), mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        self.assertEqual(db.user(u['id'])['enabled'], 0)
+        db.set_settings(servers=[tokyo, paris])
+        with mock.patch('vps2vpn.shaper.active', return_value=False), mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        got = db.user(u['id'])
+        self.assertEqual((got['enabled'], got['throttled'], got['disabled_reason']), (1, 1, ''))
+
+    @mock.patch('vps2vpn.shaper.active', return_value=True)
+    def test_device_pause_over_on_a_used_up_account_slows_it_down(self, _active):
+        # audit 8 S8-03: it used to end stopped for its quota although it slows down instead
+        u = mk('phones', 1, throttle_mbps=5)
+        db.update_user(u['id'], used_down=2 << 30, enabled=0, disabled_reason='devices', paused_until=1)
+        with mock.patch.object(jobs.notify, 'send'):
+            jobs.enforce()
+        got = db.user(u['id'])
+        self.assertEqual((got['enabled'], got['throttled'], got['disabled_reason'], got['paused_until']), (1, 1, '', 0))
+
+    def test_syncing_one_paused_server_keeps_its_accounts_off(self):
+        # audit 8 S8-13: "sync now" on a paused server switched everyone on there until the next round
+        u = mk('paused-there', 10)
+        node = dict(self._node(u), enabled=False)
+        with mock.patch.object(cluster, '_request', side_effect=cluster.SyncError('offline')) as req:
+            self.assertFalse(cluster.sync_one(node))
+        pushed = req.call_args[0][1]['users']
+        self.assertEqual([(x['id'], x['enabled']) for x in pushed], [(u['id'], False)])
+
+    def test_an_account_leaving_a_server_reports_its_last_traffic(self):
+        # audit 8 S8-04: the joined server deleted it first and the main server never billed the rest
+        snap = {'master': 'main', 'master_id': 'm1', 'users': [
+            {'id': 7, 'name': 'ann', 'uuid': '11111111-2222-4333-8444-555555555555', 'hy2_pass': 'p' * 24,
+             'enabled': True, 'expire_at': 0}]}
+        with mock.patch.object(web, 'apply_async', lambda *a, **k: None):
+            cluster.handle_sync(db.settings(), snap)
+            mine = next(x for x in db.users() if x['remote_id'] == 7)
+            db.update_user(mine['id'], used_up=300, used_down=500)
+            ans = cluster.handle_sync(db.settings(), dict(snap, users=[]))
+        self.assertEqual((ans['idmap'], ans['traffic']), ({}, {'7': [300, 500]}))
+        self.assertFalse(any(x['remote_id'] == 7 for x in db.users()))
+        # the main server bills what came since the last answer and forgets the account's count there
+        u = mk('left', 0)
+        server = {'name': 'Tokyo', 'seen': {str(u['id']): (100, 100)}, 'idmap': {str(u['id']): 5}}
+        cluster._apply_sync_answer(server, {'ok': True, 'info': {}, 'idmap': {},
+                                            'traffic': {str(u['id']): [300, 500]}}, '')
+        got = db.user(u['id'])
+        self.assertEqual((got['used_up'], got['used_down'], server['seen']), (200, 400, {}))
+
+    def test_line_alerts_are_per_server_and_counters_skip_the_slow_down_mirror(self):
+        # audit 8 S8-08 and S8-12
+        sent = []
+        with mock.patch.object(jobs.notify, 'send', lambda text, key=None, every=0: sent.append(key)):
+            a, b = mk('line-a'), mk('line-b')
+            for uid in (a['id'], b['id']):
+                jobs.report_line(uid, 'hy2', False, '198.51.100.7')
+            for uid in (a['id'], b['id']):
+                jobs.report_line(uid, 'hy2', False, '')
+        self.assertEqual(sent, ['line-hy2-198.51.100.7', 'line-hy2-local'])
+        from vps2vpn import system
+        dev = ('Inter-|   Receive\n face |bytes\n'
+               '  venet0: 1000 0 0 0 0 0 0 0 2000 0 0 0 0 0 0 0\n'
+               ' v2vifb0: 900 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n')
+        self.assertEqual(system.net_counters(dev, is_virtual=lambda name: True), {'venet0': [1000, 2000]})
+        u = mk('two-apps', 0)
+        self.assertTrue(db.record_sub_fetch(u, 'clash', now=1000))
+        self.assertFalse(db.record_sub_fetch(db.user(u['id']), 'sing-box', now=1001))     # taking turns
+        self.assertTrue(db.record_sub_fetch(db.user(u['id']), 'sing-box', now=1000 + db.SUB_FETCH_SWITCH))
+        # audit 8 S8-02: names the proxy carries are looked up remotely, not by the cn list's Chinese resolver
+        db.set_settings(custom_proxy=['example.cn'], custom_direct=['a.example.cn'])
+        s = db.settings()
+        policy = list(subscription.clash(s, db.user(u['id']), 'https://203.0.113.9:8443')['dns']['nameserver-policy'].items())
+        keys = [k for k, _ in policy]
+        self.assertLess(keys.index('+.a.example.cn'), keys.index('+.example.cn'))
+        self.assertLess(keys.index('+.googleapis.cn'), keys.index(next(k for k in keys if k.startswith('rule-set:'))))
+        self.assertIn('1.1.1.1', dict(policy)['+.example.cn'][0])
+        self.assertIn('223.5.5.5', dict(policy)['+.a.example.cn'][0])
+        dns = subscription.singbox(s, db.user(u['id']), 'https://203.0.113.9:8443')['dns']['rules']
+        self.assertEqual([r['server'] for r in dns], ['local', 'remote', 'local'])
+        self.assertIn('a.example.cn', dns[0]['domain_suffix'])
+        self.assertTrue({'example.cn', 'googleapis.cn'} <= set(dns[1]['domain_suffix']))
+        self.assertNotIn('a.example.cn', dns[1]['domain_suffix'])
+        # audit 8 S8-05: a line break in a name stays inside the Clash file's comment line
+        db.update_user(u['id'], name='two\nproxies: [] x')
+        text = subscription.clash_yaml(db.settings(), db.user(u['id']), 'https://203.0.113.9:8443')
+        self.assertTrue(text.splitlines()[0].startswith('# vps2vpn two proxies: [] x - '))
+        self.assertEqual(text.splitlines()[1], '{')
+
     def test_invites_carry_servers_and_speed_and_member_codes_inherit_them(self):
         code = members.create_invite('admin', 50, 7, servers=['abcd1234'], speed_mbps=30, throttle_mbps=2)['code']
         uid = members.register(code, 'newbie', 'goodpassword1')

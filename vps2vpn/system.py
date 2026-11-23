@@ -396,7 +396,7 @@ def health():
         rx = sum(v[0] for v in ifaces.values())
         tx = sum(v[1] for v in ifaces.values())
         out['net_ifaces'] = ifaces
-        now = time.time()
+        now = time.monotonic()      # a wall clock stepped back by NTP would freeze the rates
         with _net_lock:
             if _last_net:
                 dt = now - _last_net['t']
@@ -442,6 +442,7 @@ def net_counters(text=None, is_virtual=None):
         if name == 'lo' or len(v) < 9:
             continue
         rows[name] = [int(v[0]), int(v[8])]
+    rows.pop('v2vifb0', None)       # the slow-down's ingress mirror (shaper.IFB): that traffic is counted already
     physical = {k: v for k, v in rows.items() if not is_virtual(k)}
     return physical or rows
 

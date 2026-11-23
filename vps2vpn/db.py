@@ -510,6 +510,8 @@ def pause_for_devices(uid, until):
 
 SUB_UA_MAX = 120
 SUB_FETCH_QUIET = 300           # the same app fetching again within 5 minutes is not written down again
+SUB_FETCH_SWITCH = 5            # another app: written at once, but no more often than this (two apps taking
+                                # turns would otherwise write on every fetch)
 
 
 def clean_ua(ua):
@@ -521,7 +523,8 @@ def record_sub_fetch(u, ua, now=None):
     """Note that `u` (a user row) downloaded its subscription. Returns True when a row was written."""
     now = int(now if now is not None else time.time())
     ua = clean_ua(ua)
-    if u.get('sub_ua', '') == ua and 0 <= now - int(u.get('sub_fetched_at') or 0) < SUB_FETCH_QUIET:
+    quiet = SUB_FETCH_QUIET if u.get('sub_ua', '') == ua else SUB_FETCH_SWITCH
+    if 0 <= now - int(u.get('sub_fetched_at') or 0) < quiet:
         return False
     x('UPDATE users SET sub_fetched_at=?, sub_ua=? WHERE id=?', (now, ua, u['id']))
     return True
@@ -1035,6 +1038,7 @@ def import_all(data):
         c.execute('DELETE FROM traffic')
         c.execute('DELETE FROM events')
         c.execute('DELETE FROM member_sessions')
+        c.execute('DELETE FROM sessions')       # panel sign-ins of the replaced data: sign in again
         c.execute('DELETE FROM alerts_sent')    # keys name the old install's users/servers: stale after a restore
         c.execute('DELETE FROM invites')
         c.execute('DELETE FROM requests')

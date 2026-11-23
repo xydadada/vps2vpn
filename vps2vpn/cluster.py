@@ -208,15 +208,19 @@ def handle_sync(s, body, base_url=''):
                              expire_at=w['expire_at'], speed_mbps=w['limit'])
                     if core_changed:
                         changed = True
+        # an account leaving this server reports what it used here one last time: the main server bills it
+        gone = {}
         for rid, u in list(mine.items()):
             if rid not in wanted:
+                if u['used_up'] or u['used_down']:
+                    gone[str(rid)] = [u['used_up'], u['used_down']]
                 db.delete_user(u['id'])
                 del mine[rid]
                 changed = True
         if s['node_master'] != master or (master_id and s['node_master_id'] != master_id):
             db.set_settings(node_master=master, node_master_id=master_id or s['node_master_id'])
         idmap = {str(rid): u['id'] for rid, u in mine.items()}
-        traffic = {str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()}
+        traffic = dict(gone, **{str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()})
     # Outside the transaction: the database lock is not held while the cores reload or health is sampled.
     if changed:
         from . import web
@@ -408,13 +412,32 @@ def _request(server, body, timeout=15):
     raise SyncError('certificate does not match; remove and re-add the server')
 
 
-def push_users(server_id=None, users=None):
+def server_can_slow(info):
+    """A joined server (by the info its last sync answered) holds a slowed-down account to its speed: limits work
+    there and it has a protocol besides Hysteria, which cannot hold one account to a speed."""
+    return bool(isinstance(info, dict) and info.get('shaping')
+                and (info.get('reality_enabled') or info.get('tuic_enabled')))
+
+
+def push_users(server_id=None, users=None, can_slow=True):
     """The accounts a joined server serves: this server's own ones that may use it (all when server_id is None),
-    each with the speed it is held to right now (enforced there; 0 = none)."""
+    each with the speed it is held to right now (enforced there; 0 = none). On a server that cannot hold an
+    account to a speed (can_slow False) a slowed-down account is off: there it would run at full speed for free."""
     users = db.users() if users is None else users
-    return [{'id': u['id'], 'name': u['name'], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'], 'enabled': bool(u['enabled']),
+    return [{'id': u['id'], 'name': u['name'], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'],
+             'enabled': bool(u['enabled']) and (can_slow or not u['throttled']),
              'expire_at': int(u['expire_at'] or 0), 'limit_mbps': db.limit_mbps(u)}
             for u in users if not u['remote_id'] and (server_id is None or db.allowed_on(u, server_id))]
+
+
+def _pushed(server, users=None):
+    """What one joined server is sent: a paused server is still synced, with every account switched off there
+    (otherwise anyone paused or removed meanwhile would keep using it, and nothing it carries would be counted
+    until it is resumed)."""
+    pushed = push_users(server['id'], users, can_slow=server_can_slow(server.get('info')))
+    if not server.get('enabled', True):
+        pushed = [dict(x, enabled=False) for x in pushed]
+    return pushed
 
 
 def server_rate(server):
@@ -473,8 +496,10 @@ def _apply_sync_answer(server, ans, got_pin, log=print):
                     server.get('name', ''), rid_key, down0, down))
             if dup or ddown:
                 deltas.append((uid, db.billed(dup, rate), db.billed(ddown, rate)))
-        if uid in known:
+        if uid in known and rid_key in new_idmap:
             seen[rid_key] = (up, down)
+        else:
+            seen.pop(rid_key, None)     # its last count (an account that left that server): nothing more comes
     if deltas:
         # The shared DB writer also guards local core traffic and duplicates.
         db.add_traffic_many(deltas)
@@ -501,7 +526,7 @@ def sync_one(server, s=None, log=print):
     s = s or db.settings()
     try:
         ans, got_pin = _request(server, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
-                                         'users': push_users(server['id'])})
+                                         'users': _pushed(server)})
         with db.transaction():
             _apply_sync_answer(server, ans, got_pin, log)
     except (SyncError, OverflowError) as e:
@@ -528,11 +553,7 @@ def _sync_all(log):
     # Perform network I/O outside _lock so panel edits/restores never block on slow nodes.
     results, keys = [], {x['id']: x.get('key') for x in servers}
     for srv in servers:
-        # A paused server is still synced, with every account switched off there: otherwise anyone paused or
-        # removed meanwhile would keep using it, and nothing it carries would be counted until it is resumed.
-        pushed = push_users(srv['id'], users)
-        if not srv.get('enabled', True):
-            pushed = [dict(x, enabled=False) for x in pushed]
+        pushed = _pushed(srv, users)
         try:
             ans, got_pin = _request(srv, dict(payload, users=pushed))
             _validate_sync_answer(ans)

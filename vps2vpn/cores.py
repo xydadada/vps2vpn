@@ -43,9 +43,29 @@ def _listen_addr():
         sk.close()
 
 
+def can_slow_here(s=None):
+    """This server holds a slowed-down account to its speed: limits work here and it has a protocol besides
+    Hysteria (which cannot hold one account to a speed)."""
+    s = s or db.settings()
+    return shaper.active() and bool(s['reality_enabled'] or s.get('tuic_enabled'))
+
+
 def active_users():
-    """Accounts the cores here serve: enabled, and (a main server's own accounts) allowed on this server."""
-    return [u for u in db.users() if u['enabled'] and (u['remote_id'] or db.allowed_on(u, db.MAIN_SERVER))]
+    """Accounts the cores here serve: enabled, and (a main server's own accounts) allowed on this server. A
+    slowed-down account is left out where it cannot be held to its speed (it runs on servers that can)."""
+    users = db.users()
+    here = None
+    out = []
+    for u in users:
+        if not u['enabled'] or not (u['remote_id'] or db.allowed_on(u, db.MAIN_SERVER)):
+            continue
+        if u['throttled'] and not u['remote_id']:
+            if here is None:
+                here = can_slow_here()
+            if not here:
+                continue
+        out.append(u)
+    return out
 
 
 def limits(users):

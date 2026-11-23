@@ -165,7 +165,7 @@ class LineReports(tu.Base):
         self.assertEqual(tr['hy2']['users'], [a['id']])
         self.assertEqual(self.sent, [])                                    # one person is not an alert yet
         jobs.report_line(b['id'], 'hy2', False, '1.2.3.4', now + 120)
-        self.assertEqual(self.sent, ['line-hy2'])
+        self.assertEqual(self.sent, ['line-hy2-1.2.3.4'])
         jobs.report_line(a['id'], 'hy2', True, '', now + 180)              # works again for a
         self.assertEqual(jobs.line_trouble(db.settings(), now + 180)['hy2']['users'], [b['id']])
         self.assertEqual(jobs.line_trouble(db.settings(), now + 2 * 86400), {})
@@ -198,7 +198,7 @@ class LineReports(tu.Base):
         jobs.report_line(a['id'], 'tuic', False, 'b.invalid', now + 1)
         self.assertEqual(self.sent, [])
         jobs.report_line(b['id'], 'tuic', False, 'b.invalid', now + 2)
-        self.assertEqual(self.sent, ['line-tuic'])
+        self.assertEqual(self.sent, ['line-tuic-b.invalid'])
         jobs.report_line(a['id'], 'tuic', True, 'b.invalid', now + 3)
         trouble = jobs.line_trouble(db.settings(), now + 3)['tuic']
         self.assertEqual(trouble['users'], [a['id'], b['id']])

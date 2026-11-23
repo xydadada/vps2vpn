@@ -1,56 +1,52 @@
 # 交接文档（服务端）
 
-最后更新：2026-11-22。写给接手维护 vps2vpn 的人或 AI。客户端的交接在 `xydadada/vps2vpn-client` 仓库的 `HANDOFF.md`。
+最后更新：2026-11-23。写给接手维护 vps2vpn 的人或 AI。客户端的交接在 `xydadada/vps2vpn-client` 仓库的 `HANDOFF.md`。
 
 这个仓库是公开的：这里和提交记录里都不写服务器 IP、邮箱、密钥位置、本机路径。
 
 ## 1. 现在的状态
 
-- **服务端最新版：v0.2.27**（GitHub Release 标为 Latest，CI 全绿）。0.2.27 之后 main 上还有：
-  - 部署器输入框改进（`e9db6cf`）；
-  - 旧面板迁移工具 `tools/legend_import.py` 和它的测试（`5ba849a`）；
-  - CI 加上 `tests.test_legend_import`；本文档。
-  这些还没发版，下次发版（0.2.28）一起带上。
-- **客户端最新版：v1.0.23**（Windows 安装包和便携版，SHA256 和更新签名都核对过）。
-- 离线测试：全量 425 项通过（含迁移工具 16 项）。命令见第 4 节。
+- **服务端最新版：v0.2.29**（GitHub Release 标为 Latest，CI 全绿）。
+  - 0.2.28：旧面板迁移工具、旧订阅链接、29–31 号重置、重置时区、名单上限 1 万。
+  - 0.2.29：第七次外部审计（报告里编号 S8-xx）里归服务端维护者的条目。
+- **客户端最新版：v1.0.23**（Windows 安装包和便携版，SHA256 和更新签名都核对过）。1.0.24 在测试中。
+- 离线测试：全量 452 项通过（含迁移工具 16 项）。命令见第 4 节。
 - **限速 / 降速从来没在真实 Linux 服务器上跑过**，只有单元测试和模拟。上线前要在测试服务器上真跑一次。
 
-## 2. 最近做了什么（0.2.17 → 0.2.27）
+## 2. 最近做了什么（0.2.17 → 0.2.29）
 
 - 机场常用功能：流量倍率、每个账号可用的服务器、流量用完降速而不是停用、速度限制（tc HTB + ifb + nft connmark，见 `vps2vpn/shaper.py`）、限速节点、邀请与备份、体检项 `speed_limits`。
 - 第五、六次外部审计的服务端条目都已处理（0.2.26、0.2.27）。没采纳的及原因：
   - gstatic.cn / ggpht.cn 直连：Google 的国内镜像，直连没问题；
-  - 恢复备份不清管理员会话：故意保留；
-  - 订阅拉取时写 UA 的写放大、布尔值当数字：价值低；
+  - 布尔值当数字：第七次审计又提了，交给部署器会话处理（S8-07）；
   - 审批后不立即 enforce：网页路由本来就会在审批后跑 enforce。
 - 0.2.27 新增「TCP 优先」开关（设置项 `tcp_first`）：订阅里每台服务器先用 Reality，再用 Hysteria 2 / TUIC。
+- 第七次审计（0.2.29）：
+  - S8-01 多服务器降速绕过：降速账号只在能限速的服务器上运行（`cluster.server_can_slow`、`cores.can_slow_here`）。其他服务器推送 `enabled=False`、本机核心不带它、订阅不列。一台能限速的都没有就照旧停用。
+  - 其他已修：S8-02（代理域名走远程 DNS）、S8-03、S8-04、S8-05 订阅部分、S8-08、S8-12、S8-13；S8-09 在 0.2.27 已修。
+  - 部署器会话做的（`bec0687`，随 0.2.29 发布）：S8-05 的 web 部分、S8-06（卸载清限速）、S8-07（拒绝布尔值当数字）、S8-10、S8-11。测试在 `tests/test_audit8.py` 和 `tests/test_beginner_ui.py`，都已加进 CI。
+  - 仍不采纳：gstatic.cn / ggpht.cn（理由同上）。
 
 ## 3. 正在进行 / 没做完的事（按优先级）
 
 1. **正式服务器搬家到 vps2vpn**。用户同意要搬，但**切换日期由用户本人定**。分五步：
    1. 导入工具：已完成（`tools/legend_import.py`），只用假数据测过。
    2. 「线路优先顺序」：已完成（0.2.27 的 TCP 优先）。
-   3. 导入约 9000 条手工分流规则：工具已支持（`--template`）。面板那边还有限制，见下面的「服务端还要改」。
+   3. 导入约 9000 条手工分流规则：工具已支持（`--template`），0.2.28 起名单上限是每个 1 万条。
    4. 在测试服务器上演练：没做，需要用户提供测试服务器。
    5. 切换：没做，等用户。
 
    **旧的正式系统只能看不能动**：不修改、不重启、不迁移，除非用户本人明确同意。
 
-   **服务端还要改**（订阅、web、db 部分）：
-   - 旧订阅链接路由。旧系统的路径和对应的输出：
-     - `/sub/<token>.yaml` → Clash
-     - `/sub/<token>.ipv4.yaml` → 只要 IPv4 节点的 Clash
-     - `/sub/<token>.conf` → 小火箭
-     - `/import/<token>.html` 和 `/sub/<token>.html` → 导入页
+   **服务端为搬家做的改动（0.2.28 已完成）**：
+   - 旧订阅链接：`/sub/<token>.yaml`（Clash）、`.ipv4.yaml`（只要 IPv4）、`.conf`（小火箭）、`/import/<token>.html` 和 `/sub/<token>.html`（导入页）。旧 token 是 43 位 `[A-Za-z0-9_-]`，原样写进 `users.sub_token`。账号停用时 `.conf` 和 `.html` 返回 403。
+   - 名单上限每个 1 万条（`web.CUSTOM_LIST_MAX`）。名单排在 AI、广告、国内规则集前面，量很大时会盖住 geosite。
+   - 重置日 1–31，小月按月底算（`vps2vpn/clock.py`）。
+   - 重置时区：设置项 `time_zone`，空 = 服务器时间。迁移工具在它为空时设成 `UTC+8`。
 
-     旧 token 是 43 位 `[A-Za-z0-9_-]`，迁移工具原样写进 `users.sub_token`。账号不能用时，`.conf` 和 `.html` 返回 403。
-   - 自定义名单上限：现在是每个名单 500 条（`web.validate_settings`），导入后会远超。恢复备份不检查这个上限，但之后在设置页保存会被拒绝。另外名单排在 AI、广告、国内规则集前面，量很大时会盖住 geosite。可以提高上限，或者单独加一个「导入的名单」。
-   - 重置日：现在最大 28；旧系统允许 29–31，按 `min(日, 当月天数)` 算。工具目前改成 28 号，并在报告里列出受影响的账号。
-   - 时区：`jobs.monthly_reset` 和 `period_of` 用服务器本地时间，旧系统用 UTC+8。服务器是 UTC 时换月会晚 8 小时，考虑加一个时区设置。
-   - 上传、下载分开降速；以及「超过门槛流量就降速」：vps2vpn 都表达不了，工具只在报告里列出。
-   - `members._given_away` 会扣「已停用的被邀请人」又分出去的流量，旧系统不扣。情况很少，工具会点名。
-2. **发 0.2.28**：把第 1 节里还没发版的提交带上。
-3. **在真实服务器上测限速和降速**：Reality、TUIC 各测一次。还要测只开 Hysteria 的服务器，确认限速账号仍能用、只是不限速。
+   **还是表达不了的**（工具只在报告里列出）：上传、下载分开降速；「超过门槛流量就降速」；`members._given_away` 会扣「已停用的被邀请人」又分出去的流量，旧系统不扣。
+2. **和部署器会话共用一个目录**：它也改 `web.py`、`install.sh`、`member.js`、`app.js`，有时会自己在本地提交（不推送）。发版前看一眼 `git log origin/main..`，把它的提交审过、一起跑全量测试再推。
+3. **在真实服务器上测限速和降速**：Reality、TUIC 各测一次。还要测只开 Hysteria 的服务器：限速账号仍能用、只是不限速；降速账号在那台上应该被关掉。
 4. 客户端（详见客户端仓库的交接文档）：
    - 1.0.24：管道权限 C-17，加上免责声明改成勾选同意。手机尺寸下点勾选框没反应的问题还在查。
    - 安卓正式签名版：发布后，在服务端配置里加上 `files.android` 的文件名。
@@ -60,7 +56,7 @@
 离线测试（Windows 上要先指定 bash）：
 
 ```
-PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import
+PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_beginner_ui
 ```
 
 发版步骤：
@@ -141,7 +137,7 @@ python tools/legend_import.py --base 新面板导出的备份.json --settings se
 
 不能完全照搬的部分，工具运行完会逐条列出：
 - DOMAIN-KEYWORD 和 IP 规则不导入。
-- 29 到 31 号重置的账号改成 28 号。
+- 29 到 31 号重置的账号原样保留（0.2.28 起支持）。
 - 上传、下载分开的降速，改成取下载速度这一个值。
 - 「始终不限速」的账号，降速值设成 MAX_MBPS。
 - 「超过门槛流量就降速」没法表达。
@@ -154,13 +150,12 @@ python tools/legend_import.py --base 新面板导出的备份.json --settings se
 ### 搬家五步进度
 1. 导入工具：✅ 完成（5ba849a）。
 2. 线路优先顺序（TCP 优先）：✅ 0.2.27 已加 `tcp_first`。
-3. 约 9000 条分流规则导入：⚠️ 工具已经能转换，但卡在 500 条的名单上限。另外要决定是全部导入，还是只导入和 vps2vpn 自带规则集不一样的那部分。
-4. 测试服务器演练：⏸ 等用户本人决定。演练之前，要先做完旧链接路由。
+3. 约 9000 条分流规则导入：✅ 0.2.28 起名单上限 1 万条。还要决定是全部导入，还是只导入和 vps2vpn 自带规则集不一样的那部分。
+4. 测试服务器演练：⏸ 等用户本人决定。旧链接路由 0.2.28 已做好。
 5. 定切换日期：⏸ 等用户本人决定。切换当天，旧订阅的域名和端口要指向新面板。
 
-### 还要改的 8 项（订阅、web、db 部分）
-第 3 节的「服务端还要改」已经写了前 7 项，这里只补充第 8 项：
-8. **CI**：✅ 已把 `tests.test_legend_import` 加进 `.github/workflows/test.yml`。
+### 为搬家要改的 8 项
+前 7 项见第 3 节，0.2.28 已做完能做的部分。第 8 项 CI：✅ `tests.test_legend_import` 已在 `.github/workflows/test.yml` 里。
 
 ### 不能碰的
 - 用户线上正在用的旧系统服务器，以及对话记录里出现过的任何真实服务器：不连接，不登录。旧系统只能看，不能改。
