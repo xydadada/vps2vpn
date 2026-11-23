@@ -662,10 +662,33 @@ do_install() {
   fi
 }
 
+clear_speed_limits() {   # speed limits live in the kernel, not in files: take ours down, leave anyone else's alone
+  if [ -d "$LIB/app" ]; then
+    pick_python 2>/dev/null || true
+    # from /: "python -c" imports from the current folder first, which could hold another vps2vpn checkout
+    (cd / && PYTHONPATH="$LIB/app" timeout 60 "$PY" -c 'from vps2vpn import shaper; shaper.clear(log=lambda *a: None)') \
+      >/dev/null 2>&1 || true
+  fi
+  # fallback (no Python, or the default route moved since the limits were set): our HTB root 1a5: on any card,
+  # an ingress qdisc that redirects to our ifb device, the ifb device and our nft table
+  if command -v tc >/dev/null 2>&1 && command -v ip >/dev/null 2>&1; then
+    local dev
+    for dev in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1); do
+      [ "$dev" = v2vifb0 ] && continue
+      tc qdisc show dev "$dev" 2>/dev/null | grep -q 'htb 1a5:' && tc qdisc del dev "$dev" root 2>/dev/null
+      tc filter show dev "$dev" parent ffff: 2>/dev/null | grep -q v2vifb0 && tc qdisc del dev "$dev" ingress 2>/dev/null
+    done
+    ip link del v2vifb0 2>/dev/null
+  fi
+  command -v nft >/dev/null 2>&1 && nft delete table inet vps2vpn_shape 2>/dev/null
+  return 0
+}
+
 do_uninstall() {
   need_root
   say "removing vps2vpn / 正在卸载 vps2vpn"
   systemctl disable --now vps2vpn vps2vpn-xray vps2vpn-hysteria vps2vpn-tuic vps2vpn-nft 2>/dev/null || true
+  clear_speed_limits     # after the panel stopped (it would put them back), before its code is deleted
   rm -f /etc/systemd/system/vps2vpn*.service /usr/local/bin/vps2vpn /etc/sysctl.d/99-vps2vpn.conf \
     /etc/modules-load.d/vps2vpn.conf "$ETC/nft-hop.nft"
   command -v nft >/dev/null && nft delete table inet vps2vpn 2>/dev/null || true

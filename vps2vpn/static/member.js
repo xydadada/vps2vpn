@@ -152,7 +152,8 @@ function renderLogin(code) {
 /* ---------- the dashboard ---------- */
 async function renderHome() {
   try { M.me = await api('me'); } catch (e) { if (e.message !== 'login') document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
-  const me = M.me, used = me.used_up + me.used_down, q = me.quota_gb ? Math.max(1, (me.quota_eff || 0) * GB) : 0;   // a capped plan that shared everything is not unlimited
+  const me = M.me, used = me.used_up + me.used_down, q = me.quota_gb ? Math.max(0, (me.quota_eff || 0) * GB) : null;   // null = unlimited; 0 = a capped plan that shared everything
+  const frac = q == null ? 0 : q > 0 ? used / q : 1;
   const reason = {quota: 'r_quota', expired: 'r_expired', manual: 'r_manual', remote: 'r_remote', devices: 'r_devices'}[me.disabled_reason] || 'r_manual';
   const logoutBtn = M.hello.mode === 'login' ? (() => {
     const b = h('button', {class: 'btn ghost'}, icon('out'), t('logout'));
@@ -162,7 +163,7 @@ async function renderHome() {
   const top = h('header', {class: 'm-top'}, brand(), h('div', {class: 'm-acts'},
     h('div', {class: 'seg', role: 'group'}, ['auto', 'light', 'dark'].map(v => h('button', {'data-theme-btn': v}, icon(v === 'auto' ? 'auto' : v === 'light' ? 'sun' : 'moon')))),
     logoutBtn));
-  const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
+  const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q != null ? fmt.pct(frac) : '∞'), h('small', null, t('used'))));
   const stat = (k, v) => h('div', null, h('small', null, k), h('b', null, v));
   const on = me.online;
   const dev = on ? (on.devices != null ? on.devices : on.ips.length) : 0;
@@ -171,8 +172,8 @@ async function renderHome() {
       me.enabled ? chip('ok', t('ok')) : chip(me.disabled_reason === 'devices' ? 'warn' : 'bad', t(reason)),
       on ? chip('info', t('online_now') + (dev ? ' · ' + dev + ' ' + t('devices') : '')) : chip('off', t('offline'))),
     h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats m-stats'},
-      stat(t('used'), fmt.bytes(used)), stat(t('quota'), q ? fmt.bytes(q) : t('unlimited')),
-      stat(t('left'), q ? fmt.bytes(Math.max(0, q - used - (me.reserved_gb || 0) * GB)) : t('unlimited')),
+      stat(t('used'), fmt.bytes(used)), stat(t('quota'), q != null ? fmt.bytes(q) : t('unlimited')),
+      stat(t('left'), q != null ? fmt.bytes(Math.max(0, q - used - (me.reserved_gb || 0) * GB)) : t('unlimited')),
       me.reserved_gb ? stat(t('reserved'), me.reserved_gb + ' GB') : null, stat(t('expires'), !me.expire_at && me.expire_after_days ? t('first_use').replace('{n}', me.expire_after_days) : dateStr(me.expire_at)),
       me.extra_gb ? stat(t('extra'), '+' + me.extra_gb + ' GB') : null,
       stat('↓ ' + t('down'), fmt.bytes(me.used_down)), stat('↑ ' + t('up_'), fmt.bytes(me.used_up)),
@@ -213,7 +214,7 @@ async function renderHome() {
       panel(t('history'), t('history_sub'), h('div', {class: 'legend'}, h('span', {style: '--c:var(--down)'}, t('down')), h('span', {style: '--c:var(--up)'}, t('up_'))), days),
       h('div', {class: 'grid g-2'}, ...blocks))));
   Theme.mount();
-  new Ring(ringBox.firstChild).set(q ? used / q : 0, q && used / q > .9 ? 'danger' : 'down');
+  new Ring(ringBox.firstChild).set(frac, frac > .9 ? 'danger' : 'down');
   const dl = []; for (let i = 29; i >= 0; i--) dl.push(localDay(Date.now() - i * 864e5));
   new DayBars(days).set(me.history.map(x => ({day: x.day, upload: x.up, download: x.down})), dl);
 }
@@ -230,7 +231,7 @@ function statusAlerts(me, used, q) {
     const d = me.expire_at ? Math.ceil((me.expire_at * 1000 - Date.now()) / 864e5) : 0;
     if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: dateStr(me.expire_at)})));
     if (me.throttled) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('slowed'), {mbps: me.limit_mbps})));
-    else if (q && used / q >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
+    else if (q != null && (q > 0 ? used / q : 1) >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
     if (me.speed_mbps && !me.throttled) out.push(h('div', {class: 'alert'}, icon('alert'), fill(t('capped'), {mbps: me.speed_mbps})));
   }
   return out;

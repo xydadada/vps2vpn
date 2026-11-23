@@ -1367,7 +1367,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         d = self.body_json()
         prefix = re.sub(r'[\s\x00-\x1f\x7f]+', '', str(d.get('prefix', '')))[:24]
         try:
-            count = int(d.get('count', 0))
+            count = number(d.get('count', 0), True)
         except (TypeError, ValueError, OverflowError):
             return self.json({'error': 'invalid number'}, 400)
         if not prefix or not 1 <= count <= 200:
@@ -1417,7 +1417,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # A repeated account must not have its quota or expiry extended
             # twice. Preserve request order after de-duplication.
             ids = list(dict.fromkeys(user_id(i) for i in raw_ids))
-            value = float(d.get('value') or 0)
+            value = number(d.get('value'))
         except (TypeError, ValueError, OverflowError):    # a 310-digit JSON integer overflows float()
             return self.json({'error': 'invalid number'}, 400)
         if not math.isfinite(value) or abs(value) > 1e6:
@@ -1568,7 +1568,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'invites': [members.invite_view(i, names, reg) for i in db.invites()]})
         d = self.body_json()
         try:
-            inviter = int(d.get('inviter') or 0)
+            inviter = number(d.get('inviter'), True)
         except (TypeError, ValueError, OverflowError):
             return self.json({'error': 'invalid inviter'}, 400)
         rec = lambda: {'invite': members.invite_view(db.invite(members.create_invite(
@@ -1620,7 +1620,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.json({'error': 'enabled: expected true or false'}, 400)
             if 'rate' in fields:
                 try:
-                    fields['rate'] = float(fields['rate'])
+                    fields['rate'] = number(fields['rate'], empty=None)
                 except (TypeError, ValueError, OverflowError):
                     return self.json({'error': 'traffic rate must be 0-100'}, 400)
             try:
@@ -1635,12 +1635,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """New node key (the old join code stops working; re-add this server on the main server)."""
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
-        db.set_settings(node_key=secure.token(24), node_master='', node_master_id='')
         removed = False
-        for u in db.users():
-            if u['remote_id']:
-                db.delete_user(u['id'])
-                removed = True
+        # under the sync lock: a sync from the old main server running meanwhile would otherwise bring back the
+        # accounts deleted here and its own name as node_master
+        with cluster._node_lock, db.transaction():
+            db.set_settings(node_key=secure.token(24), node_master='', node_master_id='')
+            for u in db.users():
+                if u['remote_id']:
+                    db.delete_user(u['id'])
+                    removed = True
         if removed:
             apply_async()
         return self.json({'ok': True, 'join_code': cluster.join_code(db.settings(), self.base_url(s))})
@@ -1729,8 +1732,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if api == 'me':
             return self.json(self.member_view(s, u, by_link))
         if api == 'qr':
-            return self.send(200, qr.svg('%s/s/%s' % (self.base_url(s), u['sub_token']), scale=5), 'image/svg+xml',
-                             {'Cache-Control': 'no-store'})
+            try:          # same as the other two QR codes: a link too long to encode is refused, not a 500
+                image = qr.svg('%s/s/%s' % (self.base_url(s), u['sub_token']), scale=5)
+            except ValueError:
+                return self.json({'error': 'too long for a QR code; copy the link instead'}, 413)
+            return self.send(200, image, 'image/svg+xml',
+                             {'Cache-Control': 'no-store', 'Content-Security-Policy': _SVG_CSP})
         if method != 'POST':
             return self.json({'error': 'unknown endpoint'}, 404)
         d = self.body_json()
@@ -1765,7 +1772,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if api == 'request' and s['member_requests']:
             def ask():
                 members.request_more(u['id'], d.get('add_gb'), d.get('reason', ''))
-                notify.send('%s asks for +%s GB / %s 申请增加 %s GB 流量' % (u['name'], d.get('add_gb'), u['name'], d.get('add_gb')),
+                # the number as checked, not the text sent: float() also takes "10" followed by line breaks
+                # and the start of a made-up notice
+                gb = round(float(d.get('add_gb')), 2)
+                notify.send('%s asks for +%g GB / %s 申请增加 %g GB 流量' % (u['name'], gb, u['name'], gb),
                             key='req-%d' % u['id'], every=600)
             return self.refused(ask)
         if api == 'invite' and s['member_invites'] and s['member_enabled']:   # a code needs a sign-up page
@@ -1797,7 +1807,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'ok': True})
         if api == 'invite-revoke' and s['member_invites']:
             try:
-                iid = int(d.get('id', 0))
+                iid = number(d.get('id', 0), True)
             except (TypeError, ValueError, OverflowError):
                 return self.json({'error': 'invalid invite id'}, 400)
             return self.refused(lambda: members.revoke_invite(iid, by_member=u['id']))
@@ -2024,17 +2034,17 @@ def user_fields(d):
     out = {}
     try:
         if 'quota_gb' in d:
-            q = float(d['quota_gb'] or 0)
+            q = number(d['quota_gb'])
             if not math.isfinite(q) or q > 1e6:     # max(0, nan) would quietly mean "unlimited"
                 return 'invalid number'
             out['quota_gb'] = max(0.0, q)
         if 'expire_at' in d:
-            expiry = int(d['expire_at'] or 0)
+            expiry = number(d['expire_at'], True)
             if expiry > MAX_ACCOUNT_EXPIRE_AT:
                 return 'expire_at is out of supported range'
             out['expire_at'] = max(0, expiry)
         if 'reset_day' in d:
-            out['reset_day'] = int(d['reset_day'] or 0)
+            out['reset_day'] = number(d['reset_day'], True)
             if not 0 <= out['reset_day'] <= 31:
                 return 'reset day must be 1-31 (0 = never)'
         if 'enabled' in d:
@@ -2043,15 +2053,15 @@ def user_fields(d):
             except ValueError:
                 return 'enabled: expected true or false'
         if 'max_ips' in d:
-            out['max_ips'] = int(d['max_ips'] or 0)
+            out['max_ips'] = number(d['max_ips'], True)
             if not 0 <= out['max_ips'] <= 100:
                 return 'device limit must be 0-100'
         if 'expire_after_days' in d:
-            out['expire_after_days'] = int(d['expire_after_days'] or 0)
+            out['expire_after_days'] = number(d['expire_after_days'], True)
             if not 0 <= out['expire_after_days'] <= 3650:
                 return 'days must be 0-3650'
-        if 'expire_days' in d and int(d['expire_days'] or 0):      # batch creation: lifetime from today
-            days = int(d['expire_days'])
+        if 'expire_days' in d and number(d['expire_days'], True):      # batch creation: lifetime from today
+            days = number(d['expire_days'], True)
             if not 0 < days <= 3650:
                 return 'days must be 0-3650'
             out['expire_at'] = int(time.time() + days * 86400)
@@ -2059,7 +2069,7 @@ def user_fields(d):
             out['note'] = str(d['note'])[:200]
         for k, label in (('speed_mbps', 'speed limit'), ('throttle_mbps', 'slow-down speed')):
             if k in d:
-                v = float(d[k] or 0)
+                v = number(d[k])
                 if not math.isfinite(v) or not 0 <= v <= db.MAX_MBPS:
                     return '%s must be 0-%d Mbps' % (label, db.MAX_MBPS)
                 out[k] = v
@@ -2068,8 +2078,11 @@ def user_fields(d):
                 out['servers'] = db.clean_servers(d['servers'])
             except ValueError as e:
                 return str(e)
-        if 'name' in d and str(d['name']).strip():
-            out['name'] = str(d['name']).strip()[:32]
+        # control characters as on creation: a line break in a name would end the comment line it is printed
+        # on in the Clash file and start YAML of its own
+        name = re.sub(r'[\x00-\x1f\x7f\x85\u2028\u2029]+', '', str(d['name'])).strip() if 'name' in d else ''
+        if name:
+            out['name'] = name[:32]
     except (TypeError, ValueError, OverflowError):
         return 'invalid number'
     return out
@@ -2091,6 +2104,16 @@ def as_bool(v):
     if isinstance(v, str) and v.strip().lower() in ('false', '0', 'off', 'no', ''):
         return False
     raise ValueError('expected true or false')
+
+
+def number(v, whole=False, empty=0):
+    """float() / int() of a number from JSON, with null and '' as `empty`. true / false are no numbers:
+    int(True) == 1 would quietly move a port to 1 or set a quota of 1 GB."""
+    if isinstance(v, bool):
+        raise ValueError('expected a number')
+    if v is None or v == '':
+        return empty
+    return int(v) if whole else float(v)
 
 
 def validate_settings(d, s):
@@ -2124,7 +2147,7 @@ def validate_settings(d, s):
             out[k] = clean
     if 'traffic_rate' in d:
         try:
-            rate = float(d['traffic_rate'])
+            rate = number(d['traffic_rate'], empty=None)
         except (TypeError, ValueError, OverflowError):
             return 'traffic rate must be 0-100'
         if not db.valid_rate(rate):
@@ -2175,7 +2198,7 @@ def validate_settings(d, s):
     for k in ('reality_port', 'hy2_port', 'tuic_port'):
         if k in d:
             try:
-                p = int(d[k])
+                p = number(d[k], True)
             except (TypeError, ValueError, OverflowError):
                 return 'invalid port'
             if not 1 <= p <= 65535:
@@ -2183,7 +2206,7 @@ def validate_settings(d, s):
             out[k] = p
     if 'server_cap_gb' in d:
         try:
-            cap = float(d['server_cap_gb'] or 0)
+            cap = number(d['server_cap_gb'])
         except (TypeError, ValueError, OverflowError):
             return 'invalid number'
         if not math.isfinite(cap) or cap > 1e7:
@@ -2191,7 +2214,7 @@ def validate_settings(d, s):
         out['server_cap_gb'] = max(0.0, cap)
     if 'server_reset_day' in d:
         try:
-            out['server_reset_day'] = int(d['server_reset_day'] or 1)
+            out['server_reset_day'] = number(d['server_reset_day'], True, 1)
         except (TypeError, ValueError, OverflowError):
             return 'invalid number'
         if not 1 <= out['server_reset_day'] <= 28:
