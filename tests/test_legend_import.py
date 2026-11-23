@@ -402,3 +402,68 @@ class LegendRefuses(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LegendLines(unittest.TestCase):
+    """--lines: the old proxy's Reality key, short id, handshake site and ports carry over, so a client that
+    never refreshes its subscription still reaches the new server over Reality."""
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='legend-lines-')
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.private, self.public = secure.reality_keypair()
+
+    def config(self, **reality):
+        r = dict({'enabled': True, 'handshake': {'server': 'www.example.org', 'server_port': 443},
+                  'private_key': self.private, 'short_id': ['0123456789abcdef']}, **reality)
+        return {'inbounds': [
+            {'type': 'vless', 'listen_port': 26443, 'tls': {'enabled': True, 'server_name': 'www.example.org',
+                                                            'reality': r}, 'users': []},
+            {'type': 'hysteria2', 'listen_port': 26443, 'tls': {}, 'users': []},
+            {'type': 'tuic', 'listen_port': 28443, 'tls': {}, 'users': []}]}
+
+    def run_tool(self, cfg):
+        p = lambda n: os.path.join(self.dir, n)
+        for name, data in (('base.json', {'format': 'vps2vpn-backup-1', 'settings': {}, 'users': []}),
+                           ('settings.json', {'users': [account(1)]}), ('config.json', cfg)):
+            with open(p(name), 'w', encoding='utf-8') as f:
+                json.dump(data, f)
+        sqlite3.connect(p('usage.sqlite3')).execute(
+            'CREATE TABLE IF NOT EXISTS daily(user_id TEXT, cycle TEXT, day TEXT, upload INTEGER, download INTEGER)'
+        ).connection.close()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            code = li.main(['--base', p('base.json'), '--settings', p('settings.json'), '--usage', p('usage.sqlite3'),
+                            '--lines', p('config.json'), '-o', p('out.json'), '--now', str(NOW)])
+        merged = None
+        if os.path.exists(p('out.json')):
+            with open(p('out.json'), encoding='utf-8') as f:
+                merged = json.load(f)
+        return code, out.getvalue() + err.getvalue(), merged
+
+    def test_old_reality_key_and_ports_carry_over(self):
+        code, text, merged = self.run_tool(self.config())
+        self.assertEqual(code, 0, text)
+        s = merged['settings']
+        self.assertEqual((s['reality_private_key'], s['reality_public_key'], s['reality_short_id'], s['reality_target']),
+                         (self.private, self.public, '0123456789abcdef', 'www.example.org'))
+        self.assertEqual((s['reality_port'], s['hy2_port'], s['hy2_hop'], s['hy2_hop_range'], s['tuic_port']),
+                         (443, 443, True, '20000-25999', 8443))
+        self.assertIn('Reality 不用更新', text)
+        db.import_all(merged)
+        here = db.settings()
+        self.assertEqual((here['reality_public_key'], here['reality_short_id']), (self.public, '0123456789abcdef'))
+        u = db.user_by_name(merged['users'][0]['name'])
+        self.assertIn(self.public, subscription.clash_yaml(here, u, 'https://192.0.2.1:8443'))
+        self.assertIn('0123456789abcdef', subscription.clash_yaml(here, u, 'https://192.0.2.1:8443'))
+
+    def test_a_config_without_a_usable_key_is_refused(self):
+        for bad in ({'private_key': 'short'}, {'enabled': False}, {'short_id': ['not-hex!']},
+                    {'handshake': {'server': 'not a host'}}):
+            with self.subTest(bad=bad):
+                cfg = self.config(**bad)
+                if 'handshake' in bad:
+                    cfg['inbounds'][0]['tls']['server_name'] = ''
+                code, text, merged = self.run_tool(cfg)
+                self.assertEqual((code, merged), (2, None), text)
+        code, text, merged = self.run_tool({'nothing': 1})
+        self.assertEqual((code, merged), (2, None))

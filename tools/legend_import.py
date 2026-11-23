@@ -2,7 +2,7 @@
 """Move the accounts (and, if you want, the routing rules) of an old "legend" panel into vps2vpn.
 
     python tools/legend_import.py --base vps2vpn-backup.json --settings settings.json \\
-        --usage usage.sqlite3 [--template template.json] -o merged-backup.json
+        --usage usage.sqlite3 [--template template.json] [--lines config.json] -o merged-backup.json
 
 --base      a backup downloaded from the NEW vps2vpn panel (Settings -> Backup). Its admin password, panel
             address and settings are kept; the old accounts are added to the accounts already in it.
@@ -11,6 +11,8 @@
             period's traffic so far, so nobody gets a fresh quota on moving day.
 --template  optional: the old subscription template (template.json); its "rules" become the panel's own
             direct / proxy / block lists.
+--lines     optional: the old proxy's sing-box config (/etc/legend-tiered/config.json): keep its Reality key,
+            short id, handshake site and public ports, so old Reality links keep working without a refresh.
 
 Only copies are read, and nothing is sent anywhere. Restore the result on the new panel (Settings -> Restore).
 Each account keeps its subscription token, its Reality UUID and Hysteria 2 password, its quota, this period's
@@ -400,6 +402,62 @@ def merge_rules(backup, lists):
     return out
 
 
+# --- the old server's lines ---------------------------------------------------------------------------------
+OLD_REALITY_PORT = 443          # legend-tiered listens on 26443/28443; nft sends the public 443/8443 there
+OLD_TUIC_PORT = 8443
+OLD_HOP_RANGE = '20000-25999'
+
+
+def _reality_public(private):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        from vps2vpn import secure
+    finally:
+        sys.path.pop(0)
+    return secure.reality_public_key(private)
+
+
+def convert_lines(cfg):
+    """Settings that keep every old Reality link working unchanged: the same private key (so the public key in
+    everyone's client still matches), the same short id, the same handshake site and the same public ports.
+    Hysteria 2 keeps its port and hop range; its passwords already move with the accounts."""
+    if not isinstance(cfg, dict) or not isinstance(cfg.get('inbounds'), list):
+        raise Problem('旧线路设置（config.json）里没有 inbounds 列表')
+    by_type = {}
+    for ib in cfg['inbounds']:
+        if isinstance(ib, dict):
+            by_type.setdefault(ib.get('type'), ib)
+    vless = by_type.get('vless') or {}
+    tls = vless.get('tls') if isinstance(vless.get('tls'), dict) else {}
+    reality = tls.get('reality') if isinstance(tls.get('reality'), dict) else {}
+    private = reality.get('private_key')
+    if not reality.get('enabled') or not isinstance(private, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', private):
+        raise Problem('旧线路设置里找不到 Reality 私钥')
+    sids = reality.get('short_id')
+    sid = sids[0] if isinstance(sids, list) and sids else sids
+    if not isinstance(sid, str) or not re.fullmatch(r'[0-9a-f]{0,16}', sid):
+        raise Problem('旧线路设置里的 Reality short_id 格式不对')
+    hs = reality.get('handshake') if isinstance(reality.get('handshake'), dict) else {}
+    target = str(hs.get('server') or tls.get('server_name') or '').strip().lower()
+    if not HOST_RE.match(target):
+        raise Problem('旧线路设置里的 Reality 伪装网站格式不对')
+    out = {'reality_enabled': True, 'reality_port': OLD_REALITY_PORT, 'reality_target': target,
+           'reality_private_key': private, 'reality_public_key': _reality_public(private), 'reality_short_id': sid}
+    hy2 = by_type.get('hysteria2')
+    if hy2:
+        out.update({'hy2_enabled': True, 'hy2_port': OLD_REALITY_PORT, 'hy2_hop': True, 'hy2_hop_range': OLD_HOP_RANGE,
+                    'hy2_obfs': ((hy2.get('obfs') or {}).get('password') or '') if isinstance(hy2.get('obfs'), dict) else ''})
+    if by_type.get('tuic'):
+        out.update({'tuic_enabled': True, 'tuic_port': OLD_TUIC_PORT})
+    return out
+
+
+def merge_lines(backup, lines):
+    out = dict(backup)
+    out['settings'] = dict(backup.get('settings') or {}, **lines)
+    return out
+
+
 # --- report -------------------------------------------------------------------------------------------------
 def describe(report, rules_report, settings):
     lines = ['导入了 %d 个旧账号。' % report['count']]
@@ -429,6 +487,12 @@ def describe(report, rules_report, settings):
         lines.append('  · 新面板已经设了重置时区 %s，保留不动；旧系统按 UTC+8（新加坡时间）零点换月。' % report['time_zone'])
     else:
         lines.append('  · 面板的「每月重置按哪个时区」设成了 UTC+8，和旧系统一样按新加坡时间零点换月。')
+    if report.get('lines'):
+        ln = report['lines']
+        lines.append('  · 沿用旧服务器的 Reality 私钥、short_id 和伪装网站 %s，端口 %d：旧链接里的 Reality 不用更新就能连。'
+                     % (ln['reality_target'], ln['reality_port']))
+        if ln.get('hy2_enabled'):
+            lines.append('  · Hysteria 2 沿用端口 %d 和跳端口 %s。' % (ln['hy2_port'], ln['hy2_hop_range']))
     lines.append('  · TUIC 改用每个人的 Reality UUID 和 Hysteria 2 密码：用订阅的人更新一次订阅就好，手填 TUIC 的要重新填。')
     if rules_report:
         r = rules_report
@@ -497,12 +561,13 @@ def main(argv=None):
     ap.add_argument('--template', help='旧面板 template.json 的副本（导入分流规则时才需要）')
     ap.add_argument('--map', action='append', default=[], metavar='分组=proxy|direct|block',
                     help='旧模板里其他分组名该放进哪个名单')
+    ap.add_argument('--lines', help='旧线路设置的副本（/etc/legend-tiered/config.json）：沿用 Reality 私钥和端口，旧链接不断')
     ap.add_argument('-o', '--output', required=True, help='写出的新备份文件（不能和输入同名）')
     ap.add_argument('--now', type=int, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     now = a.now if a.now is not None else int(dt.datetime.now(dt.timezone.utc).timestamp())
     try:
-        ins = [os.path.abspath(p) for p in (a.base, a.settings, a.usage, a.template) if p]
+        ins = [os.path.abspath(p) for p in (a.base, a.settings, a.usage, a.template, a.lines) if p]
         if os.path.abspath(a.output) in ins:
             raise Problem('-o 不能覆盖输入文件')
         targets = dict(TARGETS)
@@ -522,6 +587,9 @@ def main(argv=None):
                 raise Problem('旧模板 template.json 不是对象')
             lists, rules_report = convert_rules(template.get('rules'), targets)
             out = merge_rules(out, lists)
+        if a.lines:
+            report['lines'] = convert_lines(read_json(a.lines, '旧线路设置 config.json'))
+            out = merge_lines(out, report['lines'])
         write_private(a.output, out)
     except Problem as e:
         print('没有写出文件：%s' % e, file=sys.stderr)
