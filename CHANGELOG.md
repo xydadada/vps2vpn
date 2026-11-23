@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.32
+
+- Clearing the traffic-rate box on the servers page and saving no longer sets it to 0 (which meant "this server's traffic is not counted"). An empty number box now says what it needs; an empty server reset day means the 1st.
+  多服务器页把流量倍率框清空后保存，不会再存成 0（0 表示这台服务器不计流量）。空的数字框现在会提示该填什么；服务器重置日留空按 1 号。
+- On Windows, a user's details and the "Done!" page have an "Open in the vps2vpn app" button, and the app hint recommends the vps2vpn app there, as the member page does.
+  在 Windows 上，使用者详情和「搞定」页加了「在 vps2vpn 客户端中打开」按钮，App 推荐也改成首推 vps2vpn 客户端，和成员页一致。
+- Phones: long installer paths on the settings page and long English button labels wrap instead of widening the page.
+  手机上：设置页的安装包路径、英文界面里较长的按钮文字会换行，不再把页面撑宽。
+
 ## 0.2.31
 
 - Clash subscriptions no longer carry `global-client-fingerprint`. Current mihomo removed it and logs an error for it on every start; the Reality line still sets its own fingerprint.
