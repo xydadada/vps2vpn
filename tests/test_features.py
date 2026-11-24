@@ -638,8 +638,8 @@ class ServerMonth(tu.Base):
         self.assertEqual(jobs.period_of(at(2026, 5, 30), 31), '2026-04-30')
         self.assertEqual(clock.next_reset(31, at(2026, 2, 10)), at(2026, 2, 28))
         self.assertEqual(clock.next_reset(31, at(2026, 2, 28, 1)), at(2026, 3, 31))
-        u = db.user(db.add_user('late', 10, 0, 30))
-        self.assertEqual(jobs.monthly_reset(u, at(2026, 2, 27, 23)), (False, '2026-02'))
+        u = dict(db.user(db.add_user('late', 10, 0, 30)), last_reset='2026-01')
+        self.assertEqual(jobs.monthly_reset(u, at(2026, 2, 27, 23)), (False, '2026-01'))
         self.assertEqual(jobs.monthly_reset(u, at(2026, 2, 28)), (True, '2026-02'))
         # midnight on the 1st in UTC+8 is still the previous month in UTC
         first = at(2026, 3, 1)
@@ -726,6 +726,77 @@ class ServerMonth(tu.Base):
         # a container sees only virtual links: then those are its traffic
         self.assertEqual(system.net_counters(dev, lambda n: True),
                          {'eth0': [100, 200], 'docker0': [50, 60], 'veth1a': [50, 60]})
+
+
+class MissedMonthlyReset(tu.Base):
+    """Issue #124: a reset day that passed while the server was off, and accounts created mid-period."""
+
+    def setUp(self):
+        super().setUp()
+        from vps2vpn import clock
+        self.addCleanup(clock.forget)
+        db.set_settings(time_zone='UTC+8')
+        self.clock = clock
+
+    def at(self, y, m, d, h=0):
+        return int(self.clock.midnight(y, m, d)) + h * 3600
+
+    @staticmethod
+    def born(u, ts):
+        db.x('UPDATE users SET created_at=? WHERE id=?', (ts, u['id']))
+
+    def test_a_reset_missed_while_offline_is_caught_up_once(self):
+        u = mk('blocked', 10, reset_day=15)
+        db.update_user(u['id'], last_reset='2026-04')
+        self.born(u, self.at(2026, 1, 1))
+        db.add_traffic(u['id'], 0, 11 * GIB)
+        jobs.enforce(self.at(2026, 5, 14, 12))
+        self.assertEqual(db.user(u['id'])['disabled_reason'], 'quota')
+        # down from May 14 to June 2: the May 15 period has begun, so June 2 resets and switches it back on
+        jobs.enforce(self.at(2026, 6, 2, 9))
+        got = db.user(u['id'])
+        self.assertEqual((got['used_up'], got['used_down'], got['last_reset'], got['enabled']), (0, 0, '2026-05', 1))
+        db.add_traffic(u['id'], 0, GIB)
+        jobs.enforce(self.at(2026, 6, 10))            # once: not again within the same period
+        self.assertEqual(db.user(u['id'])['used_down'], GIB)
+        jobs.enforce(self.at(2026, 6, 15, 1))         # and the next reset day as usual
+        self.assertEqual((db.user(u['id'])['used_down'], db.user(u['id'])['last_reset']), (0, '2026-06'))
+
+    def test_many_missed_months_reset_once(self):
+        u = dict(mk('long-off', 10, reset_day=1), last_reset='2025-01', created_at=self.at(2024, 1, 1))
+        self.assertEqual(jobs.monthly_reset(u, self.at(2026, 3, 20)), (True, '2026-03'))
+
+    def test_an_account_created_after_the_boundary_keeps_its_traffic(self):
+        u = mk('newbie', 10, reset_day=15)
+        self.born(u, self.at(2026, 5, 20, 8))
+        db.add_traffic(u['id'], 3, 4)
+        jobs.enforce(self.at(2026, 5, 20, 9))
+        got = db.user(u['id'])
+        self.assertEqual((got['used_up'], got['used_down'], got['last_reset']), (3, 4, '2026-05'))
+        jobs.enforce(self.at(2026, 6, 15, 1))         # its first real reset day
+        self.assertEqual(db.user(u['id'])['used_down'], 0)
+
+    def test_created_before_its_first_reset_day(self):
+        u = mk('early', 10, reset_day=15)
+        self.born(u, self.at(2026, 5, 3))
+        db.add_traffic(u['id'], 0, 9)
+        jobs.enforce(self.at(2026, 5, 3, 1))
+        self.assertEqual((db.user(u['id'])['used_down'], db.user(u['id'])['last_reset']), (9, '2026-04'))
+        jobs.enforce(self.at(2026, 5, 15, 1))
+        self.assertEqual((db.user(u['id'])['used_down'], db.user(u['id'])['last_reset']), (0, '2026-05'))
+
+    def test_reset_day_set_later_on_an_older_account_waits_for_the_day(self):
+        u = dict(mk('older', 10, reset_day=15), last_reset='', created_at=self.at(2026, 1, 1))
+        self.assertEqual(jobs.monthly_reset(u, self.at(2026, 5, 3))[0], False)
+        self.assertEqual(jobs.monthly_reset(u, self.at(2026, 5, 15, 1)), (True, '2026-05'))
+
+    def test_normal_months_are_unchanged(self):
+        u = dict(mk('steady', 10, reset_day=31), last_reset='2026-01', created_at=self.at(2025, 1, 1))
+        self.assertFalse(jobs.monthly_reset(u, self.at(2026, 2, 27, 23))[0])
+        self.assertEqual(jobs.monthly_reset(u, self.at(2026, 2, 28)), (True, '2026-02'))
+        u['last_reset'] = '2026-02'
+        self.assertFalse(jobs.monthly_reset(u, self.at(2026, 3, 30))[0])
+        self.assertTrue(jobs.monthly_reset(u, self.at(2026, 3, 31))[0])
 
 
 class Abuse(tu.Base):

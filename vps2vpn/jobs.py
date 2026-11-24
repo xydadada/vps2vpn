@@ -6,6 +6,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import threading
 import time
@@ -44,11 +45,38 @@ def over_limit(u, now=None, quota=None):
     return ''
 
 
-def monthly_reset(u, now=None):
-    """Reset usage on the user's reset day, once per month (in the owner's time zone; see clock)."""
+_MONTH = re.compile(r'\d{4}-\d{2}')
+
+
+def reset_action(u, now=None):
+    """('reset' | 'mark' | '', period) for the account's monthly reset (in the owner's time zone; see clock).
+
+    `period` is the month in which the current billing period began; `last_reset` holds it after a reset.
+    - 'reset': a period has begun since the last reset, also one that began while the server was off
+      (one catch-up reset, not one per missed month).
+    - 'mark': an account created inside the current period has nothing to reset yet: it only records the
+      period, so traffic it used since it was created is kept.
+    """
     now = now or time.time()
+    day = u['reset_day']
+    if not day:
+        return '', clock.month(now)
+    y, m, d = clock.period_start(day, now)
+    period = '%04d-%02d' % (y, m)
+    last = u['last_reset'] or ''
+    if _MONTH.fullmatch(last):
+        return ('reset' if last < period else ''), period
+    if not last and (u.get('created_at') or 0) >= clock.midnight(y, m, d):
+        return 'mark', period
+    # never reset (a reset day set on an older account) or an unreadable value: on the reset day, as before
     month = clock.month(now)
-    return clock.reached(u['reset_day'], now) and u['last_reset'] != month, month
+    return ('reset' if clock.reached(day, now) and last != month else ''), month
+
+
+def monthly_reset(u, now=None):
+    """(due, period): whether the account's usage is reset now, and the period it then belongs to."""
+    action, period = reset_action(u, now)
+    return action == 'reset', period
 
 
 def quota_alert_key(u, quota, now):
@@ -116,11 +144,14 @@ def enforce(now=None):
                             by_id[cid]['expire_after_days'] = 0
                     log('%s used the account for the first time; expires in %d days' % (u['name'], days))
                 device_due = not u['enabled'] and u['disabled_reason'] == 'devices' and t_now >= u['paused_until']
-                due, month = monthly_reset(u, now)
-                if due:
+                action, month = reset_action(u, now)
+                if action == 'reset':
                     db.update_user(u['id'], used_up=0, used_down=0, last_reset=month, extra_gb=0)
                     u.update(used_up=0, used_down=0, last_reset=month, extra_gb=0)
                     log('monthly reset: %s' % u['name'])
+                elif action == 'mark':
+                    db.update_user(u['id'], last_reset=month)
+                    u.update(last_reset=month)
                 quota = members.effective_quota(u, now=now, index=invitees)
                 reason = over_limit(u, now, quota)
                 # Quota used up on an account that slows down instead of stopping: it keeps working, held to
