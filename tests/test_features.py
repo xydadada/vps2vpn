@@ -2411,6 +2411,61 @@ class AirportFeatures(tu.Base):
             self.assertIn('1 account', doctor.speed_limits()[0]['detail'])
 
 
+class ReservedServerNames(tu.Base):
+    """Issue #122: a server called like a built-in group ("Auto") broke two-server profiles."""
+
+    def _two_servers(self, main, remote='Tokyo', language='en'):
+        u = mk('ann', 10)
+        info = cluster.public_info(dict(db.settings(), public_host='198.51.100.5', node_name=remote))
+        node = {'id': 'abcd1234', 'name': remote, 'url': 'https://198.51.100.5:1/x', 'key': 'k', 'pin': '',
+                'enabled': True, 'info': info, 'idmap': {str(u['id']): 42}}
+        db.set_settings(node_name=main, language=language, servers=[node])
+        return db.settings(), db.user(u['id'])
+
+    def _assert_unique(self, s, u):
+        clash = subscription.clash(s, u, 'https://e.org')
+        names = [g['name'] for g in clash['proxy-groups']] + [p['name'] for p in clash['proxies']]
+        self.assertEqual(len(names), len(set(names)), names)
+        for g in clash['proxy-groups']:
+            for ref in g['proxies']:
+                self.assertTrue(ref in names or ref in ('DIRECT', 'REJECT'), ref)
+        sb = subscription.singbox(s, u, 'https://e.org')
+        tags = [o['tag'] for o in sb['outbounds']]
+        self.assertEqual(len(tags), len(set(tags)), tags)
+        sr = subscription.shadowrocket(s, u, 'https://e.org')
+        group_part = sr.split('[Proxy Group]')[1].split('\n[')[0]
+        heads = [line.split(' = ')[0] for line in group_part.splitlines() if ' = ' in line]
+        self.assertEqual(len(heads), len(set(heads)), heads)
+        return clash
+
+    def test_main_server_named_like_a_built_in_group(self):
+        s, u = self._two_servers('Auto')
+        clash = self._assert_unique(s, u)
+        auto = next(g for g in clash['proxy-groups'] if g['name'] == 'Auto')
+        self.assertIn('Auto_', auto['proxies'])                  # the server's own group, renamed
+        self.assertIn('Auto Reality', [p['name'] for p in clash['proxies']])   # its entries keep their names
+
+    def test_remote_server_and_chinese_names(self):
+        for main, remote, lang in (('vps2vpn', 'Proxy', 'en'), ('节点选择', '自动选择', 'zh'),
+                                   ('vps2vpn', 'DIRECT', 'en'), ('vps2vpn', 'direct', 'zh')):
+            with self.subTest(main=main, remote=remote):
+                s, u = self._two_servers(main, remote, lang)
+                self._assert_unique(s, u)
+                db.delete_user(u['id'])
+
+    def test_group_named_like_an_entry(self):
+        s, u = self._two_servers('Tokyo', 'Tokyo Reality')
+        self._assert_unique(s, u)
+
+    def test_one_server_is_unchanged(self):
+        db.set_settings(node_name='Auto', language='en', servers=[])
+        u = mk('solo', 10)
+        ns = subscription.nodes(db.settings(), db.user(u['id']))
+        self.assertTrue(ns)
+        self.assertTrue(all(n['name'].startswith('Auto ') for n in ns))
+        self._assert_unique(db.settings(), db.user(u['id']))
+
+
 class AirportFeaturesAudit5Leftovers(tu.Base):
     """The fifth audit's items that the sixth audit's release did not carry over."""
 
