@@ -115,6 +115,29 @@ def nodes(s, u):
         out += _ordered(s, more)
     if s.get('ipv4_only'):            # the old panel's ".ipv4.yaml" link
         out = [n for n in out if ':' not in n['server']]
+    return _free_groups(s, out)
+
+
+# Names a client already uses: Clash/mihomo's built-in policies and sing-box's direct outbound tag.
+CLIENT_RESERVED = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL', 'direct'}
+
+
+def _free_groups(s, out):
+    """Renames a server's group when it would clash with a built-in group ("Auto", "节点选择"...), a name the
+    client reserves, or an entry name: with two servers one name would then mean two things and mihomo rejects
+    the whole profile ("duplicate group name"). Only the group changes; entry names stay as they were."""
+    taken = set(CLIENT_RESERVED) | {v for lang in GROUP_NAMES.values() for v in lang.values()} | \
+        {n['name'] for n in out}
+    renamed = {}
+    for n in out:
+        label = n['group']
+        if label not in renamed:
+            free = label
+            while free in taken:
+                free += '_'
+            taken.add(free)
+            renamed[label] = free
+        n['group'] = renamed[label]
     return out
 
 
