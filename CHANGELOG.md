@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.39
+
+Tenth outside review (round 11, server part S11-01..03).
+第十次外部审计（第 11 轮，服务端 S11-01..03）。
+
+- Invite codes: traffic covered by a top-up approved for this period no longer counts against what a member may share, so using a top-up no longer voids the member's own unused invite codes. The top-up itself still cannot be shared (it ends at the next reset).
+  邀请码：本期批准的加流量先用来抵已用流量，不再算进「还能分享多少」里，所以用了加的流量不会再让会员自己没用掉的邀请码作废。加的流量本身仍然不能分享出去（它在下次重置时就没了）。
+- Notices: an account that goes past its whole quota in one step and slows down is told "used up, slowed down" only, without an "80% used" notice right after it.
+  通知：一次就用超整个额度、被降速的账号，只收到「流量已用完，已降速」，后面不再跟一条「已用掉 80%」。
+- HTTPS certificate check: the cached answer now notices a certificate replaced with the same time stamp, or a path that points to another file (it used to keep the old answer for up to a minute).
+  HTTPS 证书检查：证书被换成时间戳相同的新文件、或路径改指向别的文件时，缓存的结果会马上更新（以前最多会沿用旧结果一分钟）。
+- S11-01 (slowed-down accounts on joined servers) was already fixed in 0.2.37.
+  S11-01（子服务器上的降速账号）在 0.2.37 已经修好。
+
 ## 0.2.38
 
 Speed limits come back after their ifb device was deleted.

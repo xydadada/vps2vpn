@@ -6,7 +6,7 @@
 
 ## 1. 现在的状态
 
-- **服务端最新版：v0.2.38**（GitHub Release 标为 Latest，CI 全绿）。
+- **服务端最新版：v0.2.39**（GitHub Release 标为 Latest，CI 全绿）。
   - 0.2.28：旧面板迁移工具、旧订阅链接、29–31 号重置、重置时区、名单上限 1 万。
   - 0.2.29：第七次外部审计（报告里编号 S8-xx）。
   - 0.2.30：修好 0.2.29 卸载会中途停下的问题。
@@ -14,6 +14,7 @@
   - 0.2.33：第八次外部审计（报告里编号 S9-xx），见第 2 节。
   - 0.2.35：成员页走查——批准数量和申请不同时显示「申请了 X GB」（requests 表新列 `asked_gb`，0 表示照申请批准）；中文错误提示去空格；英文手机上导入框不撑宽。
   - 0.2.34：部署器（`deploy.py`、`deploy.ps1`）粘贴带引号的 ssh 命令时用户名不再多一个引号；三个部署器共用 `tests/test_audit9_deployers.py` 的用例。
+  - 0.2.39：第十次外部审计（第 11 轮，报告里编号 S11-xx），见第 2 节。
   - 0.2.38：限速网卡 `v2vifb0` 被删掉后，网卡入口上的转发规则显示成「device *」，`_teardown` 认不出是自己的，重建一直失败（"Exclusivity flag on"）。现在按我们的标记 `handle 0x56000000/0xff000000` 认。这是在测试服务器上实测 0.2.37 时发现的。
   - 0.2.37：第九次外部审计（第 10 轮，报告里编号 S10-xx），见第 2 节。
   - 0.2.36：客户端「流量排行」开关（设置项 `client_traffic_rank`，默认关），会员接口返回 `"features": {"traffic_rank": true/false}`，见第 3 节第 1 项。
@@ -22,12 +23,12 @@
   - 客户端「严格 Windows 检查」（harsh：dirty / chaos / users）报的 4 个失败查下来都是测试脚本自己的错，客户端代码没问题，所以当时没有为它们发新版。两个 TUN 同时开时，我们的 strict-route 会挡住另一个 TUN 的 DNS，这一项记成提示（NOTE），不算失败。1.0.28 已加上：检测到另一个 VPN 开着时，用大白话提示用户关掉一个。
 - **安卓**：还没有正式包。模拟器一连上 VPN 就整机冻住，换网络栈、MTU、地址段、两种图形模式都没用。客户端仓库加了 Firebase Test Lab 真机测试（workflow `android-testlab.yaml`，订阅放在 secret `TESTLAB_SUB_URL`），结果见客户端交接文档。**用户 2026-11-23 定的优先级：Windows 第一，安卓先放一放。** 修好前不配置服务端的 `files.android`。
 - **测试服务器**：只能用用户指定的那一台。地址和 SSH 密钥位置**不写在这个公开仓库里**，写在用户电脑上的 Claude 用户级说明文件 `~/.claude/CLAUDE.md`（「测试服务器」一节），本机的 Claude 对话都会读到。其他服务器（正在用的正式服务器）一律不碰。那台上有一个给真机测试用的账号 `testlab`，2026-11-23 测试做完后已停用（要再测时在面板里重新启用即可，客户端仓库的 secret `TESTLAB_SUB_URL` 就是它的订阅）。
-  - 2026-11-24 的状态：服务端 0.2.38，客户端文件夹同步到 1.0.28，流量排行开关关着，`testlab` 停用，没有限速账号，体检 All good。
+  - 2026-11-24 的状态：服务端 0.2.39，客户端文件夹同步到 1.0.28，流量排行开关关着，`testlab` 停用，没有限速账号，体检 All good。
   - 限速的实测办法（0.2.37 / 0.2.38 做过）：临时给一个测试账号设 5 Mbps，`sudo vps2vpn apply --force`，然后分别 `sudo nft delete table inet vps2vpn_shape`、`sudo ip link set v2vifb0 down`、`sudo ip link del v2vifb0`，每次看 `sudo vps2vpn doctor` 的 `speed_limits` 一行是不是 FAIL、修好后是不是 OK。nft 表被删后，面板的 5 分钟检查会自己装回（实测约 290 秒）。做完把限速改回 0。
-- 离线测试：全量 506 项通过（含迁移工具 22 项）。命令见第 4 节。
+- 离线测试：全量 513 项通过（含迁移工具 22 项）。命令见第 4 节。
 - **限速**：2026-11-23 在测试服务器上真测过（Reality、TUIC 限 5 Mbps，实测 4.2 / 4.4，见第 6 节「演练记录」）。**还没真测的**：降速（流量用完后变慢），以及只开 Hysteria 的服务器（限速账号仍能用、只是不限速；降速账号在那台上应该被关掉）。
 
-## 2. 最近做了什么（0.2.17 → 0.2.37）
+## 2. 最近做了什么（0.2.17 → 0.2.39）
 
 - 机场常用功能：流量倍率、每个账号可用的服务器、流量用完降速而不是停用、速度限制（tc HTB + ifb + nft connmark，见 `vps2vpn/shaper.py`）、限速节点、邀请与备份、体检项 `speed_limits`。
 - 第五、六次外部审计的服务端条目都已处理（0.2.26、0.2.27）。没采纳的及原因：
@@ -57,6 +58,11 @@
   - S10-04 报告说的改法不对，但问题是真的：子服务器同步来的账号从来没有 `throttled=1`（主服务器只发 `enabled` 和 `limit_mbps`），所以只删掉 `and not u['remote_id']` 什么也不改变。现在主服务器推送时多带 `slowed`，子服务器存进 `throttled`，`cores.active_users()` 对子服务器的账号也查 `can_slow_here()`。`throttle_mbps` 在子服务器上是 0，所以 `limit_mbps` 不受影响。老主服务器不带这个字段，按「没降速」处理。
   - S10-05 已修：审批弹窗用 `numOrNull`（留空 = 按申请批准，弹窗提示也写了）；管理员邀请码表单整组用 `numOrNull`（以前流量框清空会变成 0 = 不限量）；`member.js` 加了自己的 `numOrNull`。
   - 测试在 `tests/test_audit10.py`（14 项），已加进 CI。补丁里的客户端部分（C10-xx）不归服务端。
+- 第十次审计（第 11 轮，0.2.39）。报告的基线是 0.2.36，没看到 0.2.37 / 0.2.38；里面重复列出的第 10 轮各项已经修过。服务端新的 3 项：
+  - S11-01 已在 0.2.37 修好（S10-04 那一条）。报告建议推送 `throttled`，我们用的字段名是 `slowed`，效果一样：子服务器存进 `throttled`，`cores.active_users()` 对每个降速账号都查 `can_slow_here()`，老主服务器不带这个字段就当没降速。`tests/test_audit11.py` 加了一个来回同步的测试。
+  - S11-02 已修：`members._room()` 先用本期的 `extra_gb` 抵已用流量（`used_from_base = max(0, used - extra)`）。以前用了加的流量就会让自己的邀请码作废、被邀请的人注册被拒。加的流量本身仍然不能分享，能分享的上限还是按 `quota_gb` 算。
+  - S11-03 已修：一次就用超整个额度、被降速的账号不再紧跟一条「已用 80%」（`jobs.enforce` 的 80% 判断加了 `not slow`）；`certs.trusted()` 的缓存键改成两个文件各自的（路径、设备、inode、mtime_ns、大小），和 `acme_names()` 一致。原来的键带着当前分钟，所以旧结果最多沿用一分钟，影响很小。
+  - 测试在 `tests/test_audit11.py`（7 项），已加进 CI。客户端部分（C11-xx）不归服务端。
 
 ## 3. 正在进行 / 没做完的事（按优先级）
 
@@ -92,7 +98,7 @@
 离线测试（Windows 上要先指定 bash）：
 
 ```
-PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_audit10 tests.test_beginner_ui
+PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_audit10 tests.test_audit11 tests.test_beginner_ui
 ```
 
 发版步骤：

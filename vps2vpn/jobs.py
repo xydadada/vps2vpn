@@ -154,7 +154,8 @@ def enforce(now=None):
                         log('device pause over: %s' % u['name'])
                         pass_changed = True
                     continue
-                if u['quota_gb'] and u['enabled'] and not reason and \
+                # not on a slowed-down account: it was just told its quota is used up, not that 80% is
+                if u['quota_gb'] and u['enabled'] and not reason and not slow and \
                         u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
                     notify.send('%s has used 80%% of %g GB / %s 已用掉 80%% 流量' % (u['name'], quota, u['name']),
                                 key=quota_alert_key(u, quota, t_now), every=40 * 86400)

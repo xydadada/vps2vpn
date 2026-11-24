@@ -151,7 +151,10 @@ def _room(u, now, keep=MIN_KEEP_GB):
     if not u['quota_gb']:
         return None
     used_gb = (u.get('used_up', 0) + u.get('used_down', 0)) / (1 << 30)
-    return u['quota_gb'] - given_away(u['id'], None, now) - reserved(u['id'], now) - used_gb - keep
+    # This period's top-up (approved requests) is used first: what it covers takes nothing from the room.
+    # The top-up itself is never room to share: it ends at the next reset, a share would outlive it.
+    used_from_base = max(0.0, used_gb - extra(u))
+    return u['quota_gb'] - given_away(u['id'], None, now) - reserved(u['id'], now) - used_from_base - keep
 
 
 def capacity(u, now=None):

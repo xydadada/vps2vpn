@@ -178,7 +178,10 @@ def trusted(host):
     if not h:
         return False
     try:
-        stamp = (os.stat(paths.ACME_CRT).st_mtime_ns, os.stat(paths.ACME_KEY).st_mtime_ns)
+        # the whole identity of both files, as in acme_names(): a repointed path or a file replaced with the
+        # same time stamp is a new certificate
+        stamp = tuple((p, st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+                      for p, st in ((p, os.stat(p)) for p in (paths.ACME_CRT, paths.ACME_KEY)))
     except OSError:
         return False
     cache_key = (h, stamp, int(time.monotonic() // 60))
