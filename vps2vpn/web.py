@@ -1613,7 +1613,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not any(x['id'] == sid for x in db.settings()['servers']):
             return self.json({'error': 'no such server'}, 404)
         if action == 'remove':
-            cluster.remove_server(sid)
+            released = cluster.remove_server(sid, jobs.log)
+            jobs.log('server removed%s' % ('' if released else ' (it could not be told; its accounts still work there)'))
+            return self.json({'ok': True, 'released': released, 'servers': cluster.view(db.settings())})
         elif action == 'save':
             d = self.body_json()
             fields = {k: d[k] for k in ('name', 'enabled', 'rate') if k in d}

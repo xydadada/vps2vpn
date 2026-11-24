@@ -14,6 +14,22 @@ Tenth outside review (round 11, server part S11-01..03).
 - S11-01 (slowed-down accounts on joined servers) was already fixed in 0.2.37.
   S11-01（子服务器上的降速账号）在 0.2.37 已经修好。
 
+Business-logic review (docs/logic-review.md): the code did what it said, but not what a person would expect.
+业务逻辑审查（docs/logic-review.md）：代码按写的在跑，但不符合正常人的预期。
+
+- Removing a joined server now tells it first: the accounts it got from the main server are deleted there, their last traffic is billed, and it is no longer marked as managed. They used to keep working there for good, unbilled. If it cannot be reached, the panel says so and how to clear it (press "New join code" on that server).
+  移除子服务器时会先通知它：删掉从主服务器同步过去的账号、记上最后一段流量、解除「被管理」状态。以前这些账号在那台上会一直能用，流量也不再计费。连不上时面板会直接说，并告诉你去那台点「换一个加入码」。
+- Panel hints that are only true for the vps2vpn app say so: the traffic ranking switch, the line-trouble alert (other apps never report, so no alert does not mean all is well) and the client-update folder (other apps get nothing from it).
+  只对 vps2vpn 客户端成立的提示都写明了：流量排行开关；线路告警（其他软件不会报告，所以没告警不代表都正常）；客户端更新（其他软件收不到）。
+- The change-port hint no longer promises "within 12 hours": it follows the subscription refresh setting, and Shadowrocket without auto-update needs a manual update.
+  换端口的提示不再说「12 小时内」：实际按「订阅自动更新间隔」，没开自动更新的小火箭要手动更新。
+- The device limit says it counts IP addresses (several devices on one Wi-Fi count as one).
+  设备上限写明是按 IP 数算的（同一个 Wi-Fi 下的几台算一台）。
+- Member page: an account without a monthly reset is no longer told its top-up ends "at the next reset".
+  会员页：不按月重置的账号，不再说加的流量「到下次重置日取消」。
+- A domain certificate whose renewal keeps failing is reported a week before it runs out (it used to be 36 hours, often too late to fix port 80 or DNS).
+  域名证书续期一直失败时，提前一周通知（以前要等到只剩 36 小时，常常来不及修 80 端口或域名解析）。
+
 ## 0.2.38
 
 Speed limits come back after their ifb device was deleted.

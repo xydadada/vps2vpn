@@ -14,7 +14,7 @@
   - 0.2.33：第八次外部审计（报告里编号 S9-xx），见第 2 节。
   - 0.2.35：成员页走查——批准数量和申请不同时显示「申请了 X GB」（requests 表新列 `asked_gb`，0 表示照申请批准）；中文错误提示去空格；英文手机上导入框不撑宽。
   - 0.2.34：部署器（`deploy.py`、`deploy.ps1`）粘贴带引号的 ssh 命令时用户名不再多一个引号；三个部署器共用 `tests/test_audit9_deployers.py` 的用例。
-  - 0.2.39：第十次外部审计（第 11 轮，报告里编号 S11-xx），见第 2 节。
+  - 0.2.39：第十次外部审计（第 11 轮，报告里编号 S11-xx），见第 2 节；加上服务端业务逻辑审查，**表在 `docs/logic-review.md`**（8 项已修，3 项排到后面）。
   - 0.2.38：限速网卡 `v2vifb0` 被删掉后，网卡入口上的转发规则显示成「device *」，`_teardown` 认不出是自己的，重建一直失败（"Exclusivity flag on"）。现在按我们的标记 `handle 0x56000000/0xff000000` 认。这是在测试服务器上实测 0.2.37 时发现的。
   - 0.2.37：第九次外部审计（第 10 轮，报告里编号 S10-xx），见第 2 节。
   - 0.2.36：客户端「流量排行」开关（设置项 `client_traffic_rank`，默认关），会员接口返回 `"features": {"traffic_rank": true/false}`，见第 3 节第 1 项。
@@ -25,7 +25,7 @@
 - **测试服务器**：只能用用户指定的那一台。地址和 SSH 密钥位置**不写在这个公开仓库里**，写在用户电脑上的 Claude 用户级说明文件 `~/.claude/CLAUDE.md`（「测试服务器」一节），本机的 Claude 对话都会读到。其他服务器（正在用的正式服务器）一律不碰。那台上有一个给真机测试用的账号 `testlab`，2026-11-23 测试做完后已停用（要再测时在面板里重新启用即可，客户端仓库的 secret `TESTLAB_SUB_URL` 就是它的订阅）。
   - 2026-11-24 的状态：服务端 0.2.39，客户端文件夹同步到 1.0.28，流量排行开关关着，`testlab` 停用，没有限速账号，体检 All good。
   - 限速的实测办法（0.2.37 / 0.2.38 做过）：临时给一个测试账号设 5 Mbps，`sudo vps2vpn apply --force`，然后分别 `sudo nft delete table inet vps2vpn_shape`、`sudo ip link set v2vifb0 down`、`sudo ip link del v2vifb0`，每次看 `sudo vps2vpn doctor` 的 `speed_limits` 一行是不是 FAIL、修好后是不是 OK。nft 表被删后，面板的 5 分钟检查会自己装回（实测约 290 秒）。做完把限速改回 0。
-- 离线测试：全量 513 项通过（含迁移工具 22 项）。命令见第 4 节。
+- 离线测试：全量 522 项通过（含迁移工具 22 项）。命令见第 4 节。
 - **限速**：2026-11-23 在测试服务器上真测过（Reality、TUIC 限 5 Mbps，实测 4.2 / 4.4，见第 6 节「演练记录」）。**还没真测的**：降速（流量用完后变慢），以及只开 Hysteria 的服务器（限速账号仍能用、只是不限速；降速账号在那台上应该被关掉）。
 
 ## 2. 最近做了什么（0.2.17 → 0.2.39）
@@ -63,6 +63,12 @@
   - S11-02 已修：`members._room()` 先用本期的 `extra_gb` 抵已用流量（`used_from_base = max(0, used - extra)`）。以前用了加的流量就会让自己的邀请码作废、被邀请的人注册被拒。加的流量本身仍然不能分享，能分享的上限还是按 `quota_gb` 算。
   - S11-03 已修：一次就用超整个额度、被降速的账号不再紧跟一条「已用 80%」（`jobs.enforce` 的 80% 判断加了 `not slow`）；`certs.trusted()` 的缓存键改成两个文件各自的（路径、设备、inode、mtime_ns、大小），和 `acme_names()` 一致。原来的键带着当前分钟，所以旧结果最多沿用一分钟，影响很小。
   - 测试在 `tests/test_audit11.py`（7 项），已加进 CI。客户端部分（C11-xx）不归服务端。
+- 业务逻辑审查（2026-11-24，0.2.39），完整的表在 `docs/logic-review.md`。重点：
+  - 移除子服务器以前不通知那台，那边的账号一直能用、流量不计费。现在先发一次「空名单 + `release: true`」的同步，子服务器删账号、报回最后的流量、清掉 `node_master`。老子服务器不认 `release`，但空名单照样让它删账号。连不上时面板提示去那台「换一个加入码」。
+  - 面板上只对我们客户端成立的说法（流量排行、线路告警、客户端更新、换端口后多久生效）都写明了。
+  - 第三方软件：Clash 系、Stash、小火箭、v2rayN 都核对过格式；Hiddify 和 Karing 读 sing-box 1.12 格式还没真机确认，排在后面。
+  - 域名证书续期一直失败时，以前只剩 36 小时才发通知，现在提前一周。
+  - 测试在 `tests/test_logic_review.py`（9 项），已加进 CI。
 
 ## 3. 正在进行 / 没做完的事（按优先级）
 
@@ -71,6 +77,7 @@
    - **一键反馈**：客户端把体检结果和日志（IP 已打码）发给面板，管理员能在面板上看到。要加接收接口、存储上限和查看页。
    - **设备管理**：会员能看到自己账号有哪些设备在用，可以踢下线（已有 `max_ips`）。
    - **节点状态下发**：管理员把节点标成「维护中 / 拥堵」，经会员接口告诉客户端。
+   - 用第三方软件和老客户端的人怎么办，写在设计文档第 5 节（会员页的文字反馈框、设备列表的说明、维护状态进 `Announce` 头）。
 2. **正式服务器搬家到 vps2vpn：2026-11-23 用户取消了切换**。原因：旧系统是 6 台（新加坡总管 + 美国 / 美国2 / 美国3 / 美国4 / 悉尼节点），每台都要装 vps2vpn，还要用户在亚马逊控制台给节点开端口，不能一键完成。用户原话："现在这个能用就行了，你只要保证两边功能都有就行"。旧系统继续照常运行，不要再提议搬家，除非用户自己提。下面是取消前的记录：
    1. 导入工具：已完成（`tools/legend_import.py`），只用假数据测过。
    2. 「线路优先顺序」：已完成（0.2.27 的 TCP 优先）。
@@ -89,7 +96,9 @@
    **还是表达不了的**（工具只在报告里列出）：上传、下载分开降速；「超过门槛流量就降速」；`members._given_away` 会扣「已停用的被邀请人」又分出去的流量，旧系统不扣。
 3. **和部署器会话共用一个目录**：它也改 `web.py`、`install.sh`、`member.js`、`app.js`，有时会自己在本地提交（不推送）。发版前看一眼 `git log origin/main..`，把它的提交审过、一起跑全量测试再推。
 4. **在真实服务器上测降速**：限速已在测试服务器上测过（见第 1 节）。还要测降速，以及只开 Hysteria 的服务器：限速账号仍能用、只是不限速；降速账号在那台上应该被关掉。
-5. 客户端（详见客户端仓库的交接文档）：
+5. **业务逻辑审查排到后面的 3 项**（`docs/logic-review.md` 第 5 节）：Hiddify / Karing 真机导入 sing-box 格式；到期日按设置里的时区换算；改重置日时提示这一期到哪天结束。
+6. **客户端更新有两条路**：客户端自己查 GitHub Releases 是主渠道，用别家服务端的人也能更新；面板的 `clientsync`（每 6 小时把带签名的安装包放进 `/var/lib/vps2vpn/client`，经 `<订阅链接>/download/` 下发）只是**补充渠道**，给连不上 GitHub 的国内用户用，也只对用我们服务端的 vps2vpn 客户端有效。改任何一边时都别把它当成唯一渠道。
+7. 客户端（详见客户端仓库的交接文档）：
    - 1.0.24 ~ 1.0.27 都已发布，签名都核对过。
    - 安卓正式包：模拟器冻住（见第 1 节），只有预发布，等真机测试结果。真手机上确认能用之后，核对签名，再在服务端配置里加上 `files.android` 的文件名。
 
@@ -98,7 +107,7 @@
 离线测试（Windows 上要先指定 bash）：
 
 ```
-PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_audit10 tests.test_audit11 tests.test_beginner_ui
+PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_audit10 tests.test_audit11 tests.test_logic_review tests.test_beginner_ui
 ```
 
 发版步骤：

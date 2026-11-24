@@ -150,7 +150,8 @@ class OwnerWalkthrough(tu.Base):
         db.update_user(both, servers='main,33333333')
         db.set_settings(servers=[{'id': '33333333', 'name': 'Tokyo', 'url': 'https://tokyo.example/panel',
                                   'key': 'k', 'pin': '', 'enabled': True}])
-        cluster.remove_server('33333333')
+        with mock.patch.object(cluster, '_request', side_effect=cluster.SyncError('unreachable')):
+            self.assertFalse(cluster.remove_server('33333333', log=lambda _: None))
         self.assertEqual(db.user(only)['servers'], 'main')
         self.assertEqual(db.user(both)['servers'], 'main')
         self.assertEqual(db.settings()['servers'], [])

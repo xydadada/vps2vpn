@@ -905,7 +905,10 @@ class Scheduler:
         if res and res != 'ok':
             self.cert_backoff_until = time.monotonic() + 6 * 3600    # stay well under Let's Encrypt's failure limits
             db.set_settings(cert_status='failed: ' + res[:200])
-            if certs.trusted(cert_host) and not certs.acme_valid(36):
+            # Tell the admin while there is still time to fix it (port 80 blocked, DNS moved): a week ahead for
+            # a 90-day domain certificate, 36 hours for a 6-day IP certificate (renewal starts at 72 hours).
+            warn_hours = 36 if certs.is_ip(cert_host) else 7 * 24
+            if certs.trusted(cert_host) and not certs.acme_valid(warn_hours):
                 notify.send('certificate renewal failing: %s / 证书续期失败' % res[:200], key='cert', every=12 * 3600)
         elif res == 'ok':
             db.set_settings(cert_status='ok')

@@ -19,7 +19,7 @@ const T = {
     apps: '装哪个 App', open_app: '在 vps2vpn 客户端中打开', get_app: '还没装 vps2vpn 客户端？点这里下载（免费）',
     apps_list: [['Windows', 'vps2vpn 客户端（免费，推荐），或 Clash Verge Rev、FlClash'], ['macOS', 'Clash Verge Rev 或 FlClash（免费）'], ['Android', 'FlClash 或 Hiddify（免费）'], ['iPhone / iPad', 'Shadowrocket 小火箭或 Stash（都要付费），免费的用 Karing']],
     apps_tip: '导入后打开 App 里的「系统代理」或「VPN / TUN 模式」开关就行。',
-    history: '每日用量', history_sub: '近 30 天', more: '申请增加流量', more_tip: '流量不够用时，告诉管理员你需要多少、为什么。批准后立刻生效，只在本期有效，到下次重置日自动取消。',
+    history: '每日用量', history_sub: '近 30 天', more: '申请增加流量', more_tip: '流量不够用时，告诉管理员你需要多少、为什么。批准后立刻生效，只在本期有效，到下次重置日自动取消。', more_tip_nr: '流量不够用时，告诉管理员你需要多少、为什么。批准后立刻生效；这个账号不按月重置，加的流量会一直保留到管理员清零。',
     add_gb: '需要增加多少 GB', reason: '说明（可选）', send: '提交申请', sent: '已提交，等管理员批准',
     pending: '等待批准', approved: '已批准', rejected: '未批准', req_none: '还没有申请记录。',
     invites: '邀请朋友', invites_tip: '从你自己的额度里分一部分给朋友。朋友一注册，你每月的额度就立刻少掉分给他的那部分，直到他的账号到期或被删除；他用多少都只从这部分里扣。邀请码还没人用时可以随时撤销；已经注册的人要收回额度，需要找管理员。你自己至少保留 1 GB。',
@@ -31,7 +31,7 @@ const T = {
     notice: '管理员公告', paused_quota: '这一期的流量用完了，所以暂时停用。', q_ask: '可以在下面「申请增加流量」。', q_wait: '到 {date} 重置后会自动恢复。', q_admin: '这个账号不会自动重置，请联系管理员。',
     extra: '本期临时加量', first_use: '首次使用后 {n} 天', asked: '（申请了 {n} GB）', inv_copied: '注册链接已复制，发给朋友打开就能注册', dev_limit: '（最多同时 {n} 台）',
     paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限{lim}，已自动暂停 10 分钟。关掉多余的设备，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
-    expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或加流量后恢复。', capped: '这个账号限速 {mbps} Mbps。',
+    expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或加流量后恢复。', slowed_nr: '流量已用完，已降速到 {mbps} Mbps。这个账号不按月重置，加流量后恢复：可以在下面申请，或联系管理员。', capped: '这个账号限速 {mbps} Mbps。',
     security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不小心发给了别人？换一个新的，旧链接立刻失效。换完后每台设备都要重新导入一次。',
     rotate_q: '更换后旧链接马上不能用了，所有设备都要重新导入。确定吗？', rotated: '已更换，请重新导入到 App',
     rotate_q_link: '更换后，你现在打开的这个页面地址也会失效。还没设密码的话，最好先在上面设一个；或者换完后一定要保存好新链接。确定更换吗？',
@@ -54,7 +54,7 @@ const T = {
     apps: 'Which app', open_app: 'Open in the vps2vpn app', get_app: 'No vps2vpn app yet? Download it here (free)',
     apps_list: [['Windows', 'the vps2vpn app (free, recommended), or Clash Verge Rev / FlClash'], ['macOS', 'Clash Verge Rev or FlClash (free)'], ['Android', 'FlClash or Hiddify (free)'], ['iPhone / iPad', 'Shadowrocket or Stash (both paid), or Karing (free)']],
     apps_tip: 'After importing, switch on "System proxy" or "VPN / TUN mode" in the app.',
-    history: 'Daily usage', history_sub: 'last 30 days', more: 'Ask for more', more_tip: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved, for this period only (until the next reset).',
+    history: 'Daily usage', history_sub: 'last 30 days', more: 'Ask for more', more_tip: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved, for this period only (until the next reset).', more_tip_nr: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved. This account has no monthly reset: the extra stays until the admin resets the usage.',
     add_gb: 'Extra GB', reason: 'Why (optional)', send: 'Send request', sent: 'Sent; waiting for the admin',
     pending: 'waiting', approved: 'approved', rejected: 'declined', req_none: 'No requests yet.',
     invites: 'Invite friends', invites_tip: 'Share part of your quota. As soon as a friend registers, your monthly quota drops by their share until their account expires or is deleted; what they use only comes out of that share. You can revoke a code nobody has used yet; taking a share back from someone who already registered needs the admin. You always keep at least 1 GB.',
@@ -66,7 +66,7 @@ const T = {
     notice: 'Notice from the admin', paused_quota: 'This period\u2019s quota is used up, so the account is paused. ', q_ask: 'You can ask for more below. ', q_wait: 'It resumes by itself after the reset on {date}.', q_admin: 'This account does not reset by itself; ask the admin.',
     extra: 'Top-up this period', first_use: '{n} days after first use', asked: ' (asked for {n} GB)', inv_copied: 'Sign-up link copied; your friend just opens it', dev_limit: ' (at most {n} at once)',
     paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once{lim}; the account is paused for 10 minutes. Close the extra ones and it resumes by itself.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
-    expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.', slowed: 'This period\'s data is used up: slowed down to {mbps} Mbps until the next reset or more data.', capped: 'This account is limited to {mbps} Mbps.',
+    expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.', slowed: 'This period\'s data is used up: slowed down to {mbps} Mbps until the next reset or more data.', slowed_nr: 'The data is used up: slowed down to {mbps} Mbps. This account has no monthly reset; more data brings full speed back (ask below or ask the admin).', capped: 'This account is limited to {mbps} Mbps.',
     security: 'Account security', rotate: 'New subscription link', rotate_tip: 'Shared your link by mistake? Get a new one; the old link stops working at once. Re-import it on every device.',
     rotate_q: 'The old link stops working immediately and every device must re-import. Continue?', rotated: 'Done. Import the new link into your apps.',
     rotate_q_link: 'The address of this very page stops working too. Set a password above first if you have none, or make sure to save the new link. Continue?',
@@ -232,7 +232,7 @@ function statusAlerts(me, used, q) {
   else {
     const d = me.expire_at ? Math.ceil((me.expire_at * 1000 - Date.now()) / 864e5) : 0;
     if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: dateStr(me.expire_at)})));
-    if (me.throttled) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('slowed'), {mbps: me.limit_mbps})));
+    if (me.throttled) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t(me.reset_day ? 'slowed' : 'slowed_nr'), {mbps: me.limit_mbps})));
     else if (q != null && (q > 0 ? used / q : 1) >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
     if (me.speed_mbps && !me.throttled) out.push(h('div', {class: 'alert'}, icon('alert'), fill(t('capped'), {mbps: me.speed_mbps})));
   }
@@ -248,7 +248,7 @@ function requestsPanel() {
     h('b', {class: 'num'}, '+' + r.add_gb + ' GB' + (r.asked_gb ? t('asked').replace('{n}', r.asked_gb) : '')), h('span', {class: 'muted'}, fmt.time(r.created_at) + (r.reason ? ' · ' + r.reason : '') + (r.answer ? ' — ' + r.answer : '')),
     chip(r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn', t(r.status))))) : h('div', {class: 'muted m-tip'}, t('req_none'));
   return panel(t('more'), null, pend ? chip('warn', t('pending')) : null, h('div', {class: 'stack'},
-    h('p', {class: 'muted m-tip'}, t('more_tip')), h('div', {class: 'form-grid'}, field(t('add_gb'), f.gb), field(t('reason'), f.why)), h('div', null, b), list));
+    h('p', {class: 'muted m-tip'}, t(me.reset_day ? 'more_tip' : 'more_tip_nr')), h('div', {class: 'form-grid'}, field(t('add_gb'), f.gb), field(t('reason'), f.why)), h('div', null, b), list));
 }
 
 function invitesPanel() {

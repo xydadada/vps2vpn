@@ -221,7 +221,11 @@ def handle_sync(s, body, base_url=''):
                 db.delete_user(u['id'])
                 del mine[rid]
                 changed = True
-        if s['node_master'] != master or (master_id and s['node_master_id'] != master_id):
+        if body.get('release') is True and not wanted:
+            # the main server removed this one: nothing of it is left here, so this server is free again
+            if s['node_master'] or s['node_master_id']:
+                db.set_settings(node_master='', node_master_id='')
+        elif s['node_master'] != master or (master_id and s['node_master_id'] != master_id):
             db.set_settings(node_master=master, node_master_id=master_id or s['node_master_id'])
         idmap = {str(rid): u['id'] for rid, u in mine.items()}
         traffic = dict(gone, **{str(rid): [u['used_up'], u['used_down']] for rid, u in mine.items()})
@@ -676,10 +680,28 @@ def add_server(code, name=''):
     return server
 
 
-def remove_server(sid):
-    with _lock:
-        db.set_settings(servers=[x for x in db.settings()['servers'] if x['id'] != sid])
-        db.forget_server(sid)
+def remove_server(sid, log=print):
+    """Take a joined server out. It is told first, like a sync with no accounts and a release mark: the accounts
+    this server sent it stop working there at once, it no longer counts as managed, and their last traffic is
+    billed here. Returns True when that worked. An unreachable server keeps those accounts until its own panel
+    gets a new join code ("New join code" deletes them); the panel says so."""
+    released = False
+    with _round_lock:              # no sync round may send the accounts back after the release
+        s = db.settings()
+        srv = next((dict(x) for x in s['servers'] if x['id'] == sid), None)
+        if srv:
+            try:
+                ans, got_pin = _request(srv, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
+                                              'users': [], 'release': True}, timeout=8)
+                with _lock, db.transaction():
+                    _apply_sync_answer(srv, ans, got_pin, log)
+                released = True
+            except (SyncError, OverflowError) as e:
+                log('server %s was not told it is removed: %s' % (srv.get('name', ''), e))
+        with _lock:
+            db.set_settings(servers=[x for x in db.settings()['servers'] if x['id'] != sid])
+            db.forget_server(sid)
+    return released
 
 
 def update_server(sid, **kv):
