@@ -248,6 +248,7 @@ DEFAULTS = {
     'node_master_id': '',       # ...and its identity: a second, different main server is refused
     'install_id': '',           # random identity of this install (sent to nodes as the main server's id)
     'servers': [],              # main server: [{id, name, url, key, pin, info, idmap, last_ok, error, rate}]
+    'servers_leaving': [],      # removed but not told yet: [{id, name, url, key, pin, idmap, seen, rate, removed_at, error}]
     'traffic_rate': 1.0,        # this server's traffic counts this many times against quotas (joined: per server)
 }
 
@@ -1011,6 +1012,8 @@ def import_all(data):
     _check_import_sign_in(keep)
     if 'servers' in keep:
         _check_import_servers(keep['servers'])
+    if 'servers_leaving' in keep:
+        _check_import_servers(keep['servers_leaving'])
     if 'requests' in data and not isinstance(data['requests'], list):
         raise ValueError('backup requests must be a list')
     for i, r in enumerate(data.get('requests', []), 1):

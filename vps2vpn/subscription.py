@@ -71,14 +71,15 @@ def nodes(s, u):
     from . import aicheck, cluster, cores, shaper
     # a slowed-down account gets only the servers that hold it to its speed: elsewhere it is switched off
     slowed = bool(u.get('throttled')) and not u.get('remote_id')
-    main_label = rate_label(s['node_name'] or 'vps2vpn', float(s.get('traffic_rate', 1))
-                            if db.valid_rate(s.get('traffic_rate', 1)) else 1.0)
+    main_rate = float(s.get('traffic_rate', 1)) if db.valid_rate(s.get('traffic_rate', 1)) else 1.0
+    main_label = rate_label(s['node_name'] or 'vps2vpn', main_rate)
     out = []
     if db.allowed_on(u, db.MAIN_SERVER) and not (slowed and not cores.can_slow_here(s)):
         out = _ordered(s, server_nodes(dict(s, hy2_hop=system.hopping_listed(s), shaping=shaper.active()),
                                        tls_info(s), main_label, u['id'], u))
     for n in out:
         n['ai_score'] = aicheck.score(aicheck.latest())
+        n['rate'] = main_rate
     seen_labels = {main_label}
     for x in s.get('servers') or []:
         info, lid = x.get('info'), (x.get('idmap') or {}).get(str(u['id']))
@@ -95,6 +96,7 @@ def nodes(s, u):
         more = server_nodes(info, info.get('tls') or {'sni': info['public_host'], 'pin': '', 'pem': ''}, label, lid, u)
         for n in more:
             n['ai_score'] = info.get('ai_score', -1)
+            n['rate'] = cluster.server_rate(x)
         out += _ordered(s, more)
     if s.get('ipv4_only'):            # the old panel's ".ipv4.yaml" link
         out = [n for n in out if ':' not in n['server']]
@@ -117,6 +119,17 @@ def server_groups(ns):
             groups.append((n['group'], []))
         groups[-1][1].append(n['name'])
     return groups
+
+
+def auto_servers(ns, per):
+    """Server labels "Auto" may switch to. Not one whose traffic counts more than once (x2, x5): "Auto" picks by
+    speed alone, and the member would burn quota several times as fast without ever choosing that server. It
+    stays in the server list, with its rate in its name. When every server costs more, all of them."""
+    rate = {}
+    for n in ns:
+        rate.setdefault(n['group'], n.get('rate', 1))
+    cheap = [label for label, _ in per if rate.get(label, 1) <= 1]
+    return cheap or [label for label, _ in per]
 
 
 def ai_servers(ns, per):
@@ -302,7 +315,7 @@ def clash(s, u, base_url):
     many = len(per) > 1
     if pn:
         auto_group = {'name': g['auto'], 'type': 'fallback' if not many else 'url-test',
-                      'proxies': pn if not many else [x[0] for x in per], 'url': 'https://www.gstatic.com/generate_204',
+                      'proxies': pn if not many else auto_servers(ns, per), 'url': 'https://www.gstatic.com/generate_204',
                       'interval': 300, 'lazy': True, **({'tolerance': 80} if many else {})}
     else:
         # Disabled accounts carry no proxies; keep a valid non-empty group so mihomo still loads Subscription-Userinfo.
@@ -453,8 +466,10 @@ def singbox(s, u, base_url):
     per = server_groups(ns)
     many = len(per) > 1
     if tags:
-        auto_group = {'type': 'urltest', 'tag': g['auto'], 'outbounds': tags, 'url': 'https://www.gstatic.com/generate_204',
-                      'interval': '5m', 'tolerance': 150}
+        allowed = set(auto_servers(ns, per)) if many else None
+        auto_group = {'type': 'urltest', 'tag': g['auto'],
+                      'outbounds': [t for t, n in zip(tags, ns) if allowed is None or n['group'] in allowed],
+                      'url': 'https://www.gstatic.com/generate_204', 'interval': '5m', 'tolerance': 150}
     else:
         auto_group = {'type': 'selector', 'tag': g['auto'], 'outbounds': ['direct'], 'default': 'direct'}
     groups = [{'type': 'selector', 'tag': g['proxy'], 'outbounds': [g['auto']] + ([x[0] for x in per] if many else []) + tags,
@@ -595,7 +610,9 @@ def shadowrocket(s, u, base_url, sub_url=''):
     groups = ['%s = select, %s' % (g['proxy'], ', '.join(([ph] if ph else []) + [g['auto']] +
                                                          ([p[0] for p in per] if many else []) + pn))]
     if many:
-        groups.append('%s = url-test, %s, %s, tolerance=80' % (g['auto'], ', '.join(p[0] for p in per), test))
+        allowed = set(auto_servers(ok, raw_per))
+        groups.append('%s = url-test, %s, %s, tolerance=80' % (
+            g['auto'], ', '.join(p[0] for p, (raw, _) in zip(per, raw_per) if raw in allowed), test))
         groups += ['%s = fallback, %s, %s' % (label, ', '.join(m), test) for label, m in per if m]
     else:
         groups.append('%s = fallback, %s, %s' % (g['auto'], ', '.join(pn) or 'REJECT', test))

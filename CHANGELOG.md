@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.40
+
+Business-logic review, second part (docs/logic-review.md, L-09..L-12).
+业务逻辑审查第二部分（docs/logic-review.md，L-09..L-12）。
+
+- Removing a joined server that cannot be reached right now no longer forgets it. It leaves every subscription at once, and the panel keeps telling it (every 5 minutes, for up to 30 days) until it answers: then the accounts it got from here are deleted there and their last traffic is billed. The panel shows it as waiting, with a "Stop waiting" button; after 30 days a Telegram notice says what to do on that server.
+  移除一台暂时连不上的子服务器时，不再马上忘掉它。订阅里马上没有它，面板会继续通知它（每 5 分钟一次，最多 30 天），它一上线就删掉从这里同步过去的账号，并记上最后用的流量。面板上显示「等它上线」，有「不等了，直接删」按钮；30 天后发一次 Telegram 提示，告诉你在那台上怎么做。
+- "Auto" no longer switches to a server whose traffic counts more than once (×2, ×5): members burned quota several times as fast without choosing it. Such a server stays in the list with its rate in its name; when every server costs more, "Auto" uses them all. Clash, sing-box and Shadowrocket subscriptions.
+  「自动选择」不再切到流量按多倍计的服务器（×2、×5）：以前会员没选过它，却会用掉几倍的流量。这样的服务器仍在列表里，名字带倍率；所有服务器都超过 1 倍时，「自动选择」照常全用。Clash、sing-box、小火箭三种订阅都改了。
+- The IP-change notice no longer says apps pick up the new address by themselves: without a domain, the subscription links name the old IP, so everyone needs their new link. A joined server's notice says the main server handles it. Changing the server address in Settings says the same.
+  服务器 IP 变了以后的通知不再说「软件会自己更新」：没有域名时订阅链接里写的是旧 IP，要把新链接重新发给每个人。子服务器的通知会说「主服务器会自己处理」。在设置里手动改服务器地址时也有同样的提示。
+- Pasted values: a join code with line breaks or invisible characters (zero-width space, BOM) is accepted; an obfuscation password with spaces, line breaks, commas or invisible characters is refused with the reason (it used to be saved, and Hysteria 2 then failed while Reality still worked).
+  粘贴的值：加入码里带换行或看不见的字符（零宽空格、BOM）也能用；混淆密码带空格、换行、逗号或看不见的字符时会被拒绝并说明原因（以前会原样保存，结果 Hysteria 2 连不上，Reality 却照常能用）。
+
 ## 0.2.39
 
 Tenth outside review (round 11, server part S11-01..03).

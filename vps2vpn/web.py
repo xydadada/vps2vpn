@@ -943,7 +943,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             d = self.body_json()
             return self.refused(lambda: members.decide(int(m.group(1)), m.group(2) == 'approve', d.get('add_gb'),
                                                        d.get('answer', '')), after=lambda: (jobs.enforce(), apply_async()))
-        m = re.fullmatch(r'servers/([0-9a-f]{8})/(remove|save|sync)', api)
+        m = re.fullmatch(r'servers/([0-9a-f]{8})/(remove|save|sync|forget)', api)
         if m:
             return self.api_server_action(m.group(1), m.group(2)) if method == 'POST' else self.json({'error': 'POST only'}, 405)
         routes = {
@@ -1274,7 +1274,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             row['online'] = (online or {}).get(u['id'])
             users.append(row)
         public = {k: v for k, v in s.items() if k not in ('admin_hash', 'reality_private_key', 'stats_secret', 'tg_token',
-                                                           'node_key', 'servers', 'server_month', 'admin_totp',
+                                                           'node_key', 'servers', 'servers_leaving', 'server_month', 'admin_totp',
                                                            'line_reports')}
         public['totp_on'] = bool(s['admin_totp'])
         public['tg_ready'] = bool(s['tg_token'] and s['tg_chat'] and s.get('tg_verified') is True)
@@ -1600,7 +1600,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_servers(self, method, s):
         if method != 'POST':
             return self.json({'servers': cluster.view(s), 'join_code': cluster.join_code(s, self.base_url(s)),
-                              'node_master': s['node_master']})
+                              'node_master': s['node_master'], 'leaving': cluster.leaving_view(s)})
         d = self.body_json()
         try:
             x = cluster.add_server(str(d.get('code', '')), str(d.get('name', '')).strip())
@@ -1610,11 +1610,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.json({'ok': True, 'id': x['id']})
 
     def api_server_action(self, sid, action):
+        if action == 'forget':
+            if not cluster.forget_leaving(sid):
+                return self.json({'error': 'no such server'}, 404)
+            jobs.log('removed server %s: no longer waiting to tell it' % sid)
+            return self.json({'ok': True})
         if not any(x['id'] == sid for x in db.settings()['servers']):
             return self.json({'error': 'no such server'}, 404)
         if action == 'remove':
             released = cluster.remove_server(sid, jobs.log)
-            jobs.log('server removed%s' % ('' if released else ' (it could not be told; its accounts still work there)'))
+            jobs.log('server removed%s' % ('' if released else ' (unreachable: it is told when it answers again)'))
             return self.json({'ok': True, 'released': released, 'servers': cluster.view(db.settings())})
         elif action == 'save':
             d = self.body_json()
@@ -2281,10 +2286,15 @@ def validate_settings(d, s):
             return str(e)
         out['hy2_hop_range'] = '%d-%d' % (a, b)
     if 'hy2_obfs' in d:
-        v = str(d['hy2_obfs'])
+        v = str(d['hy2_obfs']).strip()
         if v == 'random':
             v = secure.token(12)
-        out['hy2_obfs'] = v[:64]
+        # It goes into every subscription and share link: a pasted line break or invisible character would make
+        # the server and the apps disagree (Hysteria 2 then fails while Reality still works), a comma would cut
+        # Shadowrocket's line. Refused, with the reason, instead of saved.
+        if v and not re.fullmatch(r'[A-Za-z0-9._~@%+=^-]{1,64}', v):
+            return 'obfuscation password: 1-64 letters, digits or . _ ~ @ % + = ^ -, no spaces'
+        out['hy2_obfs'] = v
     if 'hy2_masquerade' in d:
         v = str(d['hy2_masquerade']).strip()
         if not re.fullmatch(r'https://[A-Za-z0-9.-]+(/\S*)?', v):

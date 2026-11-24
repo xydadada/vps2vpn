@@ -780,8 +780,19 @@ class IpWatch:
         certs.ensure_self_signed(now)
         cores.apply(force=True)
         log('public IP changed %s -> %s; subscriptions now use the new address' % (host, now))
-        notify.send('IP changed %s -> %s. Apps pick it up on their next subscription update. / 服务器 IP 变了，'
-                    '订阅已自动改成新地址。' % (host, now), key='ip-' + now, every=86400)
+        if s['node_master']:
+            # a joined server: people use the main server's links, which pick up the new address at its next sync
+            text = ('IP changed %s -> %s. The main server picks it up within a minute; apps get it at their next '
+                    'subscription update. / 服务器 IP 变了（%s → %s）。主服务器一分钟内会拿到新地址，大家的软件下次更新订阅时'
+                    '就会用新地址。' % (host, now, host, now))
+        else:
+            # the subscription links themselves name the old IP: apps cannot fetch the new subscription at all
+            text = ('IP changed %s -> %s. Subscriptions now use it, but every subscription link and member page link '
+                    'still names the old IP, so apps cannot fetch the update: send everyone their new link (Users page). '
+                    'A domain avoids this. / 服务器 IP 变了（%s → %s），订阅内容已改成新地址。但大家手里的订阅链接和会员页'
+                    '地址写的还是旧 IP，软件拉不到新订阅：要把新链接重新发给每个人（面板「用户」页复制）。用域名就不会这样。'
+                    % (host, now, host, now))
+        notify.send(text, key='ip-' + now, every=86400)
         self.seen = None
         return now
 

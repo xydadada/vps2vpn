@@ -39,6 +39,9 @@ _lock = threading.Lock()
 _node_lock = threading.Lock()
 _round_lock = threading.Lock()
 _generation = [0]          # bumped by a restore: sync answers asked for before it belong to other data
+LEAVE_DAYS = 30            # a removed server that could not be told is retried this long
+LEAVE_RETRY = 300          # seconds between tries (each one may wait 8 s for an unreachable server)
+_leave_next = {}           # server id -> monotonic time of its next try
 
 
 @contextlib.contextmanager
@@ -84,7 +87,8 @@ def join_code(s, base_url):
 
 
 def parse_join_code(code):
-    code = (code or '').strip()
+    # a code pasted from a chat or a terminal can be wrapped or carry invisible characters (zero-width space, BOM)
+    code = re.sub(r'[\s\u200b-\u200d\u2060\ufeff]+', '', code or '')
     if not code.startswith('v2v1.'):
         raise ValueError('not a vps2vpn join code')
     try:
@@ -242,7 +246,9 @@ def handle_sync(s, body, base_url=''):
 
 # --- main-server side ---------------------------------------------------------------------
 class SyncError(RuntimeError):
-    pass
+    def __init__(self, msg, status=0):
+        super().__init__(msg)
+        self.status = status       # the node's HTTP answer, 0 when it was not reached
 
 
 def _resolve_public_node_targets(host, port):
@@ -407,7 +413,7 @@ def _request(server, body, timeout=15):
                 why = response_body.get('error') if isinstance(response_body, dict) else None
                 if not isinstance(why, str) or not why:
                     why = data[:120].decode('utf-8', 'replace')
-                raise SyncError('node answered %d: %s' % (r.status, why[:200]))
+                raise SyncError('node answered %d: %s' % (r.status, why[:200]), r.status)
             return _validate_sync_answer(json.loads(data)), got
         except ssl.SSLError as e:
             if attempt == 'public':
@@ -549,6 +555,72 @@ def sync_one(server, s=None, log=print):
 def sync_all(log=print):
     with _round_lock:          # one round at a time: answers are applied in the order they were asked for
         _sync_all(log)
+        _release_leaving(log)
+
+
+def _release_body(s):
+    return {'master': s['node_name'] or 'main', 'master_id': s['install_id'], 'users': [], 'release': True}
+
+
+def _freed_there(e):
+    """403: its join code was renewed there, which deletes our accounts. 409: another main server took it
+    over, and its first sync replaced our accounts. Either way nothing of ours is left to delete."""
+    return isinstance(e, SyncError) and e.status in (403, 409)
+
+
+def _release_leaving(log=print):
+    """Tell each removed server that could not be told at the time. Until it answers it keeps serving the accounts
+    it got from here, unbilled; when it answers, their last traffic is billed like any sync."""
+    with _lock:
+        s = db.settings()
+        now = time.monotonic()
+        todo = [dict(x) for x in s['servers_leaving'] if now >= _leave_next.get(x['id'], 0)]
+        if not todo:
+            return
+        gen, body = _generation[0], _release_body(s)
+    alerts = []
+    for rec in todo:
+        _leave_next[rec['id']] = time.monotonic() + LEAVE_RETRY
+        ans, got_pin, err = None, '', None
+        try:
+            ans, got_pin = _request(rec, body, timeout=8)
+        except SyncError as e:
+            err = e
+        with _lock:
+            if _generation[0] != gen:
+                return
+            cur = db.settings()['servers_leaving']
+            target = next((x for x in cur if x['id'] == rec['id'] and x.get('key') == rec.get('key')), None)
+            if target is None:
+                continue                    # "do not wait" was pressed meanwhile
+            rest = [x for x in cur if x is not target]
+            if err is None:
+                try:
+                    with db.transaction():
+                        _apply_sync_answer(target, ans, got_pin, log)
+                        db.set_settings(servers_leaving=rest)
+                    _leave_next.pop(rec['id'], None)
+                    log('removed server %s was told: the accounts it got from here are deleted there' % rec['name'])
+                    continue
+                except (SyncError, OverflowError) as e:
+                    err = e
+            if _freed_there(err):
+                db.set_settings(servers_leaving=rest)
+                _leave_next.pop(rec['id'], None)
+                log('removed server %s is already free (%s)' % (rec['name'], err))
+            elif time.time() - (target.get('removed_at') or 0) > LEAVE_DAYS * 86400:
+                db.set_settings(servers_leaving=rest)
+                _leave_next.pop(rec['id'], None)
+                log('removed server %s never answered in %d days; no longer trying' % (rec['name'], LEAVE_DAYS))
+                alerts.append(('server %s was removed %d days ago and never answered: the accounts it got from here '
+                               'may still work there. On its own panel press "New join code". / 子服务器 %s 移除 %d 天了'
+                               '一直连不上，没能通知它删掉账号：从这里同步过去的账号在那边可能还能用。请到那台的面板「多服务器」页'
+                               '点「换一个加入码」。' % (rec['name'], LEAVE_DAYS, rec['name'], LEAVE_DAYS),
+                               'leave-' + rec['id']))
+            else:
+                target['error'] = str(err)[:200]
+                db.set_settings(servers_leaving=cur)
+    _alert(alerts)
 
 
 def _sync_all(log):
@@ -676,32 +748,64 @@ def add_server(code, name=''):
         if any(x['url'] == j['url'] for x in s2['servers']):
             raise ValueError('that server is already added')
         server['name'] = unique_name(name or j['name'], s2)
-        db.set_settings(servers=s2['servers'] + [server])
+        db.set_settings(servers=s2['servers'] + [server],
+                        servers_leaving=[x for x in s2['servers_leaving'] if x['url'] != j['url']])
     return server
 
 
 def remove_server(sid, log=print):
     """Take a joined server out. It is told first, like a sync with no accounts and a release mark: the accounts
     this server sent it stop working there at once, it no longer counts as managed, and their last traffic is
-    billed here. Returns True when that worked. An unreachable server keeps those accounts until its own panel
-    gets a new join code ("New join code" deletes them); the panel says so."""
-    released = False
+    billed here. Returns True when that worked. A server that cannot be reached right now (restarting, a network
+    blip) leaves subscriptions at once but is kept on a waiting list: every sync round tells it again, for up to
+    LEAVE_DAYS, and the panel shows it until then."""
+    released, why = False, ''
     with _round_lock:              # no sync round may send the accounts back after the release
         s = db.settings()
         srv = next((dict(x) for x in s['servers'] if x['id'] == sid), None)
         if srv:
             try:
-                ans, got_pin = _request(srv, {'master': s['node_name'] or 'main', 'master_id': s['install_id'],
-                                              'users': [], 'release': True}, timeout=8)
+                ans, got_pin = _request(srv, _release_body(s), timeout=8)
                 with _lock, db.transaction():
                     _apply_sync_answer(srv, ans, got_pin, log)
                 released = True
             except (SyncError, OverflowError) as e:
-                log('server %s was not told it is removed: %s' % (srv.get('name', ''), e))
+                if _freed_there(e):
+                    released = True
+                else:
+                    why = str(e)[:200]
+                    log('server %s was not told it is removed (%s); trying again until it answers' % (srv['name'], e))
         with _lock:
-            db.set_settings(servers=[x for x in db.settings()['servers'] if x['id'] != sid])
+            cur = db.settings()
+            changes = {'servers': [x for x in cur['servers'] if x['id'] != sid]}
+            if srv and not released:
+                keep = {k: srv[k] for k in ('id', 'name', 'url', 'key', 'pin', 'idmap', 'seen', 'rate') if k in srv}
+                keep.update(removed_at=int(time.time()), error=why)
+                changes['servers_leaving'] = [x for x in cur['servers_leaving'] if x['id'] != sid] + [keep]
+                _leave_next[sid] = time.monotonic() + LEAVE_RETRY
+            db.set_settings(**changes)
             db.forget_server(sid)
     return released
+
+
+def forget_leaving(sid):
+    """"Do not wait": stop telling a removed server. Its copies of the accounts keep working until its own panel
+    gets a new join code."""
+    with _lock:
+        cur = db.settings()['servers_leaving']
+        if not any(x['id'] == sid for x in cur):
+            return False
+        db.set_settings(servers_leaving=[x for x in cur if x['id'] != sid])
+        _leave_next.pop(sid, None)
+        return True
+
+
+def leaving_view(s):
+    now = time.time()
+    return [{'id': x['id'], 'name': x['name'], 'host': urllib.parse.urlsplit(x['url']).hostname or '',
+             'removed_at': x.get('removed_at', 0), 'error': x.get('error', ''),
+             'days_left': max(0, LEAVE_DAYS - int((now - (x.get('removed_at') or now)) // 86400))}
+            for x in s.get('servers_leaving') or []]
 
 
 def update_server(sid, **kv):

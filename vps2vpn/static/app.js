@@ -6,7 +6,7 @@ const T = {
     art_h: '一台服务器，\n一个属于你的 VPN。', art_p: '三种协议随时切换，订阅一键导入 Clash 和小火箭，流量、到期、证书、告警全自动。',
     art_1: 'VLESS + REALITY · Hysteria 2 · TUIC v5', art_2: '自动证书、自动调优、自动备份', art_3: '一键体检，出问题告诉你怎么修',
     admin: '管理员账号', username: '用户名', password: '密码（至少 8 位）', password2: '再输一次密码',
-    first_user: '第一个使用者的名字', server_addr: '服务器地址（IP 或域名，已自动识别）',
+    first_user: '第一个使用者的名字', server_addr: '服务器地址（IP 或域名，已自动识别；改了以后订阅链接也会变，要把新链接重新发给大家）',
     next: '下一步', back: '上一步', build: '一键建好 VPN', building: '正在搭建，大约 10 秒…',
     advanced: '高级选项（不懂就别动）', lang: '语言 / Language',
     time_zone: '每月重置按哪个时区', tz_server: '服务器自己的时间',
@@ -70,7 +70,7 @@ const T = {
     servers: '已加入的服务器', servers_tip: '只有一台服务器？这一页不用管。有第二台（比如新加坡 + 美国）时：在另一台的面板复制它的「加入码」，贴到下面，点「添加服务器」。之后每个人的订阅里会同时有两台的节点，流量算在同一个额度里，用户只在这台管理。',
     join_code: '本机加入码', join_tip: '只有反过来、要让这台被另一台管理时才用：把这串字复制到另一台面板的「多服务器」页面。它相当于这台服务器的钥匙，别发给别人。', reset_key: '换一个加入码',
     reset_key_tip: '旧加入码立刻失效，主服务器那边要删掉本机重新添加。', add_server: '添加服务器', paste_code: '粘贴子服务器的加入码', server_name: '显示名字（如「东京」）',
-    no_servers: '还没有加入其它服务器。', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。面板会马上通知那台服务器删掉从这里同步过去的账号，并记上它们最后用的流量。', remove_unreached: '已移除，但那台服务器连不上，没收到通知：从这里同步过去的账号在那边还能用。请到那台的面板「多服务器」页点「换一个加入码」，那些账号就会被删掉。',
+    no_servers: '还没有加入其它服务器。', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。面板会马上通知那台服务器删掉从这里同步过去的账号，并记上它们最后用的流量。', remove_unreached: '已移除。那台服务器现在连不上，面板会每隔几分钟再通知它，它一上线就删掉从这里同步过去的账号（最多等 30 天）。', leaving: '等它上线', leaving_wait: '已移除，连不上：等它上线后通知它删掉从这里同步过去的账号（最多再等 {d} 天）', leaving_forget: '不等了，直接删', leaving_forget_tip: '面板不再通知那台服务器。从这里同步过去的账号在那边会一直能用，流量也不再记到这里，除非到那台的面板「多服务器」页点「换一个加入码」。',
     client_upd: 'vps2vpn 客户端更新', client_ver: '最新版本号（留空 = 按服务器上的安装包自动判断）', client_url: '下载链接（留空 = 用服务器上的安装包）', client_notes: '更新说明（显示给大家看，可不填）',
     client_tip: '面板会自动从 GitHub 取最新的 vps2vpn 客户端（带签名的 Windows 安装包和安卓 APK），放进下面这个文件夹；用 vps2vpn 客户端（1.0.9 起）的人会在后台下载、校验签名，点一下就安装并重启。用 Clash Verge、FlClash、小火箭等其他软件的人不受影响，也收不到这个更新。也可以自己把安装包和同名 .sig 放进去，什么都不用填。',
     client_auto_update: '自动从 GitHub 获取最新客户端（只要带发布签名的）',
@@ -118,7 +118,7 @@ const T = {
     art_h: 'One server,\nyour own VPN.', art_p: 'Three protocols you can switch between, one-tap import into Clash and Shadowrocket, and quotas, expiry, certificates and alerts handled for you.',
     art_1: 'VLESS + REALITY · Hysteria 2 · TUIC v5', art_2: 'Automatic certificates, tuning and backups', art_3: 'One-click health check that tells you how to fix things',
     admin: 'Admin account', username: 'Username', password: 'Password (8+ characters)', password2: 'Repeat password',
-    first_user: 'Name of the first user', server_addr: 'Server address (IP or domain, detected automatically)',
+    first_user: 'Name of the first user', server_addr: 'Server address (IP or domain, detected automatically; changing it changes every subscription link, so send everyone the new one)',
     next: 'Next', back: 'Back', build: 'Build my VPN', building: 'Building, about 10 seconds…',
     advanced: 'Advanced (safe to skip)', lang: 'Language / 语言',
     time_zone: 'Time zone for monthly resets', tz_server: "The server's own clock",
@@ -182,7 +182,7 @@ const T = {
     servers: 'Joined servers', servers_tip: 'Only one server? You can ignore this page. With a second one (say Singapore + US): copy the other server\'s join code from its panel, paste it below and press Add server. Every subscription then lists both servers, traffic counts against the same quota, and users are managed here only.',
     join_code: 'Join code of this server', join_tip: 'Only for the other way round, when another server should manage this one: paste this code into that server\'s Servers page. It is a key to this server: keep it private.', reset_key: 'New join code',
     reset_key_tip: 'The old code stops working at once; remove and re-add this server on the main server.', add_server: 'Add server', paste_code: 'Paste the join code of the node', server_name: 'Display name (e.g. "Tokyo")',
-    no_servers: 'No other servers yet.', last_sync: 'synced', sync_now: 'Sync now', remove: 'Remove', remove_tip: 'Its entries disappear from subscriptions. The panel tells that server at once to delete the accounts it got from here, and bills their last traffic.', remove_unreached: 'Removed, but that server could not be reached: the accounts it got from here still work there. On its own panel (Servers page) press "New join code" to delete them.',
+    no_servers: 'No other servers yet.', last_sync: 'synced', sync_now: 'Sync now', remove: 'Remove', remove_tip: 'Its entries disappear from subscriptions. The panel tells that server at once to delete the accounts it got from here, and bills their last traffic.', remove_unreached: 'Removed. That server cannot be reached right now: the panel tells it again every few minutes and it deletes the accounts it got from here as soon as it answers (waiting up to 30 days).', leaving: 'Waiting for it', leaving_wait: 'Removed, unreachable: it is told to delete the accounts it got from here once it answers (up to {d} more days)', leaving_forget: 'Stop waiting', leaving_forget_tip: 'The panel stops telling that server. The accounts it got from here keep working there, unbilled, until "New join code" is pressed on its own panel (Servers page).',
     client_upd: 'vps2vpn app updates', client_ver: 'Latest version (empty = from the installers on the server)', client_url: 'Download link (empty = the installers on the server)', client_notes: 'What is new (shown to everyone, optional)',
     client_tip: 'The panel fetches the newest vps2vpn app from GitHub (the signed Windows setup and Android APK) into the folder below. From 1.0.9 the vps2vpn app downloads it in the background, checks its signature and installs it with one tap; other apps (Clash Verge, FlClash, Shadowrocket...) are not affected and get nothing from here. You can also put installers and their .sig files there yourself and leave these empty.',
     client_auto_update: 'Fetch the newest app from GitHub (signed releases only)',
@@ -1052,7 +1052,7 @@ async function drawServers() {
   const code = h('input', {type: 'text', placeholder: 'v2v1.…', autocomplete: 'off'}), name = h('input', {type: 'text', maxlength: '24'});
   const add = h('button', {class: 'btn primary'}, icon('plus'), t('add_server'));
   add.onclick = async () => { add.disabled = true; try { await api('servers', {code: code.value.trim(), name: name.value.trim()}); toast(t('saved')); await load(); drawServers(); } catch (e) { err(e); add.disabled = false; } };
-  const act = async (btn, id, a, body) => { if (btn) btn.disabled = true; try { const r = await api(`servers/${id}/${a}`, body || {}); if (r && r.released === false) toast(t('remove_unreached'), 'err'); await load(); drawServers(); } catch (e) { err(e); if (btn) btn.disabled = false; } };
+  const act = async (btn, id, a, body) => { if (btn) btn.disabled = true; try { const r = await api(`servers/${id}/${a}`, body || {}); if (r && r.released === false) toast(t('remove_unreached')); await load(); drawServers(); } catch (e) { err(e); if (btn) btn.disabled = false; } };
   const rows = sv.servers.map(x => h('div', {class: 'tl-row'},
     h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + x.protocols.join(' / ') + ' · ' + x.users + ' ' + t('users_n') +
       (x.health && x.health.mem_total ? ' · ' + t('mem') + ' ' + Math.round(x.health.mem_used * 100 / x.health.mem_total) + '%' : '') +
@@ -1064,6 +1064,10 @@ async function drawServers() {
       h('button', {class: 'btn sm', title: t('sync_now'), 'aria-label': t('sync_now'), onclick: e => act(e.currentTarget, x.id, 'sync')}, icon('refresh')),
       h('button', {class: 'btn sm', title: t(x.enabled ? 'srv_pause' : 'srv_resume'), 'aria-label': t(x.enabled ? 'srv_pause' : 'srv_resume'), onclick: e => act(e.currentTarget, x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
       h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x')))));
+  rows.push(...(sv.leaving || []).map(x => h('div', {class: 'tl-row'},
+    h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + t('leaving_wait').replace('{d}', x.days_left)),
+    h('span', {class: 'tl-acts'}, chip('warn', x.error ? x.error.slice(0, 60) : t('leaving')),
+      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('leaving_forget') + ' · ' + x.name, t('leaving_forget_tip'), {danger: true, confirm: t('leaving_forget')})) act(b, x.id, 'forget'); }}, t('leaving_forget'))))));
   const sm = S.data.server_month || {}, used = (sm.rx || 0) + (sm.tx || 0), cap = s.server_cap_gb * GB;
   const capIn = h('input', {type: 'number', min: '0', value: s.server_cap_gb || 0}), dayIn = h('input', {type: 'number', min: '1', max: '31', value: s.server_reset_day || 1});
   const ring = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, cap ? fmt.pct(used / cap) : '∞'), h('small', null, sm.period || '')));
