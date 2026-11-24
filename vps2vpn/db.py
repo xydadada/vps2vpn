@@ -237,6 +237,7 @@ DEFAULTS = {
     'client_version': '',
     'client_url': '',
     'client_auto_update': True,  # fetch the newest signed client from GitHub into the client folder
+    'client_traffic_rank': False,  # our app may show live traffic per app; sent to it as features.traffic_rank
     'client_notes': '',         # {'hy2': {'<user id>': [time, host]}} lines the apps say they cannot reach         # {'period': 'YYYY-MM', 'rx': bytes, 'tx': bytes, 'last_rx':..., 'last_tx':...}
     # Watching
     'monitor_enabled': True,    # probe GitHub/YouTube/ChatGPT/Google/X from the server every 5 minutes

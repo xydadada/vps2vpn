@@ -1886,6 +1886,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'limit_mbps': db.limit_mbps(u),
             'ai': ai_view(aicheck.latest()),
             'client': client_info(s, dl_url),
+            # switches for our own app; an app that finds no key keeps that feature off, so older panels are safe
+            'features': {'traffic_rank': s.get('client_traffic_rank') is True},   # a hand-edited backup's "false" stays off
         }
 
     def api_password(self, method, s):
@@ -2128,7 +2130,8 @@ def validate_settings(d, s):
     out = {}
     bools = ('reality_enabled', 'hy2_enabled', 'tuic_enabled', 'hy2_hop', 'block_ads', 'block_bt', 'ai_group',
              'tune_network', 'ipv6_nodes', 'tcp_first', 'member_enabled', 'member_invites', 'member_requests', 'monitor_enabled',
-             'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause', 'client_auto_update')
+             'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause', 'client_auto_update',
+             'client_traffic_rank')
     for k in bools:
         if k in d:
             try:

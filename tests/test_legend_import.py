@@ -118,6 +118,9 @@ class LegendImport(unittest.TestCase):
         p = lambda n: os.path.join(cls.dir, n)
         cls.paths = {'base': p('base.json'), 'settings': p('settings.json'), 'usage': p('usage.sqlite3'),
                      'template': p('template.json'), 'out': p('merged.json')}
+        # in a full run the database is shared and may still hold an earlier test's accounts
+        for u in db.users():
+            db.delete_user(u['id'])
         # the new panel already has one account of its own; it must survive untouched
         cls.mine = db.add_user('owner-phone', 0)
         db.set_settings(custom_direct=['example.cn'])

@@ -171,5 +171,47 @@ class Landing(tu.Base):
         self.assertTrue(b)
 
 
+class TrafficRankSwitch(Server):
+    """The app shows its per-app traffic ranking only when the admin turns it on; the member API says so in
+    features.traffic_rank, for link pages and the member centre alike."""
+    def setUp(self):
+        super().setUp()
+        uid = db.add_user('tia', 20)
+        db.update_user(uid, login_hash=secure.hash_password('tiapassword'))
+        self.base = '/s/%s/' % db.user(uid)['sub_token']
+
+    def features(self):
+        st, d = self.j('GET', self.base + 'api/me')
+        self.assertEqual(st, 200, d)
+        return d['features']
+
+    def test_off_by_default(self):
+        self.assertIs(db.settings()['client_traffic_rank'], False)
+        self.assertEqual(self.features(), {'traffic_rank': False})
+
+    def test_admin_switch_reaches_the_app(self):
+        changes = web.validate_settings({'client_traffic_rank': True}, db.settings())
+        self.assertEqual(changes, {'client_traffic_rank': True})
+        db.set_settings(**changes)
+        self.assertEqual(self.features(), {'traffic_rank': True})
+        st, _ = self.j('POST', '/mem/api/login', {'name': 'tia', 'password': 'tiapassword'})
+        self.assertEqual(st, 200)
+        st, d = self.j('GET', '/mem/api/me')
+        self.assertEqual((st, d['features']), (200, {'traffic_rank': True}))
+        db.set_settings(**web.validate_settings({'client_traffic_rank': 'false'}, db.settings()))
+        self.assertEqual(self.features(), {'traffic_rank': False})
+
+    def test_only_a_real_true_turns_it_on(self):
+        self.assertIsInstance(web.validate_settings({'client_traffic_rank': 'maybe'}, db.settings()), str)
+        db.set_settings(client_traffic_rank='false')          # e.g. from a hand-edited backup
+        self.assertEqual(self.features(), {'traffic_rank': False})
+
+    def test_admin_page_has_the_switch(self):
+        with open(os.path.join(ROOT, 'vps2vpn', 'static', 'app.js'), encoding='utf-8') as f:
+            js = f.read()
+        self.assertEqual(js.count("client_traffic_rank: '"), 2)             # Chinese and English labels
+        self.assertIn("saveSettings({client_traffic_rank: e.checked})", js)
+
+
 if __name__ == '__main__':
     unittest.main()

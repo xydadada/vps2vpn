@@ -74,6 +74,7 @@ const T = {
     client_upd: 'vps2vpn 客户端更新', client_ver: '最新版本号（留空 = 按服务器上的安装包自动判断）', client_url: '下载链接（留空 = 用服务器上的安装包）', client_notes: '更新说明（显示给大家看，可不填）',
     client_tip: '面板会自动从 GitHub 取最新的 vps2vpn 客户端（带签名的 Windows 安装包和安卓 APK），放进下面这个文件夹；大家的客户端（1.0.9 起）会在后台下载、校验签名，点一下就安装并重启。也可以自己把安装包和同名 .sig 放进去，什么都不用填。',
     client_auto_update: '自动从 GitHub 获取最新客户端（只要带发布签名的）',
+    client_traffic_rank: '在客户端里显示「流量排行」（每个应用实时用了多少流量）',
     client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`, client_unsigned: n => `缺少签名文件：${n}。App 只装带签名的安装包，请把 GitHub 发布页上同名的 .sig 文件一起放进来。`,
     renew: '服务器到期提醒', renew_at: '这台 VPS 哪天到期（续费日）', renew_note: '在哪里续费（例如 AWS Lightsail）',
     renew_tip: '填了以后，到期前 7 天、3 天、1 天和当天用 Telegram 提醒你，总览页也会提示。不填就不提醒。按月付费的话每次续费后改成下个月的日期。',
@@ -185,6 +186,7 @@ const T = {
     client_upd: 'vps2vpn app updates', client_ver: 'Latest version (empty = from the installers on the server)', client_url: 'Download link (empty = the installers on the server)', client_notes: 'What is new (shown to everyone, optional)',
     client_tip: 'The panel fetches the newest vps2vpn app from GitHub (the signed Windows setup and Android APK) into the folder below. From 1.0.9 the apps download it in the background, check its signature and install it with one tap. You can also put installers and their .sig files there yourself and leave these empty.',
     client_auto_update: 'Fetch the newest app from GitHub (signed releases only)',
+    client_traffic_rank: 'Show the traffic ranking in the app (live traffic per app)',
     client_found: (v, p) => `Installers found on the server: version ${v} (${p}); only people with a valid subscription link can download them.`, client_none: d => `No installers on the server yet. Put them in ${d}.`, client_unsigned: n => `Signature missing: ${n}. The app only installs signed installers; put the matching .sig file from the GitHub release next to it.`,
     renew: 'Renewal reminder', renew_at: 'Date this VPS must be renewed', renew_note: 'Where to renew (e.g. AWS Lightsail)',
     renew_tip: 'You get a Telegram reminder 7, 3 and 1 days before and on the day, and a note on the overview. Leave empty for no reminder.',
@@ -1228,6 +1230,7 @@ function clientPanel(s, inp) {
       h('div', {class: 'muted', style: 'font-size:12.5px;overflow-wrap:anywhere'}, found),
       f && f.unsigned && f.unsigned.length ? h('div', {class: 'alert warn', style: 'overflow-wrap:anywhere'}, icon('alert'), t('client_unsigned')(f.unsigned.join(', '))) : null,
       (() => { const e = h('input', {type: 'checkbox', checked: s.client_auto_update !== false}); e.onchange = () => saveSettings({client_auto_update: e.checked}); return check(t('client_auto_update'), e); })(),
+      (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_traffic_rank}); e.onchange = () => saveSettings({client_traffic_rank: e.checked}); return check(t('client_traffic_rank'), e); })(),
       h('div', {class: 'form-grid'}, field(t('client_ver'), inp('client_version')), field(t('client_url'), inp('client_url'))),
       field(t('client_notes'), inp('client_notes'))));
 }

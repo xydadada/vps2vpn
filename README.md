@@ -374,7 +374,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 - **风控观察**（只提醒、不自动封）：像扫描/当跳板、链接被很多人共用、大量发邮件时记一笔并发 Telegram。
 - **服务器月流量**和 **VPS 续费提醒**。
 - **多台服务器合成一个订阅**：见[多台服务器](#多台服务器)。
-- **vps2vpn 客户端更新**：面板每 6 小时自动从 GitHub 取最新的客户端（带签名的 Windows 安装包和安卓 APK）放进 `/var/lib/vps2vpn/client`，不用手动拷贝（设置 → 客户端更新里可以关掉；也可以自己把安装包连同同名 `.sig` 放进去）。客户端 1.0.9 起会在后台下载、校验签名，点一下「安装并重启」就升级；只接受带正确签名、且版本更新的安装包，所以就算面板被人动了手脚，也换不了安装包。
+- **vps2vpn 客户端更新**：面板每 6 小时自动从 GitHub 取最新的客户端（带签名的 Windows 安装包和安卓 APK）放进 `/var/lib/vps2vpn/client`，不用手动拷贝（设置 → 客户端更新里可以关掉；也可以自己把安装包连同同名 `.sig` 放进去）。同一块里还有「在客户端里显示流量排行」开关，默认关；打开后会员接口多返回 `"features": {"traffic_rank": true}`，客户端读到才显示每个应用的实时流量排行，老客户端不受影响。客户端 1.0.9 起会在后台下载、校验签名，点一下「安装并重启」就升级；只接受带正确签名、且版本更新的安装包，所以就算面板被人动了手脚，也换不了安装包。
 - 中文 / English，自动深色模式，手机上自动变成底部标签栏。
 - **两步验证（2FA）**、**登录记录**和「退出其它所有设备」。
 - 安全：PBKDF2 密码哈希、登录限速、HttpOnly + SameSite=Strict 会话、防跨站请求、严格 CSP、面板藏在随机路径下（直接访问端口只看到一个 nginx 404）。
@@ -383,7 +383,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 ## 实测（本项目的测试都是真程序真流量）
 
-`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_beginner_ui` —— 485 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
+`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_beginner_ui` —— 491 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
 
 `python tests/e2e_local.py <放官方程序的目录>` —— 在一台电脑上启动**真的** Xray、Hysteria 和 sing-box（TUIC）服务端，再用**真的** mihomo（Clash 内核）和 sing-box 客户端发流量，共 54 项检查：
 
@@ -519,7 +519,7 @@ Health & upkeep → Telegram alerts: create a bot with @BotFather, paste the tok
 
 ### Tested
 
-485 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
+491 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
 
 Standard-library Python panel: no Docker, no database server, no third-party scripts in the browser.
 

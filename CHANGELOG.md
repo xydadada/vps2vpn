@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.36
+
+A switch for the app's traffic ranking.
+客户端「流量排行」开关。
+
+- Settings → vps2vpn app updates has a new switch, "Show the traffic ranking in the app", off by default. When it is on, the member API (`<subscription link>/api/me`) also returns `"features": {"traffic_rank": true}`, and our app shows live traffic per app. Apps that do not know the field ignore it, and an app that does not find it keeps the ranking hidden.
+  设置 → vps2vpn 客户端更新 里新加一个开关「在客户端里显示流量排行」，默认关。打开后，会员接口（`<订阅链接>/api/me`）多返回 `"features": {"traffic_rank": true}`，我们的客户端就会显示每个应用实时用了多少流量。不认识这个字段的老客户端会忽略它；读不到这个字段的客户端不显示排行。
+
 ## 0.2.35
 
 Member page walkthrough (invites and top-up requests).
