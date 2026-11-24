@@ -407,6 +407,18 @@ class Installer(unittest.TestCase):
         with open(os.path.join(self.fix, 'curl.log')) as f:
             return f.read().split()
 
+    def test_panel_port_of_a_fresh_install(self):
+        for good in ('8443', '1', '65535'):
+            rc, out = self.sh('set -euo pipefail; check_panel_port %s; echo fine' % good)
+            self.assertEqual((rc, out.strip()), (0, 'fine'), good)
+        for bad in ('abc', '0', '65536', '8443x', '-1', '0000000008443'):
+            rc, out = self.sh('set -euo pipefail; check_panel_port %s; echo fine' % bad)
+            self.assertNotEqual(rc, 0, bad)
+            self.assertIn('V2V_PANEL_PORT', out)
+            self.assertNotIn('fine', out)
+        with open(INSTALL_SH, encoding='utf-8') as f:
+            self.assertIn('-m vps2vpn init --acme $auto $port |', f.read())
+
     def test_latest_release_is_verified(self):
         self.api('v9.9.9')
         self.release('v9.9.9', '9.9.9')

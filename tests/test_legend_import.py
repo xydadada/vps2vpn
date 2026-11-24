@@ -128,7 +128,13 @@ class LegendImport(unittest.TestCase):
             json.dump(db.export_all(), f)
         with open(cls.paths['settings'], 'w', encoding='utf-8') as f:
             json.dump({'base_url': 'https://sub.example.test', 'users': USERS,
-                       'legacy': {'hy_id': 'legacy', 'hy_password': 'old-shared'}}, f, ensure_ascii=False)
+                       'legacy': {'hy_id': 'legacy', 'hy_password': 'old-shared'},
+                       # what the old panel gained in 2026-11: per-node billing rates, relays, more nodes
+                       'nodes': {'jp': {'name': 'Japan'}, 'tw': {'name': 'Taiwan · 5.0x', 'billing_multiplier': 5.0},
+                                 'la': {'name': 'Los Angeles', 'billing_multiplier': 1},
+                                 'sg2': {'name': 'Singapore 2', 'billing_multiplier': 'fast'}},
+                       'relays': [{'id': 'cm-sg', 'entry': '198.51.100.20', 'target': 'sg'}],
+                       'telegram': {'token': 'x'}}, f, ensure_ascii=False)
         with open(cls.paths['template'], 'w', encoding='utf-8') as f:
             json.dump({'rules': RULES}, f, ensure_ascii=False)
         c = sqlite3.connect(cls.paths['usage'])
@@ -253,6 +259,23 @@ class LegendImport(unittest.TestCase):
         for text in ('UTC+8', 'legacy', 'TUIC', 'DOMAIN-KEYWORD', 'IP 规则', '某个分组', 'cdn.cn-site.com',
                      '部分节点', '导入了 6 个旧账号'):
             self.assertIn(text, r)
+
+    def test_report_names_nodes_rates_relays_and_unknown_fields(self):
+        r = self.report
+        self.assertIn('旧系统有 4 个节点', r)
+        self.assertIn('tw「Taiwan」以前按 5 倍计流量', r)            # the "· 5.0x" is the rate, not the name
+        self.assertNotIn('la「Los Angeles」以前按', r)                # 1x needs nothing
+        self.assertIn("sg2「Singapore 2」的计费倍率 'fast' 看不懂", r)
+        self.assertIn('1 条中转', r)
+        self.assertIn('https://sub.example.test', r)
+        self.assertIn('telegram', r)                                    # an unknown setting is named, not dropped
+        self.assertIn('tuic', r.lower())
+
+    def test_unknown_account_fields_are_named(self):
+        report = {'renamed': [], 'login_renamed': [], 'exempt': [], 'free_gb': [], 'updown': [], 'nodes': [],
+                  'orphans': [], 'chain': [], 'no_login': [], 'legacy': False, 'count': 1, 'time_zone': '',
+                  'user_unknown': [('device_limit', 3)]}
+        self.assertIn('device_limit（3 个账号）', li.describe(report, None, {}))
 
 
 def first_match(plan, domain):

@@ -65,6 +65,46 @@ class Problem(ValueError):
     pass
 
 
+# What this tool reads from the old settings.json. Anything else is named in the report, never dropped silently.
+USER_KEYS = {'id', 'remark', 'token', 'uuid', 'hy_password', 'tuic_uuid', 'tuic_password', 'total', 'expire',
+             'enabled', 'cycle_day', 'quota_overrun', 'created_at', 'quota_bonus', 'member_login', 'speed_policy',
+             'invited_by', 'invite_deduct', 'nodes'}
+TOP_KEYS = {'users', 'legacy', 'nodes', 'relays', 'base_url', 'settings'}
+RATE_SUFFIX = re.compile(r'\s*[·・•]\s*\d+(\.\d+)?\s*[x×]\s*$', re.I)     # "Taiwan · 5.0x" -> "Taiwan"
+
+
+def _old_nodes(legend):
+    """[(id, name, multiplier or None, bad value or None)] of the old panel's nodes (other servers). They are not
+    imported: each one joins the new panel on its own. Read from settings.json "nodes" (an object keyed by id, or
+    a list), also when it sits under a "settings" object."""
+    holders = [legend] + ([legend['settings']] if isinstance(legend.get('settings'), dict) else [])
+    out = []
+    for h in holders:
+        nodes = h.get('nodes')
+        items = (nodes.items() if isinstance(nodes, dict)
+                 else ((n.get('id'), n) for n in nodes if isinstance(n, dict)) if isinstance(nodes, list) else ())
+        for nid, n in items:
+            n = n if isinstance(n, dict) else {}
+            name = RATE_SUFFIX.sub('', str(n.get('name') or n.get('remark') or nid or '?')).strip()
+            m, bad = n.get('billing_multiplier'), None
+            if m is not None:
+                if type(m) in (int, float) and 0 <= m <= 100:
+                    m = float(m)
+                else:
+                    m, bad = None, n.get('billing_multiplier')
+            out.append((str(nid), name, m, bad))
+    return out
+
+
+def _old_relays(legend):
+    holders = [legend] + ([legend['settings']] if isinstance(legend.get('settings'), dict) else [])
+    n = 0
+    for h in holders:
+        r = h.get('relays')
+        n += len(r) if isinstance(r, (list, dict)) else (1 if r else 0)
+    return n
+
+
 def _whole(u, key, default=0):
     """A count, byte total or time from the old panel: a whole number >= 0. A missing key or JSON null is
     `default`; true/false, fractions and negative numbers are refused (they would be quietly turned into 1 or 0)."""
@@ -317,6 +357,18 @@ def import_users(base, legend, usage, now):
             if any(legend_deducting(c, now) for c in by_inviter.get(u['id'], ())):
                 report['chain'].append(u['invited_by'])
     report['count'] = len(new)
+    report['old_nodes'] = _old_nodes(legend)
+    report['relays'] = _old_relays(legend)
+    report['base_url'] = legend.get('base_url') if isinstance(legend.get('base_url'), str) else ''
+    report['top_unknown'] = sorted(k for k in legend if k not in TOP_KEYS)
+    if isinstance(legend.get('settings'), dict):
+        report['top_unknown'] += sorted('settings.' + k for k in legend['settings'] if k not in ('nodes', 'relays'))
+    unknown = {}
+    for u in old:
+        for k in u:
+            if k not in USER_KEYS:
+                unknown[k] = unknown.get(k, 0) + 1
+    report['user_unknown'] = sorted(unknown.items())
     out = dict(base)
     out['users'] = users + new
     # the old panel changed months at midnight Singapore time; keep that unless the new panel already chose a zone
@@ -525,6 +577,27 @@ def describe(report, rules_report, settings):
         lines.append('  · %s：它邀请的人已停用，但那人又邀请了别人；vps2vpn 会继续从 %s 扣这部分流量，旧系统不扣。' % (oid, oid))
     if report['legacy']:
         lines.append('  · 旧系统里还有一个公用的 legacy Hysteria 账号，它没有订阅链接，不会导入。')
+    nodes = report.get('old_nodes') or []
+    if nodes:
+        lines.append('  · 旧系统有 %d 个节点（%s）：节点不会导入。每台装好 vps2vpn 后，在新面板「多服务器」页用它的加入码加入，'
+                     '再给需要的账号勾选。' % (len(nodes), '、'.join('%s「%s」' % (i, n) for i, n, _, _ in nodes[:8])
+                                                + ('等' if len(nodes) > 8 else '')))
+        for nid, name, m, bad in nodes:
+            if m is not None and m != 1:
+                lines.append('    - 节点 %s「%s」以前按 %g 倍计流量：加入后在「多服务器」页点它的「×1」按钮改成 %g。'
+                             '（「自动选择」不会切到倍率大于 1 的服务器，名字后面会带 ×%g。）' % (nid, name, m, m, m))
+            elif bad is not None:
+                lines.append('    - 节点 %s「%s」的计费倍率 %r 看不懂（vps2vpn 要 0 到 100 的数）：加入后请手动设。' % (nid, name, bad))
+    if report.get('relays'):
+        lines.append('  · 旧系统有 %d 条中转（relays）：vps2vpn 还不支持中转，没有导入。走中转的人导入后直接连目标服务器，'
+                     '移动网络下可能变慢（以后的计划见 docs/phase2-api.md 第 6.1 节）。' % report['relays'])
+    if report.get('base_url'):
+        lines.append('  · 旧订阅链接的地址是 %s：要让大家手里的旧链接继续能用，这个地址必须指向新服务器（域名就改解析；'
+                     '如果是 IP，旧链接就没法继续用了，只能把新链接发给每个人）。' % report['base_url'])
+    if report.get('top_unknown'):
+        lines.append('  · 旧 settings.json 里这些设置没有导入：%s。' % '、'.join(report['top_unknown'][:20]))
+    if report.get('user_unknown'):
+        lines.append('  · 旧账号里这些字段没有导入：%s。' % '、'.join('%s（%d 个账号）' % kv for kv in report['user_unknown'][:20]))
     if report.get('time_zone'):
         lines.append('  · 新面板已经设了重置时区 %s，保留不动；旧系统按 UTC+8（新加坡时间）零点换月。' % report['time_zone'])
     else:

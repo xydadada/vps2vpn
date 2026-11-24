@@ -627,11 +627,24 @@ prepare_system() {
   command -v timedatectl >/dev/null && timedatectl set-ntp true 2>/dev/null || true
 }
 
+# V2V_PANEL_PORT=<port>: a fresh install's panel (and so every subscription link) listens there. Moving the main
+# server keeps the links only if the new one uses the old one's port (docs/move-main-server.md). Upgrades keep theirs.
+check_panel_port() {
+  case "$1" in
+    ''|*[!0-9]*) die "V2V_PANEL_PORT must be a port number / V2V_PANEL_PORT 要填端口号: $1" ;;
+  esac
+  if [ "${#1}" -gt 5 ] || [ "$1" -lt 1 ] || [ "$1" -gt 65535 ]; then
+    die "V2V_PANEL_PORT must be 1-65535 / V2V_PANEL_PORT 要在 1-65535 之间: $1"
+  fi
+}
+
 do_install() {
+  local port=""
+  if [ -n "${V2V_PANEL_PORT:-}" ]; then check_panel_port "$V2V_PANEL_PORT"; port="--port $V2V_PANEL_PORT"; fi
   need_root; detect_arch; install_packages; prepare_system; install_cores; install_app; install_units
   local json setup_done
   local auto=""; [ "${V2V_AUTO:-}" = 1 ] && auto="--auto"
-  if ! json=$(PYTHONPATH="$LIB/app" "$PY" -m vps2vpn init --acme $auto | tail -1) || [ -z "$json" ]; then
+  if ! json=$(PYTHONPATH="$LIB/app" "$PY" -m vps2vpn init --acme $auto $port | tail -1) || [ -z "$json" ]; then
     if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade failed during init: put the previous version back
       rm -rf "$LIB/app/vps2vpn" && mv "$LIB/app/vps2vpn.old" "$LIB/app/vps2vpn"
       systemctl restart vps2vpn 2>/dev/null || true

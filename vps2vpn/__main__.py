@@ -36,6 +36,9 @@ def cmd_init(a):
     paths.ensure_dirs()
     s = db.ensure_secrets()
     if not s['panel_port']:
+        if a.port and not (1 <= a.port <= 65535 and system.port_free('tcp', a.port)):
+            # asked for on purpose (V2V_PANEL_PORT, to keep the subscription links of a moved main server)
+            sys.exit('panel port %d is not free on this server / 面板端口 %d 被占用' % (a.port, a.port))
         db.set_settings(panel_port=a.port or free_port())
     v6 = system.public_ip(v6=True)
     if v6:

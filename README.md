@@ -195,7 +195,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 回滚会把数据库也退回快照时的样子：快照之后新加的使用者、用掉的流量都会回到那时。
 
-**换服务器 / 整台丢了**：面板「体检与维护」→「下载备份」得到一个 JSON 文件，在新服务器装好后「从备份恢复」。服务器每天自动备份到 `/var/lib/vps2vpn/backups`（保留 14 天）；连了 Telegram 的话，每天的备份也会发给你。备份里有密钥，自己收好。
+**换服务器 / 整台丢了**：面板「体检与维护」→「下载备份」得到一个 JSON 文件，在新服务器装好后「从备份恢复」。想让大家的订阅链接不用换，要有域名，新服务器还要用旧的面板端口安装（`V2V_PANEL_PORT=<旧端口>`），步骤见 [docs/move-main-server.md](docs/move-main-server.md)。服务器每天自动备份到 `/var/lib/vps2vpn/backups`（保留 14 天）；连了 Telegram 的话，每天的备份也会发给你。备份里有密钥，自己收好。
 
 ---
 
@@ -383,7 +383,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 ## 实测（本项目的测试都是真程序真流量）
 
-`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_audit10 tests.test_audit11 tests.test_logic_review tests.test_beginner_ui` —— 537 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
+`python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_audit10 tests.test_audit11 tests.test_logic_review tests.test_beginner_ui` —— 540 项离线测试：X25519 对照 RFC 7748 标准向量、二维码逐像素对照参考实现、用户限额 / 到期 / 月重置、备份恢复、完整的网页流程（设置向导、登录限速、跨站拦截、订阅格式识别）、邀请码额度计算、会员注册登录与申请审批、小火箭配置、防滥用判定、两台服务器之间真实 HTTPS（证书固定）同步、两步验证（对照 RFC 6238 标准向量）、批量操作、设备上限、自定义分流、Telegram 配对和命令只认主人、到期提醒、一键部署（免向导建账号、保存的密码升级后不丢、从外部测 TCP/UDP 端口、证书固定登录主服务器并加入）、AI 可用性体检（模拟能用 / 地区封锁 / 断网三种情况）、AI 网站在三种订阅里都走「AI服务」分组、AI 体检最好的服务器排第一。
 
 `python tests/e2e_local.py <放官方程序的目录>` —— 在一台电脑上启动**真的** Xray、Hysteria 和 sing-box（TUIC）服务端，再用**真的** mihomo（Clash 内核）和 sing-box 客户端发流量，共 54 项检查：
 
@@ -498,7 +498,7 @@ Force a format with `?format=clash|singbox|shadowrocket|links`. Apps refresh eve
 
 ### Upgrade and roll back
 
-Re-run the one-line installer as root. It installs the latest tagged release, checks its SHA256, never downgrades silently (`V2V_ALLOW_DOWNGRADE=1` to force), snapshots the database and code to `/var/lib/vps2vpn/upgrade-snapshots/` (last 3 kept) and puts the old version back if the new one fails to start. Roll back: `bash /var/lib/vps2vpn/upgrade-snapshots/<snapshot>/restore.sh` (the database goes back too). Moving servers: download a backup in the panel and restore it on the new one; daily backups are in `/var/lib/vps2vpn/backups` (14 days) and, with Telegram, sent to you.
+Re-run the one-line installer as root. It installs the latest tagged release, checks its SHA256, never downgrades silently (`V2V_ALLOW_DOWNGRADE=1` to force), snapshots the database and code to `/var/lib/vps2vpn/upgrade-snapshots/` (last 3 kept) and puts the old version back if the new one fails to start. Roll back: `bash /var/lib/vps2vpn/upgrade-snapshots/<snapshot>/restore.sh` (the database goes back too). Moving servers: download a backup in the panel and restore it on the new one (to keep everyone's subscription links, use a domain and install the new server with the old panel port, `V2V_PANEL_PORT=<port>`; see docs/move-main-server.md); daily backups are in `/var/lib/vps2vpn/backups` (14 days) and, with Telegram, sent to you.
 
 ### Several servers
 
@@ -519,7 +519,7 @@ Health & upkeep → Telegram alerts: create a bot with @BotFather, paste the tok
 
 ### Tested
 
-537 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
+540 offline tests, `tests/e2e_local.py` with real Xray/Hysteria/sing-box servers and real mihomo/sing-box clients (54 checks), and `tests/vps_acceptance.sh` on a real server. Xray is pinned to **v26.3.27** because v26.10.21+ rejects REALITY logins from mihomo 1.19.34 and sing-box 1.14.4.
 
 Standard-library Python panel: no Docker, no database server, no third-party scripts in the browser.
 
