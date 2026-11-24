@@ -837,10 +837,11 @@ def parse_target(text):
         while i < len(words):
             w = words[i]
             if w in ('-p', '-l') and i + 1 < len(words):
+                # the same rules as -p2222 and ROOT@host: digits only, user names in lower case
                 if w == '-p':
-                    port = words[i + 1]
+                    port = words[i + 1] if re.fullmatch(r'\d+', words[i + 1]) else port
                 else:
-                    user = words[i + 1]
+                    user = words[i + 1].lower()
                 i += 2
                 continue
             if re.fullmatch(r'-p\d+', w):

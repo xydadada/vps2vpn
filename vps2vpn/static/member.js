@@ -77,6 +77,8 @@ const T = {
 let L = (navigator.language || '').startsWith('zh') ? 'zh' : 'en';
 const t = k => (T[L] && T[L][k]) || T.en[k] || k;
 const GB = 1073741824;
+// an empty number box is sent as null, not Number('') === 0: the server then asks for a number
+const numOrNull = v => (v === '' ? null : Number(v));
 const M = {hello: null, me: null};
 function setLang(l) { L = l === 'en' ? 'en' : 'zh'; KT = L === 'en' ? KT_EN : KT_ZH; document.documentElement.lang = L === 'zh' ? 'zh-CN' : 'en'; }
 const localDay = ms => { const d = new Date(ms); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
@@ -241,7 +243,7 @@ function requestsPanel() {
   const me = M.me, f = {gb: h('input', {type: 'number', min: '1', step: '1', value: '50'}), why: h('input', {type: 'text', maxlength: '300'})};
   const pend = me.requests.some(r => r.status === 'pending');
   const b = h('button', {class: 'btn primary', disabled: pend}, icon('plus'), t('send'));
-  b.onclick = async () => { b.disabled = true; try { await api('request', {add_gb: Number(f.gb.value), reason: f.why.value}); toast(t('sent')); await renderHome(); } catch (e) { err(e); b.disabled = false; } };
+  b.onclick = async () => { b.disabled = true; try { await api('request', {add_gb: numOrNull(f.gb.value), reason: f.why.value}); toast(t('sent')); await renderHome(); } catch (e) { err(e); b.disabled = false; } };
   const list = me.requests.length ? h('div', {class: 'tl'}, me.requests.map(r => h('div', {class: 'tl-row'},
     h('b', {class: 'num'}, '+' + r.add_gb + ' GB' + (r.asked_gb ? t('asked').replace('{n}', r.asked_gb) : '')), h('span', {class: 'muted'}, fmt.time(r.created_at) + (r.reason ? ' · ' + r.reason : '') + (r.answer ? ' — ' + r.answer : '')),
     chip(r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn', t(r.status))))) : h('div', {class: 'muted m-tip'}, t('req_none'));
@@ -259,7 +261,7 @@ function invitesPanel() {
   b.onclick = async () => {
     b.disabled = true;
     try {
-      const r = await api('invite', {quota_gb: Number(f.gb.value), max_uses: Number(f.uses.value), valid_days: Number(f.days.value), note: f.note.value});
+      const r = await api('invite', {quota_gb: numOrNull(f.gb.value), max_uses: numOrNull(f.uses.value), valid_days: numOrNull(f.days.value), note: f.note.value});
       if (r.register_url) await copyText(r.register_url, t('inv_copied')); else await copyText(r.code, t('code'));
       await renderHome();
     } catch (e) { err(e); b.disabled = false; }

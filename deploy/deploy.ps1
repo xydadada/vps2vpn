@@ -76,7 +76,9 @@ function Parse-Target([string]$text) {
     while ($i -lt $words.Count) {
       $w = $words[$i]
       if (($w -ceq '-p' -or $w -ceq '-l') -and $i + 1 -lt $words.Count) {
-        if ($w -ceq '-p') { $port = $words[$i + 1] } else { $user = $words[$i + 1] }
+        # the same rules as -p2222 and ROOT@host: digits only, user names in lower case
+        if ($w -ceq '-p') { if ($words[$i + 1] -cmatch '^\d+$') { $port = $words[$i + 1] } }
+        else { $user = $words[$i + 1].ToLowerInvariant() }
         $i += 2; continue
       }
       if ($w -cmatch '^-p(\d+)$') { $port = $Matches[1] }

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.37
+
+Ninth outside review (round 10, server part S10-01..05).
+第九次外部审计（第 10 轮，服务端 S10-01..05）。
+
+- Speed limits: checking whether the kernel can hold limits now uses a test device of its own, so `vps2vpn doctor` can no longer delete the live download-limit device while the panel sets it up. The limits count as working only when every piece is there (upload and download classes, the ifb device up, the redirect to it, the nft rule). After a firewall reload that wiped the nft table, the panel sets them up again within 5 minutes and `vps2vpn doctor` reports it until then.
+  限速：检测内核能不能限速时，改用一个单独的测试网卡，`vps2vpn doctor` 不会再在面板设置限速的同时把正在用的下载限速网卡删掉。只有每一部分都在（上传和下载的限速规则、ifb 网卡已启用、转发到它的规则、nft 规则），才算限速在起作用。防火墙重载清掉 nft 表以后，面板 5 分钟内会重新设好；在那之前 `vps2vpn doctor` 会报出来。
+- Joined servers: the main server now tells each joined server which accounts are slowed down because their quota is used up. A joined server that can no longer hold one to its speed (Reality and TUIC turned off there, or limits stopped working) leaves it out right away instead of running it at full speed until the next sync.
+  多服务器：主服务器会告诉每台子服务器哪些账号是「流量用完正在降速」。子服务器如果已经没法限速（那台上关了 Reality 和 TUIC，或者限速失效），会马上不再提供这个账号，而不是在下次同步前让它全速使用。
+- Migration tool (`--lines`): the Reality short id may be upper case and must be whole bytes; the Hysteria 2 obfuscation must be salamander with a password of 1–64 characters without spaces; a key that is no X25519 key, or ports that collide with the new panel (panel on 443, Hysteria 2 and TUIC on the same port, a port inside the hop range) are refused with a plain message; the output goes through a temporary file of its own.
+  迁移工具（`--lines`）：Reality short_id 可以是大写，但必须是整字节；Hysteria 2 混淆必须是 salamander，密码 1–64 个字符、不能有空格；私钥无效，或者端口和新面板冲突（面板占了 443、Hysteria 2 和 TUIC 同一个端口、端口落在跳端口范围里）都会用大白话拒绝；结果文件先写到它自己的临时文件再改名。
+- One-click deployers (browser, Windows, Mac): `ssh -p 2222abc …` no longer takes a port that is not a number, and `ssh -l ROOT …` becomes `root`, the same as `-p2222abc` and `ROOT@host` already did.
+  一键部署（网页、Windows、Mac）：`ssh -p 2222abc …` 不再把不是数字的端口带进来；`ssh -l ROOT …` 会变成 `root`，和 `-p2222abc`、`ROOT@host` 的处理一致。
+- Panel and member page: an emptied number box is no longer sent as 0. Approving a top-up with the box left empty approves what was asked (the dialog now says so); an empty quota in the invite form no longer creates unlimited invite codes by accident.
+  面板和会员页：清空的数字框不再当成 0 发出去。批准加流量时把框留空，就按申请的数量批准（弹窗里也写了）；邀请码表单里流量留空，不会再意外生成不限流量的邀请码。
+
 ## 0.2.36
 
 A switch for the app's traffic ranking.

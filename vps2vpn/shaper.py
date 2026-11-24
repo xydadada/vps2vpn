@@ -12,6 +12,8 @@ limits work here: the apps switch to Reality or TUIC. Where the kernel lacks the
 other containers), limits are reported as unavailable and nothing is changed.
 """
 import math
+import os
+import re
 import shutil
 import subprocess
 import threading
@@ -59,11 +61,14 @@ def available():
             return _state['available']
         ok = all(shutil.which(t) for t in ('tc', 'ip', 'nft'))
         if ok:
-            code, _ = _run(['ip', 'link', 'add', IFB, 'type', 'ifb'])
-            code2, out = _run(['ip', 'link', 'show', IFB])
+            # A probe device of this process's own: `vps2vpn doctor` runs beside the panel, and probing with
+            # v2vifb0 itself could delete the live one the panel had just set up.
+            probe = 'v2vprobe%d' % (os.getpid() % 10000000)
+            code, _ = _run(['ip', 'link', 'add', probe, 'type', 'ifb'])
+            code2, _ = _run(['ip', 'link', 'show', probe])
             ok = code2 == 0
             if ok and code == 0:
-                _run(['ip', 'link', 'del', IFB])       # only a probe; created again when a limit is set
+                _run(['ip', 'link', 'del', probe])
         _state['available'] = ok
         if not ok:
             _state['error'] = 'tc/ifb not available on this kernel'
@@ -147,6 +152,23 @@ def _ours(dev):
     return code == 0 and ('htb %s:' % _ROOT) in out
 
 
+def intact(dev):
+    """Every piece of the limits is in place: our classes on the card (upload) and on the ifb device (download),
+    the ifb device up, the card's ingress redirect to it, and the nft rule that keeps the mark on the connection.
+    A firewall reload (`nft flush ruleset`) or a lost ifb device leaves the card's classes alone but stops
+    every download limit, so the card alone says too little."""
+    if not dev or not _ours(dev) or not _ours(IFB):
+        return False
+    code, out = _run(['ip', '-o', 'link', 'show', 'dev', IFB])
+    if code != 0 or not re.search(r'<[^>]*\bUP\b[^>]*>', out):          # the UP flag, not LOWER_UP
+        return False
+    code, out = _run(['tc', 'filter', 'show', 'dev', dev, 'parent', 'ffff:'])
+    if code != 0 or 'mirred' not in out or IFB not in out:
+        return False
+    code, _ = _run(['nft', 'list', 'table', 'inet', NFT_TABLE])
+    return code == 0
+
+
 def apply(limits, log=print, force=False):
     """Make the kernel hold each {uid: mbps} account to its speed. Idempotent; returns True when it holds."""
     limits = {int(k): float(v) for k, v in limits.items()
@@ -156,7 +178,7 @@ def apply(limits, log=print, force=False):
     with _lock:
         dev = default_dev()
         same = (_state['applied'] == limits and _state['dev'] == dev)
-        if same and not force and (not limits or _ours(dev)):
+        if same and not force and (not limits or intact(dev)):
             return True
         old_dev = _state['dev']
         if old_dev and old_dev != dev:

@@ -162,9 +162,12 @@ def _validated_sync_snapshot(body):
         limit = u.get('limit_mbps', 0)            # absent from main servers older than 0.2.17: none
         if type(limit) not in (int, float) or not math.isfinite(limit) or not 0 <= limit <= db.MAX_MBPS:
             raise ValueError('invalid remote speed limit')
+        slowed = u.get('slowed', False)          # absent from main servers older than 0.2.37: not slowed
+        if type(slowed) not in (int, bool) or slowed not in (0, 1):
+            raise ValueError('invalid remote slow-down state')
         uuids.add(uuid.lower())
-        wanted[rid] = {'name': _clean_label(name, 24) or 'u%d' % rid, 'uuid': uuid,
-                       'hy2_pass': secret, 'enabled': int(enabled), 'expire_at': expire_at, 'limit': float(limit)}
+        wanted[rid] = {'name': _clean_label(name, 24) or 'u%d' % rid, 'uuid': uuid, 'hy2_pass': secret,
+                       'enabled': int(enabled), 'expire_at': expire_at, 'limit': float(limit), 'slowed': int(slowed)}
     return master, master_id, wanted, uuids
 
 
@@ -194,18 +197,19 @@ def handle_sync(s, body, base_url=''):
                 name = _remote_name(w['name'], master, rid)
                 uid = db.add_user(name, expire_at=w['expire_at'], note='from main server %s' % master,
                                   remote_id=rid, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                                  disabled_reason=w['reason'], speed_mbps=w['limit'])
+                                  disabled_reason=w['reason'], speed_mbps=w['limit'], throttled=w['slowed'])
                 mine[rid] = db.user(uid)
                 changed = True
             else:
                 new_name = _remote_name(w['name'], master, rid, skip_uid=u['id'])
-                core_changed = ((u['uuid'], u['hy2_pass'], u['enabled'], float(u['speed_mbps'] or 0))
-                                != (w['uuid'], w['hy2_pass'], w['enabled'], w['limit']))
+                core_changed = ((u['uuid'], u['hy2_pass'], u['enabled'], float(u['speed_mbps'] or 0), u['throttled'] or 0)
+                                != (w['uuid'], w['hy2_pass'], w['enabled'], w['limit'], w['slowed']))
                 if core_changed or u['name'] != new_name or u['expire_at'] != w['expire_at']:
                     db.update_user(u['id'], name=new_name, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                                   disabled_reason=w['reason'], expire_at=w['expire_at'], speed_mbps=w['limit'])
+                                   disabled_reason=w['reason'], expire_at=w['expire_at'], speed_mbps=w['limit'],
+                                   throttled=w['slowed'])
                     u.update(name=new_name, uuid=w['uuid'], hy2_pass=w['hy2_pass'], enabled=w['enabled'],
-                             expire_at=w['expire_at'], speed_mbps=w['limit'])
+                             expire_at=w['expire_at'], speed_mbps=w['limit'], throttled=w['slowed'])
                     if core_changed:
                         changed = True
         # an account leaving this server reports what it used here one last time: the main server bills it
@@ -426,7 +430,10 @@ def push_users(server_id=None, users=None, can_slow=True):
     users = db.users() if users is None else users
     return [{'id': u['id'], 'name': u['name'], 'uuid': u['uuid'], 'hy2_pass': u['hy2_pass'],
              'enabled': bool(u['enabled']) and (can_slow or not u['throttled']),
-             'expire_at': int(u['expire_at'] or 0), 'limit_mbps': db.limit_mbps(u)}
+             'expire_at': int(u['expire_at'] or 0), 'limit_mbps': db.limit_mbps(u),
+             # slowed down because its quota is used up: a joined server that cannot hold it to its speed right
+             # now (its own settings changed since its last answer) leaves it out until the next round
+             'slowed': bool(u['throttled'])}
             for u in users if not u['remote_id'] and (server_id is None or db.allowed_on(u, server_id))]
 
 

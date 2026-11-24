@@ -52,14 +52,16 @@ def can_slow_here(s=None):
 
 def active_users():
     """Accounts the cores here serve: enabled, and (a main server's own accounts) allowed on this server. A
-    slowed-down account is left out where it cannot be held to its speed (it runs on servers that can)."""
+    slowed-down account is left out where it cannot be held to its speed (it runs on servers that can). On a
+    joined server that holds for the main server's accounts too: the main decides from this server's last
+    answer, and this server checks again now, in case Reality/TUIC or the limits stopped working since."""
     users = db.users()
     here = None
     out = []
     for u in users:
         if not u['enabled'] or not (u['remote_id'] or db.allowed_on(u, db.MAIN_SERVER)):
             continue
-        if u['throttled'] and not u['remote_id']:
+        if u['throttled']:
             if here is None:
                 here = can_slow_here()
             if not here:

@@ -66,7 +66,10 @@ parse_target() {
       w="${W[i]}"
       case "$w" in
         -p|-l) if [ $((i + 1)) -lt $WN ]; then
-                 i=$((i + 1)); if [ "$w" = -p ]; then T_PORT="${W[i]}"; else T_USER="${W[i]}"; fi
+                 # the same rules as -p2222 and ROOT@host: digits only, user names in lower case
+                 i=$((i + 1))
+                 if [ "$w" = -p ]; then case "${W[i]}" in ''|*[!0-9]*) ;; *) T_PORT="${W[i]}" ;; esac
+                 else T_USER=$(printf '%s' "${W[i]}" | tr 'A-Z' 'a-z'); fi
                fi ;;
         -p*) case "${w#-p}" in *[!0-9]*) ;; *) T_PORT="${w#-p}" ;; esac ;;    # -p2222, not -p2222abc
         -i|-o|-F|-J|-L|-R|-D|-b|-c|-m|-E|-W) i=$((i + 1)) ;;               # an option with a value: skip both

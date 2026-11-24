@@ -29,6 +29,7 @@ import os
 import re
 import sqlite3
 import sys
+import tempfile
 import urllib.request
 
 GIB = 1 << 30                       # vps2vpn counts a GB as 2^30 bytes; the old panel stored bytes
@@ -408,13 +409,36 @@ OLD_TUIC_PORT = 8443
 OLD_HOP_RANGE = '20000-25999'
 
 
-def _reality_public(private):
+def _panel(name):
+    """A module of the panel next to this tool (vps2vpn.secure, vps2vpn.db)."""
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     try:
-        from vps2vpn import secure
+        return __import__('vps2vpn.' + name, fromlist=[name])
     finally:
         sys.path.pop(0)
-    return secure.reality_public_key(private)
+
+
+def _reality_public(private):
+    try:
+        return _panel('secure').reality_public_key(private)
+    except Exception:                   # 43 characters that are still no X25519 key: say so, no traceback
+        raise Problem('旧线路设置里的 Reality 私钥无效')
+
+
+OBFS_RE = re.compile(r'[^\s\x00-\x1f\x7f]{1,64}')     # at most 64 like the panel; no spaces or control characters
+
+
+def _hy2_obfs(hy2):
+    """The old server's salamander password, '' for none. Hysteria 2 has no other kind of obfuscation."""
+    obfs = hy2.get('obfs')
+    if not obfs:
+        return ''
+    if not isinstance(obfs, dict) or str(obfs.get('type') or '').lower() != 'salamander':
+        raise Problem('旧线路设置里 Hysteria 2 的混淆方式不是 salamander，新面板不支持')
+    password = obfs.get('password')
+    if not isinstance(password, str) or not OBFS_RE.fullmatch(password):
+        raise Problem('旧线路设置里 Hysteria 2 的混淆密码格式不对（要 1–64 个字符，不能有空格）')
+    return password
 
 
 def convert_lines(cfg):
@@ -435,8 +459,10 @@ def convert_lines(cfg):
         raise Problem('旧线路设置里找不到 Reality 私钥')
     sids = reality.get('short_id')
     sid = sids[0] if isinstance(sids, list) and sids else sids
-    if not isinstance(sid, str) or not re.fullmatch(r'[0-9a-f]{0,16}', sid):
+    # hex digits in pairs (bytes), at most 8 bytes; upper case is the same id
+    if not isinstance(sid, str) or not re.fullmatch(r'(?:[0-9A-Fa-f]{2}){0,8}', sid):
         raise Problem('旧线路设置里的 Reality short_id 格式不对')
+    sid = sid.lower()
     hs = reality.get('handshake') if isinstance(reality.get('handshake'), dict) else {}
     target = str(hs.get('server') or tls.get('server_name') or '').strip().lower()
     if not HOST_RE.match(target):
@@ -446,15 +472,31 @@ def convert_lines(cfg):
     hy2 = by_type.get('hysteria2')
     if hy2:
         out.update({'hy2_enabled': True, 'hy2_port': OLD_REALITY_PORT, 'hy2_hop': True, 'hy2_hop_range': OLD_HOP_RANGE,
-                    'hy2_obfs': ((hy2.get('obfs') or {}).get('password') or '') if isinstance(hy2.get('obfs'), dict) else ''})
+                    'hy2_obfs': _hy2_obfs(hy2)})
     if by_type.get('tuic'):
         out.update({'tuic_enabled': True, 'tuic_port': OLD_TUIC_PORT})
     return out
 
 
 def merge_lines(backup, lines):
+    """The old lines over the new panel's settings, refused when they would collide with what the new panel
+    already uses (the panel itself refuses the same settings in its settings page)."""
     out = dict(backup)
     out['settings'] = dict(backup.get('settings') or {}, **lines)
+    s = dict(_panel('db').DEFAULTS, **out['settings'])
+    if s['reality_enabled'] and s['panel_port'] == s['reality_port']:
+        raise Problem('新面板自己用的是 TCP %d 端口，和旧线路的 Reality 端口冲突；先在新面板里把面板端口改掉'
+                      % s['panel_port'])
+    if s['hy2_enabled'] and s['tuic_enabled'] and s['hy2_port'] == s['tuic_port']:
+        raise Problem('Hysteria 2 和 TUIC 会用同一个 UDP 端口 %d' % s['tuic_port'])
+    if s['hy2_enabled'] and s['hy2_hop']:
+        try:
+            a, b = _panel('system').parse_range(str(s['hy2_hop_range']))
+        except ValueError:
+            raise Problem('跳端口范围格式不对：%s' % s['hy2_hop_range'])
+        for name, port in (('Hysteria 2', s['hy2_port']), ('TUIC', s['tuic_port'] if s['tuic_enabled'] else 0)):
+            if a <= port <= b:
+                raise Problem('%s 的端口 %d 落在跳端口范围 %d-%d 里' % (name, port, a, b))
     return out
 
 
@@ -533,12 +575,9 @@ NAMES = {'block': '拦截', 'direct': '直连', 'proxy': '代理'}
 def write_private(path, data):
     """The merged backup holds every account's UUID, passwords and subscription token: readable by its owner
     only (0600), written whole or not at all."""
-    tmp = path + '.tmp'
-    try:
-        os.unlink(tmp)                  # a left-over file would keep its old permissions
-    except FileNotFoundError:
-        pass
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0), 0o600)
+    # a new file of its own (0600, a name nobody else holds) next to the output, renamed over it at the end
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + '.', suffix='.tmp',
+                               dir=os.path.dirname(os.path.abspath(path)))
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             if hasattr(os, 'fchmod'):

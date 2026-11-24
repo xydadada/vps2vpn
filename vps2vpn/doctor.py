@@ -210,9 +210,10 @@ def speed_limits():
         # `vps2vpn doctor` runs in its own process, where nothing has been applied yet: name the card it would use
         dev = st['dev'] or shaper.default_dev()
         detail = st['error']
-        if ok and not (dev and shaper._ours(dev)):
-            # checked on the card itself: this process applied nothing, the panel may have failed to
-            ok, detail = False, 'the speed limits are not set up on %s' % (dev or 'the network card')
+        if ok and not (dev and shaper.intact(dev)):
+            # checked on the machine itself (card, ifb device, ingress redirect, nft rule): this process applied
+            # nothing, the panel may have failed to, or a firewall reload took part of it away
+            ok, detail = False, 'the speed limits are not (fully) set up on %s' % (dev or 'the network card')
         return [_check('speed_limits', ok, '%d account(s) limited on %s' % (len(limited), dev) if ok else detail,
                        'vps2vpn apply --force   (then see journalctl -u vps2vpn)')]
     if not shaper.available():

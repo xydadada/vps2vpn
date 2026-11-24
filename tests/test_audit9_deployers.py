@@ -18,6 +18,10 @@ ALL = TARGETS + MAC_TARGETS + [
     ('ssh -l "ubuntu" "203.0.113.10"', ('203.0.113.10', 'ubuntu', '')),
     ('ssh -i "C:\\Users\\me\\.ssh\\id_ed25519" root@203.0.113.10', ('203.0.113.10', 'root', '')),  # a Windows key path
     ('ssh -i "My Key.pem root@203.0.113.10', ('Key.pem', '', '')),         # unclosed: plain words, as before
+    # round 10 (S10-03): "-p 2222" and "-l ROOT" follow the same rules as "-p2222" and "ROOT@host"
+    ('ssh -p 2222abc root@203.0.113.10', ('203.0.113.10', 'root', '')),
+    ('ssh -p 2222 -l ROOT 203.0.113.10', ('203.0.113.10', 'root', '2222')),
+    ('ssh -l Ubuntu -p "" 203.0.113.10', ('203.0.113.10', 'ubuntu', '')),
 ]
 
 

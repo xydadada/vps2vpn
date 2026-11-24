@@ -60,7 +60,7 @@ const T = {
     online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', extra_now: '本期临时加量（下次重置或手动清零时取消）', extra_gone: '本期临时加量也会一起取消。', invited_by: '邀请人', eff_quota: '实际可用额度', plan: '套餐', history: '每日用量', history_sub: '近 30 天',
     member_login: '会员中心登录', member_login_tip: '设置密码后，他可以用名字 + 密码登录会员中心（看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
     login_on: '已设置密码', login_off: '未设置密码', set_pw: '设置 / 重置密码', clear_pw: '取消密码登录', pw_cleared: '已取消', pw_ph: '新密码（至少 8 位）', pw_first: '先在左边输入新密码（至少 8 位），再点「设置 / 重置密码」',
-    requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '只加到本期：下次重置日（或手动清零流量时）自动取消；没设重置日的账号会一直保留到手动清零。想长期提高，请在用户编辑里改「流量上限」。', answer: '回复（可选）', asked: '（申请了 {n} GB）',
+    requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '留空 = 按申请的数量批准。只加到本期：下次重置日（或手动清零流量时）自动取消；没设重置日的账号会一直保留到手动清零。想长期提高，请在用户编辑里改「流量上限」。', answer: '回复（可选）', asked: '（申请了 {n} GB）',
     pending: '待处理', approved: '已批准', rejected: '已拒绝',
     invites: '邀请码', inv_tip: '管理员邀请码：自定义额度和有效期，不扣任何人的流量。会员也可以在会员中心用自己的额度生成邀请码。',
     inv_make: '生成邀请码', inv_quota: '每个账号的流量 (GB，0 = 不限)', inv_life: '账号有效期（天，0 = 永久）', inv_uses: '可以用几次', inv_valid: '邀请码几天内有效', inv_reset: '每月几号重置（0 = 不重置）',
@@ -172,7 +172,7 @@ const T = {
     online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset or manual reset)', extra_gone: 'The top-up for this period ends too.', invited_by: 'Invited by', eff_quota: 'Effective quota', plan: 'plan', history: 'Daily usage', history_sub: 'last 30 days',
     member_login: 'Member centre login', member_login_tip: 'With a password they can log in to the member centre by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
     login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password login', pw_cleared: 'Removed', pw_ph: 'New password (8+ characters)', pw_first: 'Type the new password first (8+ characters), then press "Set / reset password"',
-    requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'For the current period only: it ends at the next reset day or a manual traffic reset (accounts without a reset day keep it until a manual reset). To raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)', asked: ' (asked for {n} GB)',
+    requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'Leave it empty to approve what was asked. For the current period only: it ends at the next reset day or a manual traffic reset (accounts without a reset day keep it until a manual reset). To raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)', asked: ' (asked for {n} GB)',
     pending: 'pending', approved: 'approved', rejected: 'declined',
     invites: 'Invite codes', inv_tip: 'Admin codes: any quota and lifetime, nobody is charged. Members can also make codes from their own quota in the member centre.',
     inv_make: 'Create code', inv_quota: 'Quota per account (GB, 0 = unlimited)', inv_life: 'Account lifetime (days, 0 = forever)', inv_uses: 'Uses', inv_valid: 'Code valid for (days)', inv_reset: 'Monthly reset day (0 = never)',
@@ -982,7 +982,7 @@ async function drawMembers() {
     let body = {};
     if (ok) {
       const gb = await modal({title: t('approve') + ' · ' + r.name, text: (r.reason ? r.reason + ' · ' : '') + t('approve_tip'), input: true, type: 'number', value: String(r.add_gb), confirm: t('approve')});
-      if (gb == null) return; body = {add_gb: Number(gb)};
+      if (gb == null) return; body = {add_gb: numOrNull(gb.trim())};
     } else {
       const ans = await modal({title: t('reject') + ' · ' + r.name, input: true, placeholder: t('answer'), confirm: t('reject'), danger: true});
       if (ans == null) return; body = {answer: ans};
@@ -1006,8 +1006,9 @@ async function drawMembers() {
     try { servers = pick.value(); } catch (er) { return err(er); }
     mk.disabled = true;
     try {
-      const r = await api('invites', {kind: 'admin', quota_gb: Number(f.quota.value), expire_days: Number(f.life.value), max_uses: Number(f.uses.value),
-        valid_days: Number(f.valid.value), reset_day: Number(f.reset.value), note: f.note.value,
+      // a cleared box is not 0 (that means unlimited / forever here): the server asks for a number instead
+      const r = await api('invites', {kind: 'admin', quota_gb: numOrNull(f.quota.value), expire_days: numOrNull(f.life.value), max_uses: numOrNull(f.uses.value),
+        valid_days: numOrNull(f.valid.value), reset_day: numOrNull(f.reset.value), note: f.note.value,
         speed_mbps: Number(f.speed.value || 0), throttle_mbps: Number(f.slow.value || 0), servers});
       await copyText(r.invite.code + (r.invite.register_url ? '\n' + r.invite.register_url : ''), t('copy_code')); drawMembers();
     } catch (e) { err(e); mk.disabled = false; }
