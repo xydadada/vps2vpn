@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.38
+
+Speed limits come back after their ifb device was deleted.
+限速网卡被删掉以后，限速能自己恢复。
+
+- Found while checking 0.2.37 on the test server: once the download-limit device (`v2vifb0`) was deleted, the redirect rule left on the network card no longer named it, so it was not recognised as ours and every attempt to set the limits up again failed ("Exclusivity flag on"). The rule is now recognised by our own mark, removed, and the limits are rebuilt.
+  在测试服务器上检查 0.2.37 时发现：下载限速网卡（`v2vifb0`）被删掉以后，网卡上剩下的转发规则里就看不到它的名字了，面板认不出这条规则是自己的，于是每次重新设置限速都会失败（"Exclusivity flag on"）。现在按我们自己的标记认出这条规则，先删掉再重建限速。
+
 ## 0.2.37
 
 Ninth outside review (round 10, server part S10-01..05).

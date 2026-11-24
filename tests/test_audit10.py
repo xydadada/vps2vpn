@@ -87,6 +87,24 @@ class LimitsHold(tu.Base):
             self.assertTrue(shaper.apply({5: 10}, log=lambda *_: None))
             self.assertNotIn(['tc', '-batch', '-'], k.calls)      # all there: nothing redone
 
+    def test_a_redirect_to_a_deleted_ifb_device_is_still_ours(self):
+        # what tc printed on the test server after `ip link del v2vifb0`: the target became "device *", and
+        # leaving this ingress behind made every rebuild fail ("Exclusivity flag on, cannot modify")
+        orphan = ('filter protocol all pref 2 fw chain 0 handle 0x56000000/0xff000000\n'
+                  '\taction order 1: mirred (Egress Redirect to device *) stolen\n')
+        for root in ('qdisc htb 1a5: root refcnt 2', ''):
+            calls = []
+
+            def run(cmd, stdin=None, timeout=15):
+                calls.append(cmd)
+                if cmd[:3] == ['tc', 'qdisc', 'show']:
+                    return 0, root
+                return (0, orphan) if cmd[:3] == ['tc', 'filter', 'show'] else (0, '')
+            with self.subTest(root=root), mock.patch.object(shaper, '_run', run):
+                shaper._teardown('eth0')
+                self.assertIn(['tc', 'qdisc', 'del', 'dev', 'eth0', 'ingress'], calls)
+                self.assertFalse(shaper.intact('eth0'))
+
     def test_doctor_reports_a_missing_nft_table_or_ifb_device(self):
         uid = db.add_user('capped', 0)
         db.update_user(uid, speed_mbps=10)

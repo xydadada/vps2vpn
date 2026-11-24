@@ -141,7 +141,10 @@ def _teardown(dev):
         # ours: it redirects to our ifb device. With our root qdisc also there, an ingress that a batch left
         # empty or with only its connmark step (failed before the redirect) is ours too.
         leftover = not out.strip() or ('connmark' in out and 'mirred' not in out)
-        if code == 0 and (IFB in out or (mine and leftover)):
+        # Our redirect also carries our mark as its handle: once the ifb device is gone, tc shows its target
+        # as "device *", and a rebuild would fail on the ingress qdisc left behind ("Exclusivity flag on").
+        our_mark = 'handle 0x%x/0x%x' % (MARK, MARK_MASK) in out
+        if code == 0 and (IFB in out or our_mark or (mine and leftover)):
             _run(['tc', 'qdisc', 'del', 'dev', dev, 'ingress'])
     _run(['ip', 'link', 'del', IFB])
     _run(['nft', 'delete', 'table', 'inet', NFT_TABLE])
