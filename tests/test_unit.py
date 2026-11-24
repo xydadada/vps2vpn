@@ -292,6 +292,9 @@ class Users(Base):
         uid = db.add_user('bob', reset_day=1)
         db.add_traffic(uid, 10, 20)
         jobs.enforce()
+        self.assertEqual(db.user(uid)['used_down'], 20)    # new this period: nothing to reset yet (#124)
+        db.update_user(uid, last_reset='2000-01')          # an account last reset long ago
+        jobs.enforce()
         u = db.user(uid)
         self.assertEqual(u['used_up'] + u['used_down'], 0)
         db.add_traffic(uid, 10, 20)
