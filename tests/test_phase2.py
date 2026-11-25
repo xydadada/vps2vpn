@@ -5,6 +5,7 @@
         one-tap feedback (section 1)
 0.2.44  devices the app reports, soft and hard kick (section 2)
 0.2.45  api/me config_version: the app notices a changed subscription at once (logic review O-10)
+0.2.46  the member's view of all of it: a paused account, a new link, the limits a normal app meets
 """
 import base64
 import datetime as dt
@@ -489,9 +490,10 @@ class DeviceValues(tu.Base):
     def test_report_list_revoke(self):
         now = 1_800_000_000
         self.assertFalse(devices.report(self.u, PIXEL, '198.51.100.23', now))
-        with self.assertRaises(devices.Refused) as cm:
-            devices.report(self.u, PIXEL, '198.51.100.23', now + 30)                     # once a minute
-        self.assertEqual((cm.exception.code, cm.exception.retry), ('rate_limited', 30))
+        # within a minute: answered, not stored (the version stays, last_seen too)
+        self.assertFalse(devices.report(self.u, dict(PIXEL, version='9.9'), '198.51.100.23', now + 30))
+        self.assertEqual((devices.listing(self.uid)[0]['version'], devices.listing(self.uid)[0]['last_seen']),
+                         (PIXEL['version'], now))
         self.assertFalse(devices.report(self.u, dict(PIXEL, name='Pixel', version='1.0.30'), '2001:db8:1::9', now + 61))
         rows = devices.listing(self.uid, DEV1)
         self.assertEqual(len(rows), 1)
@@ -499,6 +501,7 @@ class DeviceValues(tu.Base):
         self.assertEqual((r['name'], r['version'], r['first_seen'], r['last_seen'], r['ip'], r['this_device'], r['revoked']),
                          ('Pixel', '1.0.30', now, now + 61, '2001:db8:x:x:...', True, False))
         self.assertTrue(devices.set_revoked(self.uid, DEV1, True))
+        self.assertTrue(devices.report(self.u, PIXEL, '198.51.100.23', now + 62))        # told at once, even within a minute
         self.assertTrue(devices.report(self.u, PIXEL, '198.51.100.23', now + 200))       # it is told on its next report
         self.assertTrue(devices.report(self.u, PIXEL, '198.51.100.23', now + 300))       # and keeps being told
         self.assertTrue(devices.set_revoked(self.uid, DEV1, False))
@@ -578,7 +581,7 @@ class DevicesOverHttps(OverHttps):
         st, d = self.j('POST', self.base + 'device', PIXEL)
         self.assertEqual((st, d), (200, {'ok': True, 'revoked': False}))
         st, d = self.j('POST', self.base + 'device', PIXEL)
-        self.assertEqual((st, d['code']), (429, 'rate_limited'))
+        self.assertEqual((st, d), (200, {'ok': True, 'revoked': False}))          # reconnecting within a minute
         st, d = self.j('POST', self.base + 'device', dict(PIXEL, platform='symbian'))
         self.assertEqual((st, d['code']), (400, 'bad_request'))
         st, d = self.j('GET', self.base + 'device')
@@ -592,6 +595,8 @@ class DevicesOverHttps(OverHttps):
         self.assertEqual((st, d), (200, {'ok': True}))
         st, d = self.j('POST', self.base + 'devices/%s/revoke' % DEV2, {})
         self.assertEqual((st, d['code']), (404, 'not_found'))
+        st, d = self.j('POST', self.base + 'device', PIXEL)                       # still within the minute
+        self.assertEqual(d, {'ok': True, 'revoked': True})
         db.q('UPDATE devices SET last_seen=last_seen-120')
         st, d = self.j('POST', self.base + 'device', PIXEL)
         self.assertEqual(d, {'ok': True, 'revoked': True})
@@ -680,3 +685,106 @@ class ConfigVersion(tu.Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AsTheMemberSeesIt(OverHttps):
+    """0.2.46 review of the phase 2 API from the member's side: a paused or expired account, a new link (every
+    old address stops at once), and the limits a normal app meets."""
+
+    def setUp(self):
+        super().setUp()
+        devices._kicks.clear()
+
+    def _all_on(self):        # per test: the inherited OverHttps tests expect the switches off
+        db.set_settings(client_node_status=True, client_feedback=True, client_devices=True)
+
+    def _api(self, tok):
+        return '/s/%s/api/' % tok
+
+    def test_paused_or_expired_account(self):
+        self._all_on()
+        tok = db.user(self.uid)['sub_token']
+        st, before = self.j('GET', self.me)
+        self.assertEqual((st, len(before['nodes'])), (200, 2))
+        for reason in ('expired', 'quota', 'manual'):
+            db.update_user(self.uid, enabled=0, disabled_reason=reason)
+            st, d = self.j('GET', self.me)
+            self.assertEqual((st, d['enabled'], d['disabled_reason']), (200, False, reason))
+            self.assertEqual(d['nodes'], [])                         # like its subscription: no servers
+            self.assertNotEqual(d['config_version'], before['config_version'])   # the app refreshes to the empty one
+            self.assertEqual(d['features'], before['features'])
+        # it can still say what is wrong, and its devices still report and list
+        st, d = self.j('POST', self._api(tok) + 'feedback', {'client': {'platform': 'android', 'version': '1.0.29'},
+                                                             'text': '到期了，怎么续？'})
+        self.assertEqual(st, 200, d)
+        st, d = self.j('POST', self._api(tok) + 'device', PIXEL)
+        self.assertEqual((st, d), (200, {'ok': True, 'revoked': False}))
+        st, d = self.j('GET', self._api(tok) + 'devices')
+        self.assertEqual((st, len(d['devices'])), (200, 1))
+        db.update_user(self.uid, enabled=1, disabled_reason='')
+        st, d = self.j('GET', self.me)
+        self.assertEqual((d['config_version'], len(d['nodes'])), (before['config_version'], 2))
+
+    def _old_addresses_gone(self, old):
+        for method, path in (('GET', '/s/%s' % old), ('GET', '/s/%s?format=clash' % old), ('GET', '/s/%s/qr.svg' % old),
+                             ('GET', '/sub/%s.yaml' % old), ('GET', self._api(old) + 'me'),
+                             ('GET', self._api(old) + 'feedback'), ('GET', self._api(old) + 'devices'),
+                             ('POST', self._api(old) + 'device'), ('POST', self._api(old) + 'feedback'),
+                             ('POST', self._api(old) + 'devices/kick-others'), ('POST', self._api(old) + 'rotate')):
+            st, _, _ = self.req(method, path, PIXEL if method == 'POST' else None)
+            self.assertEqual(st, 404, (method, path.replace(old, '<old>')))
+
+    def test_every_new_link_ends_every_old_address(self):
+        self._all_on()
+        devices.report(db.user(self.uid), PIXEL, '', 1)
+        # 1) the member, from the link page
+        old = db.user(self.uid)['sub_token']
+        st, d = self.j('POST', self._api(old) + 'rotate', {})
+        self.assertEqual(st, 200, d)
+        self._old_addresses_gone(old)
+        # 2) the app's hard kick
+        old = db.user(self.uid)['sub_token']
+        st, d = self.j('POST', self._api(old) + 'devices/kick-others', {'device_id': DEV1})
+        self.assertEqual(st, 200, d)
+        self._old_addresses_gone(old)
+        new = db.user(self.uid)['sub_token']
+        st, d = self.j('GET', self._api(new) + 'me')
+        self.assertEqual((st, d['sub_url'].endswith('/s/' + new)), (200, True))
+        # 3) the admin; a member-centre session opened before it ends too
+        st, _ = self.j('POST', '/mem/api/login', {'name': 'tia', 'password': 'tiapassword'})
+        self.assertEqual(st, 200)
+        member_cookie = self.cookie
+        self.assertEqual(self.j('GET', '/mem/api/me')[0], 200)
+        self.cookie = ''
+        st, _ = self.j('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
+        old = db.user(self.uid)['sub_token']
+        st, d = self.j('POST', '/adm/api/users/%d/rotate' % self.uid, {})
+        self.assertEqual(st, 200, d)
+        self.cookie = ''
+        self._old_addresses_gone(old)
+        self.cookie = member_cookie
+        st, d = self.j('GET', '/mem/api/me')
+        self.assertEqual((st, d.get('code')), (401, 'login_required'))
+        st, d = self.j('GET', '/mem/api/devices')
+        self.assertEqual((st, d.get('code')), (401, 'login_required'))
+
+    def test_a_normal_app_is_never_refused(self):
+        self._all_on()
+        tok = db.user(self.uid)['sub_token']
+        for _ in range(30):                                                    # api/me as often as the app likes
+            self.assertEqual(self.req('GET', self.me)[0], 200)
+        for _ in range(5):                    # a report on every reconnect, several a minute, from two devices
+            for dev in (DEV1, DEV2):
+                st, d = self.j('POST', self._api(tok) + 'device', dict(PIXEL, device_id=dev))
+                self.assertEqual((st, d['ok']), (200, True))
+        for _ in range(5):
+            self.assertEqual(self.j('GET', self._api(tok) + 'devices')[0], 200)
+            self.assertEqual(self.j('GET', self._api(tok) + 'feedback')[0], 200)
+        # feedback: one, then a 429 with a Retry-After the app can show ("wait a moment"), never a lockout
+        body = {'client': {'platform': 'android', 'version': '1.0.29'}, 'text': '连不上'}
+        self.assertEqual(self.j('POST', self._api(tok) + 'feedback', body)[0], 200)
+        st, _, r = self.req('POST', self._api(tok) + 'feedback', body)
+        self.assertEqual(st, 429)
+        self.assertTrue(0 < int(r.getheader('Retry-After')) <= feedback.GAP)
+        self.assertEqual(self.req('GET', self.me)[0], 200)                     # nothing else is held back
+        self.assertEqual(web._fails, {})                                       # and no sign-in budget was spent

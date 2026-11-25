@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.46
+
+The vps2vpn app API (0.2.42–0.2.45) checked from the member's side: a paused account, a new link, the limits.
+从会员的角度把 vps2vpn 客户端用的接口（0.2.42–0.2.45）检查了一遍：账号暂停、换链接、频率限制。
+
+- A device that reports again within a minute (the app reconnecting) now gets its normal answer instead of "too many requests". Before, a device signed out from the list and reconnecting at once was not told, and stayed connected until its next report half an hour later.
+  同一台设备一分钟内再次报到（客户端重连）现在照常回答，不再返回「太频繁」。以前刚被踢下线的设备如果马上重连，就收不到通知，要等半小时后的下一次报到才断开。
+- For a paused or expired account the member API lists no servers, the same as its subscription (the app showed servers it could not use).
+  账号暂停或到期时，会员接口里的服务器列表是空的，和它的订阅一致（以前客户端会显示用不了的服务器）。
+- Checked and now covered by tests: after a new subscription link (from the member page, the app or the admin) every old address answers 404 and every member-centre sign-in ends; a paused account can still send feedback and see its devices; a normal app is never refused.
+  核对过、并加了测试：换订阅链接后（会员页、客户端、管理员换都一样）旧地址全部 404，会员中心的登录全部失效；暂停的账号仍能发反馈、看设备；正常使用的客户端不会被限流挡住。
+
 ## 0.2.45
 
 The vps2vpn app notices a changed subscription at once (docs/logic-review.md O-10).

@@ -2032,7 +2032,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # switches for our own app; an app that finds no key keeps that feature off, so older panels are safe
             'features': {'traffic_rank': s.get('client_traffic_rank') is True,   # a hand-edited backup's "false" stays off
                          'node_status': nodestatus.on(s), 'feedback': feedback.on(s), 'devices': devices.on(s)},
-            **({'nodes': nodestatus.for_member(s, u)} if nodestatus.on(s) else {}),
+            # a paused account's subscription has no servers, so neither does this list
+            **({'nodes': nodestatus.for_member(s, u) if u['enabled'] else []} if nodestatus.on(s) else {}),
             **({'feedback_unread': feedback.unread(u['id'])} if feedback.on(s) else {}),
         }
 

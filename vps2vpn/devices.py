@@ -19,7 +19,7 @@ PLATFORMS = ('windows', 'android', 'macos', 'linux', 'ios')
 NAME_MAX = 40
 VERSION_MAX = 32
 PER_USER = 50
-REPORT_GAP = 60                   # one report a minute per device
+REPORT_GAP = 60                   # one stored report a minute per device; sooner ones only get the answer
 KEEP_DAYS = 90
 KICK_MAX = 3                      # new links per account and hour, from the app
 UUID_RE = feedback.UUID_RE
@@ -52,7 +52,11 @@ def device_id(v):
 
 
 def report(u, d, ip, now=None):
-    """The app's report. Returns True when this device has been revoked. Raises Refused (429 within a minute)."""
+    """The app's report. Returns True when this device has been revoked. Raises Refused for bad input.
+
+    A second report within a minute (the app reconnecting) is answered but not stored: a 429 here would hide
+    "revoked" from an app that reconnects right after being signed out, and it would stay on until its next
+    report half an hour later."""
     did = device_id(d.get('device_id'))
     name = _line(d.get('name', ''), 'name', NAME_MAX)
     platform = d.get('platform', '')
@@ -65,7 +69,7 @@ def report(u, d, ip, now=None):
         row = c.execute('SELECT last_seen, revoked FROM devices WHERE user_id=? AND device_id=?', (u['id'], did)).fetchone()
         if row:
             if 0 <= now - row['last_seen'] < REPORT_GAP:
-                raise Refused('reported less than a minute ago', 'rate_limited', 429, REPORT_GAP - (now - row['last_seen']))
+                return bool(row['revoked'])
             c.execute('UPDATE devices SET name=?, platform=?, version=?, last_seen=?, ip=? WHERE user_id=? AND device_id=?',
                       (name, platform, version, now, masked, u['id'], did))
             return bool(row['revoked'])
