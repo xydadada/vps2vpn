@@ -4,6 +4,7 @@
 0.2.43  a server in maintenance is left out of "Auto" in every subscription format (logic review C-19);
         one-tap feedback (section 1)
 0.2.44  devices the app reports, soft and hard kick (section 2)
+0.2.45  api/me config_version: the app notices a changed subscription at once (logic review O-10)
 """
 import base64
 import datetime as dt
@@ -643,6 +644,38 @@ class DevicePages(unittest.TestCase):
         m = _static('member.js')
         self.assertIn("me.features.devices) blocks.push(devicesPanel())", m)
         self.assertEqual(m.count("dv_tip: '"), 2)
+
+
+
+class ConfigVersion(tu.Base):
+    def setUp(self):
+        super().setUp()
+        self.uid = db.add_user('gil', 10)
+        _with_joined(self.uid)
+
+    def v(self):
+        return subscription.config_version(db.settings(), db.user(self.uid), 'https://192.0.2.1:1')
+
+    def test_changes_with_the_subscription_only(self):
+        first = self.v()
+        self.assertRegex(first, r'^[0-9a-f]{16}$')
+        self.assertEqual(self.v(), first)
+        db.update_user(self.uid, used_down=3 << 30, last_seen=int(time.time()))          # traffic: same subscription
+        self.assertEqual(self.v(), first)
+        seen = {first}
+        for change in (lambda: db.set_settings(hy2_port=db.settings()['hy2_port'] + 1),
+                       lambda: db.set_settings(custom_direct=['example.cn']),
+                       lambda: db.rotate_user(self.uid),
+                       lambda: db.set_settings(client_node_status=True) or nodestatus.set_status(SID, {'state': 'maintenance'}),
+                       lambda: db.update_user(self.uid, enabled=0, disabled_reason='manual')):
+            change()
+            v = self.v()
+            self.assertNotIn(v, seen)
+            seen.add(v)
+
+    def test_in_api_me(self):
+        src = __import__('inspect').getsource(web)
+        self.assertIn("'config_version': subscription.config_version(s, u, base)", src)
 
 
 if __name__ == '__main__':

@@ -2,9 +2,10 @@
 
 The app makes a random device id on first run and reports it (with a name, platform and version) when it
 connects and every 30 minutes. The member and the admin see the list; "revoke" marks one device, and our app
-then disconnects and forgets the subscription the next time it reports. Every device of an account shares the
-same proxy credentials, so a revoked device that ignores this (another app, a modified one) still connects:
-only a new subscription link (the hard kick) stops everything.
+then disconnects and shows it as removed the next time it reports (it keeps the subscription, so "Restore"
+needs no re-import). Every device of an account shares the same proxy credentials, so a revoked device that
+ignores this (another app, a modified one) still connects: only a new subscription link (the hard kick) stops
+everything.
 
 The list is for seeing, never for enforcing: the device limit (`max_ips`) keeps counting the addresses the cores
 report, because a device list sent by the app can be made up. Not in backups; gone with the account; a device

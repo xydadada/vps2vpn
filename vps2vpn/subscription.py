@@ -2,6 +2,7 @@
 (sing-box apps, Hiddify, Karing...), a native Shadowrocket config (nodes + routing + DNS in one file)
 and plain share links (v2rayN, NekoBox...). Entries of joined servers (see cluster.py) are included."""
 import base64
+import hashlib
 import json
 import re
 import time
@@ -417,6 +418,24 @@ def _panel_pin(s):
     Hysteria 2 / TUIC entries carry it too, but a REALITY-only or a disabled account's subscription has none."""
     pin = tls_info(s)['pin']
     return {'x-vps2vpn-pin': pin} if pin else {}
+
+
+def for_account(s, u):
+    """The settings this account's subscription is built from: a paused one gets no proxies (only the usage
+    header and the entry that says why)."""
+    if u['enabled']:
+        return s
+    return dict(s, reality_enabled=False, hy2_enabled=False, tuic_enabled=False, servers=[])
+
+
+def config_version(s, u, base_url):
+    """A short value that changes whenever this account's subscription would: a server, port, key or name, the
+    routing rules, the account being paused. api/me sends it, so our app (which reads api/me far more often than
+    it refreshes the subscription) updates at once after a change instead of at the next refresh. Built from
+    the Clash form, which holds everything the other formats do. The AI group's order follows the daily AI
+    check, so it can also change once a day with nothing else changed."""
+    body = json.dumps(clash(for_account(s, u), u, base_url), sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
 
 
 def clash_yaml(s, u, base_url):

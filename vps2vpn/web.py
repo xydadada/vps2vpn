@@ -830,8 +830,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                              {'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Content-Security-Policy':
                               "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
                               "script-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
-        if not u['enabled']:
-            s = dict(s, reality_enabled=False, hy2_enabled=False, tuic_enabled=False, servers=[])   # usage header still sent
+        s = subscription.for_account(s, u)
         try:
             quota_eff = members.effective_quota(u)   # also when paused: the app's usage bar must match the page
         except Exception as e:          # only for the heads-up text: never fail the subscription over it
@@ -2016,6 +2015,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'expire_day': clock.date_of(u['expire_at']), 'next_reset_day': clock.date_of(nxt),
             'invited_by': names.get(u['invited_by'], ''), 'has_login': bool(u['login_hash']),
             'sub_url': sub_url, 'import': subscription.import_links(sub_url, s['node_name'] or 'vps2vpn'),
+            # changes whenever this account's subscription would: our app refreshes it at once (logic review O-10)
+            'config_version': subscription.config_version(s, u, base),
             'history': db.user_traffic(u['id'], 30),
             'requests': db.requests(u['id'])[:10] if s['member_requests'] else [],
             'invites': [members.invite_view(i, names, reg) for i in db.invites(u['id'])][:20] if s['member_invites'] else [],
