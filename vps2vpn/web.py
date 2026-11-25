@@ -164,8 +164,7 @@ def _propagate_lifetime(uid, old_expire, new_expire=None, old_reset=None, new_re
             by_inviter.setdefault(x['invited_by'], []).append(x)
     queue = [uid]
     seen = {uid}
-    month = clock.month()
-    reached = clock.reached(new_reset) if new_reset else False
+    label = clock.label_after_change(new_reset) if new_reset else ''
     while queue:
         cur = queue.pop(0)
         for child in by_inviter.get(cur, ()):
@@ -180,8 +179,8 @@ def _propagate_lifetime(uid, old_expire, new_expire=None, old_reset=None, new_re
                     upd['expire_after_days'] = 0
             if new_reset is not None:
                 upd['reset_day'] = int(new_reset)
-                if new_reset > 0 and child['reset_day'] == 0 and not child['last_reset'] and reached:
-                    upd['last_reset'] = month
+                if new_reset > 0 and int(new_reset) != child['reset_day']:
+                    upd['last_reset'] = label          # the same period end as the account it came from
             if upd:
                 db.update_user(cid, **upd)
             queue.append(cid)
@@ -1265,6 +1264,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                      'invite_deduct', 'remote_id', 'max_ips', 'paused_until', 'expire_after_days',
                                      'sub_fetched_at', 'sub_ua', 'speed_mbps', 'throttle_mbps', 'throttled', 'extra_gb')}
             row['servers'] = db.server_list(u)
+            row['expire_day'] = clock.date_of(u['expire_at'])      # in the panel's time zone, not the browser's
             row['limit_mbps'] = db.limit_mbps(u)
             row['sub_url'] = sub
             row['quota_eff'] = members.effective_quota(u, index=invitees)
@@ -1485,7 +1485,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         w = csv.writer(buf)
         w.writerow(['id', 'name', 'status', 'used_gb', 'quota_gb', 'expires', 'reset_day', 'device_limit',
                     'last_seen', 'created', 'note', 'subscription'])
-        day = lambda t: time.strftime('%Y-%m-%d', time.localtime(t)) if t else ''
+        day = clock.date_of
         for u in db.users():
             row = [u['id'], u['name'], 'active' if u['enabled'] else (u['disabled_reason'] or 'paused'),
                    round((u['used_up'] + u['used_down']) / (1 << 30), 3), u['quota_gb'] or '',
@@ -1534,9 +1534,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 fields['disabled_reason'] = '' if fields['enabled'] else 'manual'
                 if fields['enabled']:
                     fields['paused_until'] = 0
-            if 'reset_day' in fields and fields['reset_day'] > 0 and u['reset_day'] == 0 and not u['last_reset']:
-                if clock.reached(fields['reset_day']):
-                    fields['last_reset'] = clock.month()
+            period_ends = ''
+            if 'reset_day' in fields and fields['reset_day'] > 0 and fields['reset_day'] != u['reset_day']:
+                # The period running now ends the next time the new day comes: not at once (that would wipe
+                # what was used so far), and not a month after it (that would stretch it to ~50 days).
+                fields['last_reset'] = clock.label_after_change(fields['reset_day'])
+                period_ends = clock.date_of(clock.next_reset(fields['reset_day']))
             other = db.user_by_name(fields['name']) if 'name' in fields else None
             if other and other['id'] != uid:
                 return self.json({'error': 'name already used'}, 400)
@@ -1547,12 +1550,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 # Accounts carved from this one's quota share its lifetime and reset schedule.
                 _propagate_lifetime(uid, u['expire_at'], fields['expire_at'] if exp_changed else None,
                                     u['reset_day'], fields['reset_day'] if rst_changed else None)
+            jobs.enforce()
+            apply_async()
+            after = db.user(uid)
+            if after and fields.get('enabled') and not after['enabled'] and after['disabled_reason'] in ('expired', 'quota'):
+                # Switched on, but still expired or out of quota: enforce paused it again at once. Say so.
+                return self.json({'ok': True, 'still_paused': after['disabled_reason'], 'period_ends': period_ends})
+            return self.json({'ok': True, 'period_ends': period_ends})
         jobs.enforce()
         apply_async()
-        after = db.user(uid)
-        if after and fields.get('enabled') and not after['enabled'] and after['disabled_reason'] in ('expired', 'quota'):
-            # Switched on, but still expired or out of quota: enforce paused it again at once. Say so.
-            return self.json({'ok': True, 'still_paused': after['disabled_reason']})
         return self.json({'ok': True})
 
     def refused(self, fn, after=None):
@@ -1879,6 +1885,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'capacity': members.capacity(u) if s['member_invites'] else None,
             'reserved_gb': round(members.reserved(u['id']), 2) if u['quota_gb'] else 0,   # promised to unused codes
             'expire_at': u['expire_at'], 'reset_day': u['reset_day'], 'next_reset': nxt, 'created_at': u['created_at'],
+            'expire_day': clock.date_of(u['expire_at']), 'next_reset_day': clock.date_of(nxt),
             'invited_by': names.get(u['invited_by'], ''), 'has_login': bool(u['login_hash']),
             'sub_url': sub_url, 'import': subscription.import_links(sub_url, s['node_name'] or 'vps2vpn'),
             'history': db.user_traffic(u['id'], 30),
@@ -2056,6 +2063,19 @@ def user_fields(d):
             if expiry > MAX_ACCOUNT_EXPIRE_AT:
                 return 'expire_at is out of supported range'
             out['expire_at'] = max(0, expiry)
+        if 'expire_date' in d:            # "usable through" this day, in the panel's time zone (Settings)
+            text = str(d['expire_date'] or '').strip()
+            if not text:
+                out['expire_at'] = 0
+            else:
+                if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', text):
+                    return 'date must look like 2026-12-31'
+                try:
+                    out['expire_at'] = clock.day_end(text)
+                except (ValueError, OverflowError, OSError):
+                    return 'date must look like 2026-12-31'
+                if not 0 < out['expire_at'] <= MAX_ACCOUNT_EXPIRE_AT:
+                    return 'expire_at is out of supported range'
         if 'reset_day' in d:
             out['reset_day'] = number(d['reset_day'], True)
             if not 0 <= out['reset_day'] <= 31:
@@ -2351,7 +2371,7 @@ def landing_page(s, u, sub_url):
     q_bytes = max(0, members.effective_quota(u) * (1 << 30)) if u['quota_gb'] else None
     quota = fmt_bytes(q_bytes) if q_bytes is not None else t['unlimited']
     pct = (min(100, int(used * 100 / q_bytes)) if q_bytes else 100) if q_bytes is not None else 0
-    exp = time.strftime('%Y-%m-%d', time.localtime(u['expire_at'])) if u['expire_at'] else t['never']
+    exp = clock.date_of(u['expire_at']) or t['never']
     links = subscription.import_links(sub_url, s['node_name'] or 'vps2vpn')
     btns = [('vps2vpn app' if s['language'] == 'en' else 'vps2vpn 客户端', links['vps2vpn']), ('Clash Verge / FlClash', links['clash']), ('Shadowrocket', links['shadowrocket']),
             ('Stash', links['stash']), ('Karing', links['karing']),

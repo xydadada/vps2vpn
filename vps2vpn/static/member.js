@@ -176,10 +176,10 @@ async function renderHome() {
     h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats m-stats'},
       stat(t('used'), fmt.bytes(used)), stat(t('quota'), q != null ? fmt.bytes(q) : t('unlimited')),
       stat(t('left'), q != null ? fmt.bytes(Math.max(0, q - used - (me.reserved_gb || 0) * GB)) : t('unlimited')),
-      me.reserved_gb ? stat(t('reserved'), me.reserved_gb + ' GB') : null, stat(t('expires'), !me.expire_at && me.expire_after_days ? t('first_use').replace('{n}', me.expire_after_days) : dateStr(me.expire_at)),
+      me.reserved_gb ? stat(t('reserved'), me.reserved_gb + ' GB') : null, stat(t('expires'), !me.expire_at && me.expire_after_days ? t('first_use').replace('{n}', me.expire_after_days) : (me.expire_day || dateStr(me.expire_at))),
       me.extra_gb ? stat(t('extra'), '+' + me.extra_gb + ' GB') : null,
       stat('↓ ' + t('down'), fmt.bytes(me.used_down)), stat('↑ ' + t('up_'), fmt.bytes(me.used_up)),
-      stat(t('reset'), me.next_reset ? dateStr(me.next_reset) : t('none')),
+      stat(t('reset'), me.next_reset ? (me.next_reset_day || dateStr(me.next_reset)) : t('none')),
       me.shared_gb ? stat(t('shared'), me.shared_gb + ' GB') : me.invited_by ? stat(t('invited_by'), me.invited_by) : stat(t('status'), me.enabled ? t('ok') : t('paused'))))));
   const days = h('div', {class: 'chart h160'});
   const im = me.import;
@@ -225,13 +225,13 @@ function statusAlerts(me, used, q) {
   const out = [], fill = (s, o) => s.replace(/\{(\w+)\}/g, (_, k) => o[k]);
   const r = me.disabled_reason;
   const msg = r === 'quota' ? t('paused_quota') + (M.hello.requests && me.quota_gb ? t('q_ask') : '') +
-      (me.next_reset ? fill(t('q_wait'), {date: dateStr(me.next_reset)}) : t('q_admin'))
+      (me.next_reset ? fill(t('q_wait'), {date: me.next_reset_day || dateStr(me.next_reset)}) : t('q_admin'))
     : r === 'devices' ? fill(t('paused_devices'), {lim: me.max_ips ? fill(t('dev_limit'), {n: me.max_ips}) : ''})
     : t(r === 'expired' ? 'paused_expired' : 'paused_other');
   if (!me.enabled) out.push(h('div', {class: 'alert ' + (r === 'devices' ? 'warn' : 'bad')}, icon('alert'), msg));
   else {
     const d = me.expire_at ? Math.ceil((me.expire_at * 1000 - Date.now()) / 864e5) : 0;
-    if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: dateStr(me.expire_at)})));
+    if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: me.expire_day || dateStr(me.expire_at)})));
     if (me.throttled) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t(me.reset_day ? 'slowed' : 'slowed_nr'), {mbps: me.limit_mbps})));
     else if (q != null && (q > 0 ? used / q : 1) >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
     if (me.speed_mbps && !me.throttled) out.push(h('div', {class: 'alert'}, icon('alert'), fill(t('capped'), {mbps: me.speed_mbps})));

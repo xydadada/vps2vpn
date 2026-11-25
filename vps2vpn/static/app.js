@@ -18,7 +18,7 @@ const T = {
     live_chart: '实时流量', live_sub: '服务器网卡 · 3 分钟', days_chart: '每日流量', days_sub: '近 30 天，全部使用者',
     services: '服务状态', running: '运行中', stopped: '未运行', off: '已关闭', unknown: '未知',
     users: '使用者', add_user: '添加使用者', name: '名字', quota: '流量上限 (GB，0 = 不限)', expire: '到期日（留空 = 永久）',
-    reset_day: '每月几号重置流量（0 = 不重置）', note: '备注', save: '保存', cancel: '取消', del: '删除',
+    reset_day: '每月几号重置流量（0 = 不重置）', period_ends: '已保存。改了重置日：这一期用到 {d} 才重置（不会马上清零），之后每月按新的日子重置。', note: '备注', save: '保存', cancel: '取消', del: '删除',
     used: '已用', unlimited: '不限', never: '永久', status: '状态', expires: '到期', last_seen: '最近使用', sub_fetched: '最近拉取订阅', sub_never: '还没有 App 拉取过', sub_app: '拉取订阅的 App',
     enabled: '正常', r_quota: '流量用完', r_expired: '已到期', r_manual: '手动停用', r_remote: '主服务器停用', search: '搜索名字或备注',
     share: '订阅', share_tip: '把链接或二维码发给使用者：手机扫码，或在 App 里「从 URL 导入」。',
@@ -130,7 +130,7 @@ const T = {
     live_chart: 'Live traffic', live_sub: 'Server network · 3 minutes', days_chart: 'Daily traffic', days_sub: 'Last 30 days, all users',
     services: 'Services', running: 'running', stopped: 'stopped', off: 'off', unknown: 'unknown',
     users: 'Users', add_user: 'Add user', name: 'Name', quota: 'Quota (GB, 0 = unlimited)', expire: 'Expires (empty = never)',
-    reset_day: 'Monthly reset day (0 = never)', note: 'Note', save: 'Save', cancel: 'Cancel', del: 'Delete',
+    reset_day: 'Monthly reset day (0 = never)', period_ends: 'Saved. The reset day changed: this period runs until the reset on {d} (nothing is wiped now), then monthly on the new day.', note: 'Note', save: 'Save', cancel: 'Cancel', del: 'Delete',
     used: 'Used', unlimited: 'unlimited', never: 'never', status: 'Status', expires: 'Expires', last_seen: 'Last seen', sub_fetched: 'Subscription last fetched', sub_never: 'Not fetched by an app yet', sub_app: 'App that fetched it',
     enabled: 'active', r_quota: 'quota used', r_expired: 'expired', r_manual: 'paused', r_remote: 'paused by main server', search: 'Search name or note',
     share: 'Subscription', share_tip: 'Send this link or QR code to the user. Scan it, or use "Import from URL" in the app.',
@@ -685,7 +685,7 @@ function userState(u) {
   if (u.disabled_reason === 'devices') return chip('warn', t('r_devices'));
   return chip(u.disabled_reason === 'manual' || !u.disabled_reason ? 'off' : 'bad', t({quota: 'r_quota', expired: 'r_expired', remote: 'r_remote'}[u.disabled_reason] || 'r_manual'));
 }
-const expText = u => u.expire_at ? dateStr(u.expire_at) : u.expire_after_days ? u.expire_after_days + ' ' + t('days') + ' · ' + t('exp_waiting') : t('never');
+const expText = u => u.expire_at ? (u.expire_day || dateStr(u.expire_at)) : u.expire_after_days ? u.expire_after_days + ' ' + t('days') + ' · ' + t('exp_waiting') : t('never');
 // Bytes an account may use now. A capped plan whose share went to invitees is 'used up', never 'unlimited'.
 const quotaBytes = u => u.quota_gb ? Math.max(1, (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB) : 0;
 const FILTERS = {
@@ -927,7 +927,7 @@ function editUser(u) {
   S.drawerSeq++;
   const isNew = !u; u = u || {name: '', quota_gb: 0, expire_at: 0, reset_day: 0, note: '', max_ips: 0, expire_after_days: 0, speed_mbps: 0, throttle_mbps: 0, servers: null};
   const f = {name: h('input', {type: 'text', value: u.name, maxlength: '32'}), quota: h('input', {type: 'number', min: '0', step: 'any', value: u.quota_gb || 0}),
-    exp: h('input', {type: 'date', value: u.expire_at ? dateStr(u.expire_at) : ''}), reset: h('input', {type: 'number', min: '0', max: '31', value: u.reset_day || 0}),
+    exp: h('input', {type: 'date', value: u.expire_at ? (u.expire_day || dateStr(u.expire_at)) : ''}), reset: h('input', {type: 'number', min: '0', max: '31', value: u.reset_day || 0}),
     note: h('input', {type: 'text', value: u.note || '', maxlength: '200'}), ips: h('input', {type: 'number', min: '0', max: '100', value: u.max_ips || 0}),
     mode: h('select', null, h('option', {value: 'never'}, t('exp_never')), h('option', {value: 'date'}, t('exp_date')), h('option', {value: 'first'}, t('exp_first'))),
     first: h('input', {type: 'number', min: '1', max: '3650', value: u.expire_after_days || 30}),
@@ -951,12 +951,14 @@ function editUser(u) {
     save.disabled = true;
     const exp = f.mode.value === 'date' ? f.exp.value : '';
     const body = {name: f.name.value.trim(), quota_gb: Number(f.quota.value || 0), reset_day: Number(f.reset.value || 0), note: f.note.value,
-      expire_at: exp ? Math.floor(new Date(exp + 'T23:59:59').getTime() / 1000) : 0, max_ips: Number(f.ips.value || 0),
+      // the day, not a moment: the server ends it at 23:59:59 in the panel's time zone (Settings), whatever this
+      // browser's is. An unchanged day is not sent, so saving other fields never moves the expiry.
+      ...(exp ? (exp !== (u.expire_day || '') || isNew ? {expire_date: exp} : {}) : {expire_at: 0}), max_ips: Number(f.ips.value || 0),
       expire_after_days: f.mode.value === 'first' ? Number(f.first.value || 0) : 0,
       speed_mbps: Number(f.speed.value || 0), throttle_mbps: Number(f.slow.value || 0), servers};
     try {
       const r = isNew ? await api('users', body) : await api(`users/${u.id}/save`, body);
-      await load(); toast(t('saved')); closeDrawer();
+      await load(); toast(r && r.period_ends ? t('period_ends').replace('{d}', r.period_ends) : t('saved')); closeDrawer();
       if (S.view === 'users') drawUsers();
       if (isNew && r.id) openUser(r.id);
     } catch (er) { err(er); save.disabled = false; }

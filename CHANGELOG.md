@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.41
+
+Business-logic review, third part (docs/logic-review.md, L-13..L-15), and moving the main server.
+业务逻辑审查第三部分（docs/logic-review.md，L-13..L-15），以及主服务器换机器。
+
+- Expiry dates follow the time zone in Settings: an account "usable through 31 December" stops at 23:59:59 that day there, not in the time zone of the admin's browser. The users list, the member page, Telegram and the CSV show the date in that time zone too.
+  到期日按设置里的时区算：「用到 12 月 31 日」就是那个时区当天 23:59:59 到期，不再按管理员浏览器所在的时区。用户列表、会员页、Telegram、CSV 显示的日期也按这个时区。
+- Changing an account's reset day no longer wipes its traffic at once or stretches the period to about 50 days: the current period runs until the new day next comes, and the panel says which day that is after saving.
+  改账号的重置日时，不再马上清零，也不会让这一期拖到 50 天左右：这一期用到新的重置日那天为止，保存后面板会告诉你是哪一天。
+- Quieter Telegram: a core that crashes and comes back is reported every 6 hours instead of every hour (one that does not come back: still hourly); an account over its device limit once a day (every 6 hours when it is paused for it); a failing certificate renewal once a day; several joined servers unreachable in the same minute make one message.
+  Telegram 少打扰：核心挂了又自己恢复的，6 小时说一次（以前每小时，整夜刷屏；重启失败的仍每小时说）；账号超过设备上限，一天说一次（开了「超了暂停」的 6 小时一次）；证书续期失败一天一次；同一分钟里几台子服务器都连不上，合成一条。
+- Installing with `V2V_PANEL_PORT=<port>` puts the panel (and so every subscription link) on that port, and stops if it is taken. This is how a new main server keeps everyone's links: see docs/move-main-server.md.
+  安装时加 `V2V_PANEL_PORT=<端口>`，面板（也就是所有订阅链接）就用这个端口，端口被占用就停下。新主服务器要让大家的链接不用换，就靠这个，见 docs/move-main-server.md。
+- tools/legend_import.py reports the old panel's nodes, per-node billing rates, relays, and any setting or account field it does not import.
+  tools/legend_import.py 的报告会列出旧系统的节点、按节点的计费倍率、中转，以及没有导入的设置项和账号字段。
+
 ## 0.2.40
 
 Business-logic review, second part (docs/logic-review.md, L-09..L-12).

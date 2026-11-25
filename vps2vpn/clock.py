@@ -134,3 +134,32 @@ def next_reset(reset_day, ts=None):
     if t.tm_mday >= day_in(reset_day, y, m):
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     return midnight(y, m, day_in(reset_day, y, m))
+
+
+def strftime(fmt, ts=None):
+    """time.strftime in the owner's time zone (the server's clock when none is set)."""
+    return time.strftime(fmt, local(ts))
+
+
+def date_of(ts):
+    """'2026-12-31' for a moment in the owner's time zone; '' for 0 (never)."""
+    return strftime('%Y-%m-%d', ts) if ts else ''
+
+
+def day_end(text):
+    """The last second of a 'YYYY-MM-DD' day in the owner's time zone: an account "usable through" that day
+    stops at 23:59:59 there, whatever time zone the admin's browser is in. Raises ValueError."""
+    d = dt.date.fromisoformat(str(text).strip())
+    nxt = d + dt.timedelta(days=1)
+    return midnight(nxt.year, nxt.month, nxt.day) - 1
+
+
+def label_after_change(reset_day, ts=None):
+    """`last_reset` for an account whose reset day was just changed to `reset_day`: the current period then
+    runs until the next time that day comes (never wiped at once, never stretched past it). This month's
+    label when that day has already come this month, last month's when it is still ahead."""
+    t = local(ts)
+    if t.tm_mday >= day_in(reset_day, t.tm_year, t.tm_mon):
+        return '%04d-%02d' % (t.tm_year, t.tm_mon)
+    y, m = (t.tm_year - 1, 12) if t.tm_mon == 1 else (t.tm_year, t.tm_mon - 1)
+    return '%04d-%02d' % (y, m)

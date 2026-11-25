@@ -10,7 +10,13 @@ L-09  a removed server that could not be told is told later, by every sync round
 L-10  "Auto" does not switch to a server whose traffic counts more than once
 L-11  the IP-change notice says the subscription links themselves changed
 L-12  pasted join codes and obfuscation passwords: invisible characters removed or refused
+0.2.41:
+L-13  an expiry date is the end of that day in the panel's time zone, not the admin browser's (M-8)
+L-14  changing the reset day: the period runs until the new day comes, and the panel says when (M-9)
+L-15  Telegram: no hourly repeats all night; several joined servers down make one message
 """
+import datetime as dt
+import threading
 import base64
 import inspect
 import json
@@ -21,7 +27,7 @@ import unittest
 from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from vps2vpn import cluster, cores, db, jobs, notify, paths, subscription, system, web
+from vps2vpn import certs, clock, cluster, cores, db, jobs, notify, paths, secure, subscription, system, web
 
 GB = 1 << 30
 SID = '44444444'
@@ -301,6 +307,151 @@ class NoMonthlyReset(unittest.TestCase):
         self.assertEqual(js.count('slowed_nr:'), 2)
         self.assertIn("t(me.reset_day ? 'slowed' : 'slowed_nr')", js)
         self.assertIn("t(me.reset_day ? 'more_tip' : 'more_tip_nr')", js)
+
+
+
+def _ts(text, tz):
+    return int(dt.datetime.fromisoformat(text).replace(tzinfo=tz).timestamp())
+
+
+UTC8 = dt.timezone(dt.timedelta(hours=8))
+
+
+class ExpiryInThePanelsTimeZone(tu.Base):
+    """L-13 (M-8)"""
+    def setUp(self):
+        super().setUp()
+        db.set_settings(time_zone='UTC+8')
+        clock.forget()
+
+    def tearDown(self):
+        db.set_settings(time_zone='')
+        clock.forget()
+        super().tearDown()
+
+    def test_end_of_the_day_there(self):
+        self.assertEqual(clock.day_end('2026-12-31'), _ts('2026-12-31T23:59:59', UTC8))
+        self.assertEqual(clock.date_of(_ts('2026-12-31T23:59:59', UTC8)), '2026-12-31')
+        self.assertEqual(clock.date_of(_ts('2027-01-01T00:00:00', UTC8)), '2027-01-01')
+        self.assertEqual(clock.date_of(0), '')
+
+    def test_the_panel_sends_a_day(self):
+        self.assertEqual(web.user_fields({'expire_date': '2026-12-31'})['expire_at'], _ts('2026-12-31T23:59:59', UTC8))
+        self.assertEqual(web.user_fields({'expire_date': ''})['expire_at'], 0)
+        for bad in ('31/12/2026', '2026-13-01', '2026-02-30', 'x'):
+            self.assertIsInstance(web.user_fields({'expire_date': bad}), str, bad)
+        js = _static('app.js')
+        self.assertIn('{expire_date: exp}', js)
+        self.assertNotIn("T23:59:59').getTime()", js)                   # the browser's time zone is not used
+
+    def test_lists_and_member_page_show_the_day_there(self):
+        uid = db.add_user('dated')
+        db.update_user(uid, expire_at=_ts('2026-12-31T23:59:59', UTC8))
+        self.assertIn('u.expire_day ||', _static('app.js'))
+        self.assertIn('me.expire_day ||', _static('member.js'))
+        self.assertIn("'expire_day': clock.date_of(u['expire_at'])", inspect.getsource(web))
+
+
+class ResetDayChange(tu.Base):
+    """L-14 (M-9)"""
+    def test_the_period_runs_until_the_new_day(self):
+        tz = dt.timezone.utc
+        db.set_settings(time_zone='UTC')
+        clock.forget()
+        try:
+            on_10th = _ts('2026-11-10T12:00:00', tz)
+            # 1st -> 20th on the 10th: reset on the 20th this month (not a ~50-day period)
+            label = clock.label_after_change(20, on_10th)
+            self.assertEqual(label, '2026-10')
+            u = {'reset_day': 20, 'last_reset': label}
+            self.assertFalse(jobs.monthly_reset(u, on_10th)[0])
+            self.assertTrue(jobs.monthly_reset(u, _ts('2026-11-20T00:00:01', tz))[0])
+            # 20th -> 5th on the 10th: nothing is wiped now; next reset on 5 December
+            label = clock.label_after_change(5, on_10th)
+            self.assertEqual(label, '2026-11')
+            u = {'reset_day': 5, 'last_reset': label}
+            self.assertFalse(jobs.monthly_reset(u, on_10th)[0])
+            self.assertFalse(jobs.monthly_reset(u, _ts('2026-11-30T23:00:00', tz))[0])
+            self.assertTrue(jobs.monthly_reset(u, _ts('2026-12-05T00:00:01', tz))[0])
+            # January: last month is December of the year before
+            self.assertEqual(clock.label_after_change(20, _ts('2027-01-03T00:00:00', tz)), '2026-12')
+        finally:
+            db.set_settings(time_zone='')
+            clock.forget()
+
+
+class SaveOverHttps(tu.Base):
+    """L-13 and L-14 through the panel's API"""
+    def setUp(self):
+        super().setUp()
+        db.set_settings(public_host='127.0.0.1', setup_done=True, member_path='mem', panel_path='adm',
+                        admin_hash=secure.hash_password('adminpassword'), time_zone='UTC+8')
+        clock.forget()
+        certs.ensure_self_signed('127.0.0.1')
+        self.httpd = web.Server(('127.0.0.1', 0), web.Handler, web.TLSContext())
+        self.port = self.httpd.server_address[1]
+        db.set_settings(panel_port=self.port)
+        self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self._thread.start()
+        self.cookie = ''
+        web._fails.clear()
+        self._apply = web.apply_async
+        web.apply_async = lambda force=False: None
+        self.req('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
+
+    def tearDown(self):
+        web.apply_async = self._apply
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self._thread.join(5)
+        db.set_settings(time_zone='')
+        clock.forget()
+        super().tearDown()
+
+    req = tu.Web.req
+
+    def test_save_with_a_day_and_a_new_reset_day(self):
+        uid = db.add_user('member', 10)
+        db.update_user(uid, reset_day=1, last_reset=clock.month(), used_down=3 * GB)
+        st, body, _ = self.req('POST', '/adm/api/users/%d/save' % uid, {'expire_date': '2027-03-31', 'reset_day': 28})
+        self.assertEqual(st, 200, body)
+        ans = json.loads(body)
+        u = db.user(uid)
+        self.assertEqual(u['expire_at'], _ts('2027-03-31T23:59:59', UTC8))
+        self.assertEqual(u['used_down'], 3 * GB)                          # not wiped by the change
+        self.assertEqual(ans['period_ends'], clock.date_of(clock.next_reset(28)))
+        st, body, _ = self.req('GET', '/adm/api/state')
+        if st == 200:
+            row = next((r for r in json.loads(body).get('users', []) if r['id'] == uid), None)
+            if row:
+                self.assertEqual(row['expire_day'], '2027-03-31')
+        # saving something else leaves the period alone and says nothing about it
+        st, body, _ = self.req('POST', '/adm/api/users/%d/save' % uid, {'note': 'x', 'reset_day': 28})
+        self.assertEqual(json.loads(body)['period_ends'], '')
+
+
+class QuieterTelegram(unittest.TestCase):
+    """L-15"""
+    def test_several_joined_servers_down_make_one_message(self):
+        sent = []
+        with mock.patch.object(notify, 'send', lambda text, **k: sent.append((text, k['key']))):
+            cluster._alert([('server A unreachable', 'node-down-aaaa1111'), ('server B unreachable', 'node-down-bbbb2222'),
+                            ('something else', 'other')])
+        self.assertEqual(len(sent), 2)
+        merged = next(t for t, k in sent if k.startswith('node-down-'))
+        self.assertIn('2 台子服务器连不上了', merged)
+        self.assertIn('server A', merged)
+        self.assertIn('server B', merged)
+        sent.clear()
+        with mock.patch.object(notify, 'send', lambda text, **k: sent.append((text, k['key']))):
+            cluster._alert([('server A unreachable', 'node-down-aaaa1111')])
+        self.assertEqual(sent, [('server A unreachable', 'node-down-aaaa1111')])
+
+    def test_repeats_are_spaced_out(self):
+        src = inspect.getsource(jobs)
+        self.assertIn("every=6 * 3600 if ok else 3600", src)              # a core that keeps coming back
+        self.assertIn("every=6 * 3600 if s['ip_limit_pause'] else 86400", src)   # devices over the limit
+        self.assertIn("key='cert', every=86400", src)
 
 
 if __name__ == '__main__':

@@ -336,7 +336,7 @@ def tg_expiring(s, now=None, days=7):
     if soon:
         lines.append(('%d 天内到期：' if zh else 'Ending within %d days:') % days)
         for u in sorted(soon, key=lambda u: u['expire_at']):
-            lines.append('⏳ %s  %s' % (u['name'], time.strftime('%Y-%m-%d %H:%M', time.localtime(u['expire_at']))))
+            lines.append('⏳ %s  %s' % (u['name'], clock.strftime('%Y-%m-%d %H:%M', u['expire_at'])))
     if low:
         lines.append('流量快用完（≥80%）：' if zh else 'Almost out of data (80% or more):')
         for u, quota in sorted(low, key=lambda x: -(x[0]['used_up'] + x[0]['used_down']) / max(x[1], 1e-9)):
@@ -509,9 +509,11 @@ def watchdog(s):
             system.systemctl('restart', unit)
             time.sleep(2)
             ok = system.unit_active(unit)
+            # A core that keeps crashing but comes back each time: every 6 hours is enough (it was hourly, all
+            # night). One that does not come back is told every hour.
             notify.send('%s was down; restart %s / %s 挂了，已%s' % (unit, 'worked' if ok else 'FAILED', unit,
                                                                  '自动重启' if ok else '重启失败，请登录面板体检'),
-                        key='down-' + unit, every=3600)
+                        key=('down-' if ok else 'down-failed-') + unit, every=6 * 3600 if ok else 3600)
     if paths.LIVE and s['hy2_enabled'] and s['hy2_hop'] and shutil.which('nft'):
         if system.run(['nft', 'list', 'table', 'inet', system.NFT_TABLE]).returncode != 0:
             res = system.port_hopping(s)
@@ -551,7 +553,8 @@ def device_limits(s, online=None, now=None):
         notify.send('%s: %d devices online (limit %d)%s / %s 同时在线 %d 台设备（上限 %d）%s' % (
             u['name'], n, u['max_ips'], ', paused 10 min' if s['ip_limit_pause'] else '',
             u['name'], n, u['max_ips'], '，暂停 10 分钟' if s['ip_limit_pause'] else ''),
-            key='dev-%d' % u['id'], every=3600)
+            # warnings only: the same account over its limit all day was told every hour; once a day now
+            key='dev-%d' % u['id'], every=6 * 3600 if s['ip_limit_pause'] else 86400)
     return changed
 
 
@@ -688,7 +691,7 @@ def tg_users(s, name=''):
             quota = '%g GB' % round(members.effective_quota(u, now=now, index=invitees), 2)
         else:
             quota = '不限' if zh else 'unlimited'
-        exp = time.strftime('%Y-%m-%d', time.localtime(u['expire_at'])) if u['expire_at'] else ('永久' if zh else 'never')
+        exp = clock.date_of(u['expire_at']) or ('永久' if zh else 'never')
         out.append('%s %s  %.2f GB / %s  %s %s' % (state, u['name'], used, quota, '到期' if zh else 'until', exp))
     return '\n'.join(out) or ('还没有使用者' if zh else 'No users yet')
 
@@ -920,7 +923,7 @@ class Scheduler:
             # a 90-day domain certificate, 36 hours for a 6-day IP certificate (renewal starts at 72 hours).
             warn_hours = 36 if certs.is_ip(cert_host) else 7 * 24
             if certs.trusted(cert_host) and not certs.acme_valid(warn_hours):
-                notify.send('certificate renewal failing: %s / 证书续期失败' % res[:200], key='cert', every=12 * 3600)
+                notify.send('certificate renewal failing: %s / 证书续期失败' % res[:200], key='cert', every=86400)
         elif res == 'ok':
             db.set_settings(cert_status='ok')
         if certs.current(cert_host) != before:

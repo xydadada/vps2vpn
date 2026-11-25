@@ -535,7 +535,17 @@ def _record_sync_error(server, e):
 
 
 def _alert(pending):
-    for text, key in pending:
+    """Several joined servers unreachable in one round (usually this server's own network, or a provider
+    outage) make one message, not one each."""
+    downs = [(t, k) for t, k in pending if k.startswith('node-down-')]
+    rest = [(t, k) for t, k in pending if not k.startswith('node-down-')]
+    if len(downs) > 1:
+        rest.append(('%d servers unreachable / %d 台子服务器连不上了：\n%s' % (len(downs), len(downs),
+                                                                    '\n'.join(t for t, _ in downs)),
+                     'node-down-' + ','.join(sorted(k[10:] for _, k in downs))))
+    else:
+        rest += downs
+    for text, key in rest:
         notify.send(text, key=key, every=6 * 3600)
 
 
