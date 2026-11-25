@@ -30,7 +30,7 @@
   - 客户端「严格 Windows 检查」（harsh：dirty / chaos / users）报的 4 个失败查下来都是测试脚本自己的错，客户端代码没问题，所以当时没有为它们发新版。两个 TUN 同时开时，我们的 strict-route 会挡住另一个 TUN 的 DNS，这一项记成提示（NOTE），不算失败。1.0.28 已加上：检测到另一个 VPN 开着时，用大白话提示用户关掉一个。
 - **安卓**：还没有正式包。模拟器一连上 VPN 就整机冻住，换网络栈、MTU、地址段、两种图形模式都没用。客户端仓库加了 Firebase Test Lab 真机测试（workflow `android-testlab.yaml`，订阅放在 secret `TESTLAB_SUB_URL`），结果见客户端交接文档。**用户 2026-11-23 定的优先级：Windows 第一，安卓先放一放。** 修好前不配置服务端的 `files.android`。
 - **测试服务器**：只能用用户指定的那一台。地址和 SSH 密钥位置**不写在这个公开仓库里**，写在用户电脑上的 Claude 用户级说明文件 `~/.claude/CLAUDE.md`（「测试服务器」一节），本机的 Claude 对话都会读到。其他服务器（正在用的正式服务器）一律不碰。那台上有一个给真机测试用的账号 `testlab`，2026-11-23 测试做完后已停用（要再测时在面板里重新启用即可，客户端仓库的 secret `TESTLAB_SUB_URL` 就是它的订阅）。
-  - 2026-11-25 的状态：服务端 0.2.45（正式发布的 tag；升级前的备份另存为 `backups/before-0.2.45.json`；`api/me` 实测有 `config_version`，连读两次一致；服务器状态、反馈、设备三个开关都关着，install.sh 也留了回滚快照），客户端文件夹同步到 1.0.28，流量排行开关关着，`testlab` 停用，没有限速账号，体检 All good。
+  - 2026-11-25 的状态：服务端 0.2.46（正式发布的 tag；升级前的备份另存为 `backups/before-0.2.46.json`；`api/me` 实测正常，`config_version` 和 0.2.45 时一样（订阅没变）；服务器状态、反馈、设备三个开关都关着，install.sh 也留了回滚快照），客户端文件夹同步到 1.0.28，流量排行开关关着，`testlab` 停用，没有限速账号，体检 All good。
   - 限速的实测办法（0.2.37 / 0.2.38 做过）：临时给一个测试账号设 5 Mbps，`sudo vps2vpn apply --force`，然后分别 `sudo nft delete table inet vps2vpn_shape`、`sudo ip link set v2vifb0 down`、`sudo ip link del v2vifb0`，每次看 `sudo vps2vpn doctor` 的 `speed_limits` 一行是不是 FAIL、修好后是不是 OK。nft 表被删后，面板的 5 分钟检查会自己装回（实测约 290 秒）。做完把限速改回 0。
 - 离线测试：全量 597 项通过（含迁移工具 22 项）。命令见第 4 节。
 - **限速**：2026-11-23 在测试服务器上真测过（Reality、TUIC 限 5 Mbps，实测 4.2 / 4.4，见第 6 节「演练记录」）。**还没真测的**：降速（流量用完后变慢），以及只开 Hysteria 的服务器（限速账号仍能用、只是不限速；降速账号在那台上应该被关掉）。
