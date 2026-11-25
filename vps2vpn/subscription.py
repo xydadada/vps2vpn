@@ -80,6 +80,7 @@ def nodes(s, u):
     for n in out:
         n['ai_score'] = aicheck.score(aicheck.latest())
         n['rate'] = main_rate
+        n['server_id'] = db.MAIN_SERVER
     seen_labels = {main_label}
     for x in s.get('servers') or []:
         info, lid = x.get('info'), (x.get('idmap') or {}).get(str(u['id']))
@@ -97,6 +98,7 @@ def nodes(s, u):
         for n in more:
             n['ai_score'] = info.get('ai_score', -1)
             n['rate'] = cluster.server_rate(x)
+            n['server_id'] = x['id']
         out += _ordered(s, more)
     if s.get('ipv4_only'):            # the old panel's ".ipv4.yaml" link
         out = [n for n in out if ':' not in n['server']]
@@ -704,9 +706,16 @@ def render(fmt, s, u, base_url, quota_gb=None):
     if st:
         headers['Announce'] = header_b64('%s %s - 请联系管理员 / Contact the admin' % st)
     else:
+        from . import nodestatus
         warn = warning_text(u, quota_gb)
         if warn:
             headers['Announce'] = header_b64('%s，续期或加流量请联系管理员 / Account %s - contact the admin' % warn)
+        elif nodestatus.on(s):
+            # the apps that show Announce (Hiddify, Happ...) say which server is down for maintenance; the node
+            # list itself never changes for it (docs/phase2-api.md 3.3)
+            m = nodestatus.maintenance_text(s, u)
+            if m:
+                headers['Announce'] = header_b64('维护中 / Maintenance: %s' % m)
     if fmt == 'clash':
         return 'text/yaml; charset=utf-8', clash_yaml(s, u, base_url), headers
     if fmt == 'singbox':

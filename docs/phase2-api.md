@@ -1,6 +1,6 @@
 # 第二阶段服务端接口设计：一键反馈、设备管理、节点状态
 
-状态：**只是设计，还没写代码**（2026-11-24）。需求来自客户端仓库 `ROADMAP.md` 第六节第 2、3、4 条。
+状态：第 3 节（节点状态）**0.2.42 已实现**，见 3.4；第 1、2 节还只是设计（2026-11-24）。需求来自客户端仓库 `ROADMAP.md` 第六节第 2、3、4 条。
 字段名定了以后，客户端会话把它们写回 `ROADMAP.md`。这里改了，也要同步过去。
 
 这个仓库是公开的：文档、代码、测试里的示例地址只用 192.0.2.x、198.51.100.x、203.0.113.x、2001:db8::。
@@ -270,6 +270,26 @@ CREATE TABLE IF NOT EXISTS devices (
 ### 3.3 订阅本身要不要变
 
 不变。状态只经 `api/me` 下发，订阅文件里的节点名和顺序都不动。这样第三方软件不受影响，订阅也不会因为改状态而变化、触发客户端重新下载。
+
+### 3.4 实际实现（0.2.42）
+
+和上面设计一致，补充几点：
+
+- 代码在 `vps2vpn/nodestatus.py`。过了 `until` 的状态在**读的时候**就当成 `ok`，不需要定时任务；读不懂的值（手改过的备份）也当成 `ok`。
+- 管理接口：`GET /<面板路径>/api/node-status` 返回 `{"on": true, "servers": [{"id": "main", "name": "Tokyo", "state": "ok", "note": "", "until": 0, "until_local": ""}, ...]}`；
+  `POST` 同一地址，请求体 `{"id": "main" 或子服务器 id, "state": "maintenance", "note": "...", "until_local": "2026-12-01T23:30"}`。`until_local` 按设置里的时区算（和到期日一样，不看管理员浏览器的时区），也可以直接给整数 `until`。结束时间必须在将来、一年以内；`state` 不对返回 400，没有这台服务器返回 404。
+- `nodes` 的 `id` 是 `"main"`（主服务器自己）或子服务器的 8 位 id；`names` 和 Clash、sing-box 订阅里的节点名一字不差（小火箭订阅里的名字会去掉个别字符，客户端用的是 Clash 格式，不受影响）。开了 IPv6 节点时，`names` 里也有带 ` IPv6` 的那几个。
+- 订阅的 `Announce` 头只在开关打开、账号自己没有到期或流量提醒时才写维护信息（账号自己的提醒优先），最多列 3 台。「拥堵」不写进公告。
+
+例子（开关打开、子服务器维护中）：
+
+```json
+"features": {"traffic_rank": false, "node_status": true},
+"nodes": [
+  {"state": "ok", "note": "", "until": 0, "id": "main", "group": "Tokyo", "names": ["Tokyo Hysteria2", "Tokyo Reality", "Tokyo TUIC"]},
+  {"state": "maintenance", "note": "今晚 23:00–23:30 换机房", "until": 1795012200, "id": "a1b2c3d4", "group": "Osaka", "names": ["Osaka Hysteria2", "Osaka Reality"]}
+]
+```
 
 ## 4. 实现顺序（建议）
 

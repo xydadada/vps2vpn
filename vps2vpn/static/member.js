@@ -28,6 +28,7 @@ const T = {
     st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', st_void: '已失效：你的额度不够了', reserved: '已预留给邀请码', used_by: '已注册', send_link: '复制注册链接',
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心（忘了订阅链接也不怕）。', pw_tip_link: '用你的专属链接打开这一页时，不用输入旧密码就能设新密码（链接本身就是钥匙）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
+    node_maint: '{g} 维护中', node_cong: '{g} 比较拥堵，建议先用别的线路', node_until: '（预计 {t} 恢复）',
     notice: '管理员公告', paused_quota: '这一期的流量用完了，所以暂时停用。', q_ask: '可以在下面「申请增加流量」。', q_wait: '到 {date} 重置后会自动恢复。', q_admin: '这个账号不会自动重置，请联系管理员。',
     extra: '本期临时加量', first_use: '首次使用后 {n} 天', asked: '（申请了 {n} GB）', inv_copied: '注册链接已复制，发给朋友打开就能注册', dev_limit: '（最多同时 {n} 台）',
     paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限{lim}，已自动暂停 10 分钟。关掉多余的设备，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
@@ -63,6 +64,7 @@ const T = {
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', st_void: 'void: not enough quota left', reserved: 'Kept for invite codes', used_by: 'Registered', send_link: 'Copy sign-up link',
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can log in to the member centre by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
+    node_maint: '{g}: down for maintenance', node_cong: '{g} is congested; another server may be faster', node_until: ' (back around {t})',
     notice: 'Notice from the admin', paused_quota: 'This period\u2019s quota is used up, so the account is paused. ', q_ask: 'You can ask for more below. ', q_wait: 'It resumes by itself after the reset on {date}.', q_admin: 'This account does not reset by itself; ask the admin.',
     extra: 'Top-up this period', first_use: '{n} days after first use', asked: ' (asked for {n} GB)', inv_copied: 'Sign-up link copied; your friend just opens it', dev_limit: ' (at most {n} at once)',
     paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once{lim}; the account is paused for 10 minutes. Close the extra ones and it resumes by itself.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
@@ -235,6 +237,13 @@ function statusAlerts(me, used, q) {
     if (me.throttled) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t(me.reset_day ? 'slowed' : 'slowed_nr'), {mbps: me.limit_mbps})));
     else if (q != null && (q > 0 ? used / q : 1) >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
     if (me.speed_mbps && !me.throttled) out.push(h('div', {class: 'alert'}, icon('alert'), fill(t('capped'), {mbps: me.speed_mbps})));
+    // servers the admin marked (only sent when that is turned on; an older panel sends no "nodes")
+    for (const n of me.nodes || []) {
+      if (n.state !== 'maintenance' && n.state !== 'congested') continue;
+      const text = fill(t(n.state === 'maintenance' ? 'node_maint' : 'node_cong'), {g: n.group}) + (n.note ? ' · ' + n.note : '') +
+        (n.until ? fill(t('node_until'), {t: new Date(n.until * 1000).toLocaleString([], {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'})}) : '');
+      out.push(h('div', {class: 'alert warn'}, icon('server'), text));
+    }
   }
   return out;
 }

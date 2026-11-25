@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.42
+
+Phase 2 for the vps2vpn app, first part: server status (docs/phase2-api.md section 3).
+第二阶段（给 vps2vpn 客户端的接口）第一部分：服务器状态（docs/phase2-api.md 第 3 节）。
+
+- On the Servers page, each server (this one and every joined one) can be marked "maintenance" or "congested", with a note and an optional time when it goes back to normal by itself. Off until "Tell the app which servers are in maintenance or congested" is turned on (Servers page, or Settings → vps2vpn app updates).
+  「服务器」页可以把每台服务器（本机和每台子服务器）标成「维护中」或「拥堵」，附一句说明，还可以填一个自动恢复正常的时间。要先打开「向客户端公布服务器状态」（在「服务器」页，或「设置 → vps2vpn 客户端更新」），默认关。
+- The member API (`api/me`) then has `features.node_status: true` and a `nodes` list: each server the account gets, its group and entry names exactly as in the subscription, and its status. The vps2vpn app greys out a server in maintenance and skips it when choosing automatically.
+  打开后，会员接口（`api/me`）里 `features.node_status` 为 true，并多一个 `nodes` 列表：这个账号能用的每台服务器、它在订阅里的分组名和节点名（一字不差）、它的状态。vps2vpn 客户端会把维护中的服务器标灰，自动选线路时跳过。
+- Other apps: subscriptions do not change. A server in maintenance is named in the subscription's announcement (Hiddify, Happ and others show it) and at the top of the member page.
+  其他软件：订阅内容不变。维护中的服务器会写进订阅公告（Hiddify、Happ 等会显示），会员页顶部也会显示。
+
 ## 0.2.41
 
 Business-logic review, third part (docs/logic-review.md, L-13..L-15), and moving the main server.

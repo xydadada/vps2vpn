@@ -102,6 +102,8 @@ const ERR_ZH=[
  [/^too many IDs/,'一次最多选 2000 个'],[/^expire_at is out of supported range/,'到期日期超出范围'],[/^text required/,'请填写内容'],
  [/^days must be/,'天数必须是 0–3650'],[/^prefix and a count/,'请填写名字前缀，数量 1–200'],[/^not a domain: (.*)$/,(m,a)=>'不是域名：'+a],
  [/^at most (\d+) domains/,(m,a)=>'每个列表最多 '+a+' 个域名'],[/^unknown action/,'不支持的操作'],
+ [/^state must be ok, maintenance or congested/,'状态只能是正常、维护中或拥堵'],
+ [/^until: expected/,'恢复时间的格式不对'],[/^until must be in the future/,'恢复时间要在现在之后、一年以内'],[/^note must be text/,'说明要填文字'],
  [/^internal error/,'服务器内部出错，请看日志'],[/^unknown endpoint/,'这个功能不可用（可能被管理员关掉了）'],[/^login required/,'请先登录']];
 function errText(m){if(typeof KT==='undefined'||KT!==KT_ZH||!m)return m;for(const [re,f] of ERR_ZH){const x=String(m).match(re);if(x)return typeof f==='string'?f:f(...x);}return m;}
 function toast(text,kind){if(kind==='err')text=errText(text);let box=$('toasts');if(!box){box=h('div',{id:'toasts','aria-live':'polite'});document.body.append(box);}const t=h('div',{class:'toast'+(kind==='err'?' err':''),role:'status'},text);const close=()=>{t.classList.add('out');setTimeout(()=>t.remove(),200);};t.onclick=close;box.append(t);setTimeout(close,kind==='err'?8000:4500);while(box.children.length>4)box.firstChild.remove();}

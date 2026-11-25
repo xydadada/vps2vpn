@@ -75,6 +75,10 @@ const T = {
     client_tip: '面板会自动从 GitHub 取最新的 vps2vpn 客户端（带签名的 Windows 安装包和安卓 APK），放进下面这个文件夹；用 vps2vpn 客户端（1.0.9 起）的人会在后台下载、校验签名，点一下就安装并重启。用 Clash Verge、FlClash、小火箭等其他软件的人不受影响，也收不到这个更新。也可以自己把安装包和同名 .sig 放进去，什么都不用填。',
     client_auto_update: '自动从 GitHub 获取最新客户端（只要带发布签名的）',
     client_traffic_rank: '在客户端里显示「流量排行」（每个应用实时用了多少流量；仅 vps2vpn 客户端支持）',
+    client_node_status: '向客户端公布服务器状态（维护中、拥堵；仅 vps2vpn 客户端支持）',
+    node_status: '服务器状态', node_status_tip: '某台服务器要维护或很拥堵时在这里标一下。vps2vpn 客户端会把维护中的标灰、自动选线路时跳过，拥堵的排到后面；用户手动选的照样能连。其他软件看不到这些，只在「维护中」时在订阅公告里写一句（Hiddify、Happ 等会显示），会员页顶部也会显示。订阅里的节点不会因此变化。',
+    st_state: '状态', st_ok: '正常', st_maint: '维护中', st_cong: '拥堵', st_note: '说明（可不填，最多 100 字）', st_until: '到这个时间自动恢复正常（可不填）',
+    st_this: '（本机）',
     client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`, client_unsigned: n => `缺少签名文件：${n}。App 只装带签名的安装包，请把 GitHub 发布页上同名的 .sig 文件一起放进来。`,
     renew: '服务器到期提醒', renew_at: '这台 VPS 哪天到期（续费日）', renew_note: '在哪里续费（例如 AWS Lightsail）',
     renew_tip: '填了以后，到期前 7 天、3 天、1 天和当天用 Telegram 提醒你，总览页也会提示。不填就不提醒。按月付费的话每次续费后改成下个月的日期。',
@@ -187,6 +191,10 @@ const T = {
     client_tip: 'The panel fetches the newest vps2vpn app from GitHub (the signed Windows setup and Android APK) into the folder below. From 1.0.9 the vps2vpn app downloads it in the background, checks its signature and installs it with one tap; other apps (Clash Verge, FlClash, Shadowrocket...) are not affected and get nothing from here. You can also put installers and their .sig files there yourself and leave these empty.',
     client_auto_update: 'Fetch the newest app from GitHub (signed releases only)',
     client_traffic_rank: 'Show the traffic ranking in the app (live traffic per app; the vps2vpn app only)',
+    client_node_status: 'Tell the app which servers are in maintenance or congested (the vps2vpn app only)',
+    node_status: 'Server status', node_status_tip: 'Mark a server that is down for maintenance or congested. The vps2vpn app greys out one in maintenance and skips it when choosing automatically, and puts a congested one last; a server picked by hand still connects. Other apps see none of this, except a line in the subscription\'s announcement during maintenance (Hiddify, Happ and others show it); the member page shows it at the top. The node list in subscriptions never changes for it.',
+    st_state: 'Status', st_ok: 'Normal', st_maint: 'Maintenance', st_cong: 'Congested', st_note: 'Note (optional, up to 100 characters)', st_until: 'Back to normal at (optional)',
+    st_this: ' (this server)',
     client_found: (v, p) => `Installers found on the server: version ${v} (${p}); only people with a valid subscription link can download them.`, client_none: d => `No installers on the server yet. Put them in ${d}.`, client_unsigned: n => `Signature missing: ${n}. The app only installs signed installers; put the matching .sig file from the GitHub release next to it.`,
     renew: 'Renewal reminder', renew_at: 'Date this VPS must be renewed', renew_note: 'Where to renew (e.g. AWS Lightsail)',
     renew_tip: 'You get a Telegram reminder 7, 3 and 1 days before and on the day, and a note on the overview. Leave empty for no reminder.',
@@ -1050,6 +1058,8 @@ async function drawServers() {
   let sv;
   try { sv = await api('servers'); }
   catch (e) { if (seq === S.viewSeq && S.view === 'servers') view.replaceChildren(retryBox(e.message, drawServers)); return err(e); }
+  // a panel too old to have it, or a joined server (its own status is set on the main server): no status panel
+  const ns = sv.node_master ? null : await api('node-status').catch(() => null);
   if (seq !== S.viewSeq || S.view !== 'servers') return;
   const code = h('input', {type: 'text', placeholder: 'v2v1.…', autocomplete: 'off'}), name = h('input', {type: 'text', maxlength: '24'});
   const add = h('button', {class: 'btn primary'}, icon('plus'), t('add_server'));
@@ -1070,6 +1080,21 @@ async function drawServers() {
     h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + t('leaving_wait').replace('{d}', x.days_left)),
     h('span', {class: 'tl-acts'}, chip('warn', x.error ? x.error.slice(0, 60) : t('leaving')),
       h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('leaving_forget') + ' · ' + x.name, t('leaving_forget_tip'), {danger: true, confirm: t('leaving_forget')})) act(b, x.id, 'forget'); }}, t('leaving_forget'))))));
+  const stRow = x => {
+    const st = h('select', null, ...[['ok', t('st_ok')], ['maintenance', t('st_maint')], ['congested', t('st_cong')]].map(([v, l]) => h('option', {value: v}, l)));
+    const note = h('input', {type: 'text', maxlength: '100', value: x.note || ''}), until = h('input', {type: 'datetime-local', value: x.until_local || ''});
+    st.value = x.state;
+    const sync = () => { note.disabled = until.disabled = st.value === 'ok'; }; st.onchange = sync; sync();
+    const b = h('button', {class: 'btn sm'}, icon('check'), t('save'));
+    b.onclick = async () => { b.disabled = true;
+      try { await api('node-status', {id: x.id, state: st.value, note: note.value, until_local: st.value === 'ok' ? '' : until.value}); toast(t('saved')); drawServers(); }
+      catch (e) { err(e); b.disabled = false; } };
+    return h('div', {class: 'stack', style: 'gap:6px'}, h('b', null, x.name + (x.id === 'main' ? t('st_this') : '')),
+      h('div', {class: 'form-grid g3'}, field(t('st_state'), st), field(t('st_note'), note), field(t('st_until'), until)), h('div', null, b));
+  };
+  const statusPanel = ns ? panel(t('node_status'), null, null, tip(t('node_status_tip')), h('div', {class: 'stack'},
+    (() => { const e = h('input', {type: 'checkbox'}); e.checked = !!ns.on; e.onchange = () => saveSettings({client_node_status: e.checked}, drawServers); return check(t('client_node_status'), e); })(),
+    ...(ns.on ? ns.servers.map(stRow) : []))) : null;
   const sm = S.data.server_month || {}, used = (sm.rx || 0) + (sm.tx || 0), cap = s.server_cap_gb * GB;
   const capIn = h('input', {type: 'number', min: '0', value: s.server_cap_gb || 0}), dayIn = h('input', {type: 'number', min: '1', max: '31', value: s.server_reset_day || 1});
   const ring = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, cap ? fmt.pct(used / cap) : '∞'), h('small', null, sm.period || '')));
@@ -1088,6 +1113,7 @@ async function drawServers() {
         return h('div', {class: 'form-grid'}, field(t('rate_this'), r), h('div', {style: 'display:flex;align-items:flex-end;gap:8px'},
           h('button', {class: 'btn', onclick: () => saveSettings({traffic_rate: numOrNull(r.value)}, drawServers)}, icon('check'), t('save')),
           h('small', {class: 'muted'}, t('rate_tip')))); })())),
+    statusPanel,
     h('div', {class: 'grid g-2'},
       panel(t('server_month'), null, null, tip(t('cap_tip')), h('div', {class: 'usage-hero'}, ring, h('div', {class: 'stack'},
         h('div', {class: 'mini-stats'}, h('div', null, h('small', null, '↓ ' + t('down')), h('b', null, fmt.bytes(sm.tx || 0))), h('div', null, h('small', null, '↑ ' + t('up_')), h('b', null, fmt.bytes(sm.rx || 0)))),
@@ -1238,6 +1264,7 @@ function clientPanel(s, inp) {
       f && f.unsigned && f.unsigned.length ? h('div', {class: 'alert warn', style: 'overflow-wrap:anywhere'}, icon('alert'), t('client_unsigned')(f.unsigned.join(', '))) : null,
       (() => { const e = h('input', {type: 'checkbox', checked: s.client_auto_update !== false}); e.onchange = () => saveSettings({client_auto_update: e.checked}); return check(t('client_auto_update'), e); })(),
       (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_traffic_rank}); e.onchange = () => saveSettings({client_traffic_rank: e.checked}); return check(t('client_traffic_rank'), e); })(),
+      (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_node_status}); e.onchange = () => saveSettings({client_node_status: e.checked}); return check(t('client_node_status'), e); })(),
       h('div', {class: 'form-grid'}, field(t('client_ver'), inp('client_version')), field(t('client_url'), inp('client_url'))),
       field(t('client_notes'), inp('client_notes'))));
 }

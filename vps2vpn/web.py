@@ -30,8 +30,8 @@ import time
 import urllib.error
 import urllib.parse
 
-from . import (VERSION, abuse, aicheck, certs, clock, cluster, cores, db, doctor, jobs, members, monitor, notify, paths, qr, rules,
-               secure, shaper, subscription, system)
+from . import (VERSION, abuse, aicheck, certs, clock, cluster, cores, db, doctor, jobs, members, monitor, nodestatus, notify, paths, qr,
+               rules, secure, shaper, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
 _fails = {}                    # rate-limit bucket -> [monotonic timestamps] of failed attempts
@@ -964,6 +964,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'monitor': (('GET', 'POST'), self.api_monitor),
             'abuse': (('GET', 'POST'), self.api_abuse),
             'servers': (('GET', 'POST'), self.api_servers),
+            'node-status': (('GET', 'POST'), self.api_node_status),
             'node-key': (('POST',), self.api_node_key),
             'password': (('POST',), self.api_password),
             'check-targets': (('GET', 'POST'), self.api_check_targets),
@@ -1615,6 +1616,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         jobs.log('server added: %s' % x['name'])
         return self.json({'ok': True, 'id': x['id']})
 
+    def api_node_status(self, method, s):
+        """Maintenance / congested per server (docs/phase2-api.md section 3). POST {id, state, note, until_local}."""
+        if method == 'POST':
+            d = self.body_json()
+            sid = str(d.get('id', ''))
+            try:
+                st = nodestatus.set_status(sid, d)
+            except LookupError:
+                return self.json({'error': 'no such server'}, 404)
+            except ValueError as e:
+                return self.json({'error': str(e)}, 400)
+            jobs.log('server status: %s %s%s' % (sid, st['state'], (' - ' + st['note']) if st['note'] else ''))
+            s = db.settings()
+        return self.json({'on': nodestatus.on(s), 'servers': nodestatus.panel_list(s)})
+
     def api_server_action(self, sid, action):
         if action == 'forget':
             if not cluster.forget_leaving(sid):
@@ -1901,7 +1917,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'ai': ai_view(aicheck.latest()),
             'client': client_info(s, dl_url),
             # switches for our own app; an app that finds no key keeps that feature off, so older panels are safe
-            'features': {'traffic_rank': s.get('client_traffic_rank') is True},   # a hand-edited backup's "false" stays off
+            'features': {'traffic_rank': s.get('client_traffic_rank') is True,   # a hand-edited backup's "false" stays off
+                         'node_status': nodestatus.on(s)},
+            **({'nodes': nodestatus.for_member(s, u)} if nodestatus.on(s) else {}),
         }
 
     def api_password(self, method, s):
@@ -2158,7 +2176,7 @@ def validate_settings(d, s):
     bools = ('reality_enabled', 'hy2_enabled', 'tuic_enabled', 'hy2_hop', 'block_ads', 'block_bt', 'ai_group',
              'tune_network', 'ipv6_nodes', 'tcp_first', 'member_enabled', 'member_invites', 'member_requests', 'monitor_enabled',
              'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause', 'client_auto_update',
-             'client_traffic_rank')
+             'client_traffic_rank', 'client_node_status')
     for k in bools:
         if k in d:
             try:
