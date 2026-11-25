@@ -1,6 +1,6 @@
 # 第二阶段服务端接口设计：一键反馈、设备管理、节点状态
 
-状态：第 3 节（节点状态）**0.2.42 已实现**，见 3.4；第 1、2 节还只是设计（2026-11-24）。需求来自客户端仓库 `ROADMAP.md` 第六节第 2、3、4 条。
+状态：第 3 节（节点状态）**0.2.42 已实现**，见 3.4；第 1 节（一键反馈）**0.2.43 已实现**，见 1.7；第 2 节还只是设计（2026-11-24）。需求来自客户端仓库 `ROADMAP.md` 第六节第 2、3、4 条。
 字段名定了以后，客户端会话把它们写回 `ROADMAP.md`。这里改了，也要同步过去。
 
 这个仓库是公开的：文档、代码、测试里的示例地址只用 192.0.2.x、198.51.100.x、203.0.113.x、2001:db8::。
@@ -133,6 +133,44 @@ CREATE TABLE IF NOT EXISTS feedback (
 ```
 
 客户端「反馈」页显示这些；`api/me` 里多一个 `feedback_unread`（有新回复的条数），客户端据此提示。
+
+### 1.7 实际实现（0.2.43）
+
+和上面设计一致，补充几点（代码在 `vps2vpn/feedback.py`）：
+
+- **POST 要带请求头 `X-V2V: 1`**（会员接口的所有 POST 都要，没有就返回 403），以及 `Content-Type: application/json`。
+- `client`：对象，最多 12 个键，键名只能是小写字母和下划线（最多 24 个字符），值是字符串，最多 64 个字符；`platform` 必填，可以是 `windows` / `android` / `macos` / `linux` / `ios` / `web`。
+- 请求体超过 128 KB（但不到 4 MB）返回 `413 too_large`；超过 4 MB 服务器直接断开连接。`diagnosis` 超过 32 KB、`log` 超过 64 KB 也是 413。
+- 订阅链接不对或已轮换：返回 404，**正文不是 JSON**（和其他会员接口一样的普通 404 页）。客户端只看状态码。
+- 429 时 `Retry-After` 是要等的秒数：2 分钟内发过就等到满 2 分钟；24 小时内已有 5 条就等到最早那条满 24 小时。
+- 数据表多了一列 `seen`：管理员回复时设为 0，会员 `GET api/feedback` 读过以后变回 1。`api/me` 的 `feedback_unread` 就是 `seen=0` 的条数；功能关着时 `api/me` 没有这个键。
+- 管理面板：「会员」页最上面的「用户反馈」一块（不是单独一页），侧边栏「会员」的红点把待处理的反馈也算进去。管理接口：`GET api/feedback`、`GET api/feedback/<id>`、`POST api/feedback/<id>/answer`（`{"answer": "..."}`，最多 500 字）、`.../done`、`.../reopen`、`.../delete`。
+- Telegram 提醒用的去重键是 `fb-<账号 id>`，同一账号 1 小时最多一条。
+- 会员中心网页的反馈框只发文字，`client` 是 `{"platform": "web", "version": "web"}`。
+
+例子：
+
+```
+POST https://<面板地址>/s/<订阅 token>/api/feedback
+X-V2V: 1
+Content-Type: application/json
+
+{"text": "下午 3 点开始 YouTube 打不开",
+ "diagnosis": {"steps": [{"id": "dns", "ok": true}, {"id": "tcp", "ok": false, "detail": "timeout"}]},
+ "log": "...",
+ "client": {"version": "1.0.29", "platform": "windows", "os": "Windows 11 23H2", "core": "mihomo 1.19.34"},
+ "device_id": "3f2c9a1e-7b1d-4c3e-9a55-0d1e2f3a4b5c"}
+
+200 {"ok": true, "id": 12}
+429 {"error": "too many reports, wait a moment", "code": "rate_limited"}   (Retry-After: 87)
+503 {"error": "feedback is turned off", "code": "feature_off"}
+
+GET https://<面板地址>/s/<订阅 token>/api/feedback
+200 {"items": [{"id": 12, "created_at": 1795000000, "text": "下午 3 点开始 YouTube 打不开", "status": "done",
+                "answer": "已经换了线路，再试一下", "answered_at": 1795003600}]}
+```
+
+管理面板里显示诊断结果时，认 `diagnosis.steps`（每步 `id`、`ok`、`detail`）；没有 `steps` 的就原样显示 JSON。
 
 ## 2. 设备管理
 

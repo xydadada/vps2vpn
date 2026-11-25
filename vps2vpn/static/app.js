@@ -76,9 +76,13 @@ const T = {
     client_auto_update: '自动从 GitHub 获取最新客户端（只要带发布签名的）',
     client_traffic_rank: '在客户端里显示「流量排行」（每个应用实时用了多少流量；仅 vps2vpn 客户端支持）',
     client_node_status: '向客户端公布服务器状态（维护中、拥堵；仅 vps2vpn 客户端支持）',
-    node_status: '服务器状态', node_status_tip: '某台服务器要维护或很拥堵时在这里标一下。vps2vpn 客户端会把维护中的标灰、自动选线路时跳过，拥堵的排到后面；用户手动选的照样能连。其他软件看不到这些，只在「维护中」时在订阅公告里写一句（Hiddify、Happ 等会显示），会员页顶部也会显示。订阅里的节点不会因此变化。',
+    node_status: '服务器状态', node_status_tip: '某台服务器要维护或很拥堵时在这里标一下。vps2vpn 客户端会把维护中的标灰、自动选线路时跳过，拥堵的排到后面；用户手动选的照样能连。其他软件看不到这些，只在「维护中」时在订阅公告里写一句（Hiddify、Happ 等会显示），会员页顶部也会显示。订阅里的节点名不变；维护中的服务器不会被「自动选择」挑中（所有软件都一样，但其他软件要等下次更新订阅才生效，所以请提前标）。',
     st_state: '状态', st_ok: '正常', st_maint: '维护中', st_cong: '拥堵', st_note: '说明（可不填，最多 100 字）', st_until: '到这个时间自动恢复正常（可不填）',
     st_this: '（本机）',
+    client_feedback: '允许会员发反馈（vps2vpn 客户端带诊断和日志；会员中心网页只能写文字）',
+    fb: '用户反馈', fb_tip: '会员在 vps2vpn 客户端里点「反馈」，或在会员中心网页写几句话，就会出现在这里。日志和 IP 地址在发出前和存进来前都打过码。保留 30 天，不进备份。',
+    fb_none: '还没有反馈。', fb_open: '待处理', fb_done: '已处理', fb_view: '详情', fb_hide: '收起', fb_answer: '回复并标为已处理', fb_answer_ph: '回复会员（会显示在他的客户端和会员页里，最多 500 字）',
+    fb_mark: '标为已处理', fb_reopen: '改回待处理', fb_del: '删除', fb_del_q: '删除这条反馈？', fb_diag: '诊断结果', fb_log: '日志', fb_copy: '复制日志', fb_replied: '已回复：',
     client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`, client_unsigned: n => `缺少签名文件：${n}。App 只装带签名的安装包，请把 GitHub 发布页上同名的 .sig 文件一起放进来。`,
     renew: '服务器到期提醒', renew_at: '这台 VPS 哪天到期（续费日）', renew_note: '在哪里续费（例如 AWS Lightsail）',
     renew_tip: '填了以后，到期前 7 天、3 天、1 天和当天用 Telegram 提醒你，总览页也会提示。不填就不提醒。按月付费的话每次续费后改成下个月的日期。',
@@ -192,9 +196,13 @@ const T = {
     client_auto_update: 'Fetch the newest app from GitHub (signed releases only)',
     client_traffic_rank: 'Show the traffic ranking in the app (live traffic per app; the vps2vpn app only)',
     client_node_status: 'Tell the app which servers are in maintenance or congested (the vps2vpn app only)',
-    node_status: 'Server status', node_status_tip: 'Mark a server that is down for maintenance or congested. The vps2vpn app greys out one in maintenance and skips it when choosing automatically, and puts a congested one last; a server picked by hand still connects. Other apps see none of this, except a line in the subscription\'s announcement during maintenance (Hiddify, Happ and others show it); the member page shows it at the top. The node list in subscriptions never changes for it.',
+    node_status: 'Server status', node_status_tip: 'Mark a server that is down for maintenance or congested. The vps2vpn app greys out one in maintenance and skips it when choosing automatically, and puts a congested one last; a server picked by hand still connects. Other apps see none of this, except a line in the subscription\'s announcement during maintenance (Hiddify, Happ and others show it); the member page shows it at the top. Node names in subscriptions never change for it; a server in maintenance is left out of "Auto" in every app (other apps only after their next subscription update, so mark it ahead of time).',
     st_state: 'Status', st_ok: 'Normal', st_maint: 'Maintenance', st_cong: 'Congested', st_note: 'Note (optional, up to 100 characters)', st_until: 'Back to normal at (optional)',
     st_this: ' (this server)',
+    client_feedback: 'Members may send feedback (the vps2vpn app adds its diagnosis and log; the member page sends text only)',
+    fb: 'Feedback', fb_tip: 'What members send with "Feedback" in the vps2vpn app, or write on the member page. Logs and IP addresses are redacted before sending and again before they are stored. Kept 30 days, not in backups.',
+    fb_none: 'No feedback yet.', fb_open: 'open', fb_done: 'done', fb_view: 'Details', fb_hide: 'Hide', fb_answer: 'Reply and mark done', fb_answer_ph: 'Reply to the member (shown in their app and on the member page; up to 500 characters)',
+    fb_mark: 'Mark done', fb_reopen: 'Reopen', fb_del: 'Delete', fb_del_q: 'Delete this feedback?', fb_diag: 'Diagnosis', fb_log: 'Log', fb_copy: 'Copy log', fb_replied: 'Replied: ',
     client_found: (v, p) => `Installers found on the server: version ${v} (${p}); only people with a valid subscription link can download them.`, client_none: d => `No installers on the server yet. Put them in ${d}.`, client_unsigned: n => `Signature missing: ${n}. The app only installs signed installers; put the matching .sig file from the GitHub release next to it.`,
     renew: 'Renewal reminder', renew_at: 'Date this VPS must be renewed', renew_note: 'Where to renew (e.g. AWS Lightsail)',
     renew_tip: 'You get a Telegram reminder 7, 3 and 1 days before and on the day, and a note on the overview. Leave empty for no reminder.',
@@ -409,9 +417,10 @@ function renderLogin() {
 /* ---------------- shell: sidebar + pages, same layout as the original console ---------------- */
 const VIEWS = [['home', 'home', 'nav_home'], ['users', 'users', 'nav_users'], ['members', 'key', 'nav_members'],
   ['servers', 'server', 'nav_servers'], ['monitor', 'globe', 'nav_monitor'], ['settings', 'sliders', 'nav_settings'], ['system', 'pulse', 'nav_system']];
-const badge = () => S.data && S.data.pending_requests ? h('span', {class: 'badge', 'data-req-badge': '1'}, S.data.pending_requests) : h('span', {'data-req-badge': '1', hidden: true});
+const waiting = () => S.data ? (S.data.pending_requests || 0) + (S.data.open_feedback || 0) : 0;
+const badge = () => waiting() ? h('span', {class: 'badge', 'data-req-badge': '1'}, waiting()) : h('span', {'data-req-badge': '1', hidden: true});
 function updateReqBadges() {
-  const n = (S.data && S.data.pending_requests) || 0;
+  const n = waiting();
   for (const rb of document.querySelectorAll('[data-req-badge]')) { rb.textContent = n || ''; rb.hidden = !n; rb.className = n ? 'badge' : ''; }
 }
 async function saveSettings(body, redraw) { try { await api('settings', body); toast(t('saved')); await load(); if (redraw) redraw(); } catch (e) { err(e); } }
@@ -670,6 +679,7 @@ function updateHome() {
   const quota = d.users.filter(u => !u.enabled && u.disabled_reason === 'quota').length;
   if (quota) al.push(h('div', {class: 'alert'}, icon('gauge'), quota + ' · ' + t('r_quota'), h('button', {class: 'btn sm', onclick: () => go('users')}, t('users'))));
   if (d.pending_requests) al.push(h('div', {class: 'alert'}, icon('inbox'), d.pending_requests + ' · ' + t('requests'), h('button', {class: 'btn sm', onclick: () => go('members')}, t('nav_members'))));
+  if (d.open_feedback) al.push(h('div', {class: 'alert'}, icon('inbox'), d.open_feedback + ' · ' + t('fb'), h('button', {class: 'btn sm', onclick: () => go('members')}, t('nav_members'))));
   const sm = d.server_month || {}, cap = d.settings.server_cap_gb * GB, smu = (sm.rx || 0) + (sm.tx || 0);
   if (cap && smu >= cap * .8) al.push(h('div', {class: 'alert' + (smu >= cap ? ' bad' : '')}, icon('gauge'), t('server_month') + ' ' + fmt.bytes(smu) + ' / ' + fmt.bytes(cap), h('button', {class: 'btn sm', onclick: () => go('servers')}, t('nav_servers'))));
   for (const r of d.line_trouble || [])
@@ -983,8 +993,8 @@ function editUser(u) {
 async function drawMembers() {
   const s = S.data.settings, view = $('view'), seq = S.viewSeq;
   view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
-  let inv, req;
-  try { [inv, req] = await Promise.all([api('invites'), api('requests')]); }
+  let inv, req, fb;
+  try { [inv, req, fb] = await Promise.all([api('invites'), api('requests'), api('feedback').catch(() => null)]); }
   catch (e) { if (seq === S.viewSeq && S.view === 'members') view.replaceChildren(retryBox(e.message, drawMembers)); return err(e); }
   if (seq !== S.viewSeq || S.view !== 'members') return;
   const pend = req.requests.filter(r => r.status === 'pending'), done = req.requests.filter(r => r.status !== 'pending').slice(0, 10);
@@ -1034,7 +1044,42 @@ async function drawMembers() {
       i.status === 'unused' ? h('button', {class: 'btn sm', title: t('copy_link'), onclick: () => copyText(i.register_url || i.code, t('copy_link'))}, icon('link')) : null,
       i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('revoke'), i.code)) { b.disabled = true; try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (er) { err(er); b.disabled = false; } } }}, t('revoke')) : null)));
   const cb = k => { const e = h('input', {type: 'checkbox', checked: !!s[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
+  const fbAct = async (x, a, body) => { try { await api(`feedback/${x.id}/${a}`, body || {}); toast(t('saved')); await load(); updateReqBadges(); drawMembers(); } catch (e) { err(e); } };
+  const fbDetail = async (x, box, btn) => {
+    if (box.firstChild) { box.replaceChildren(); btn.textContent = t('fb_view'); return; }
+    let d; try { d = await api('feedback/' + x.id); } catch (e) { return err(e); }
+    btn.textContent = t('fb_hide');
+    const steps = (d.diagnosis && Array.isArray(d.diagnosis.steps)) ? d.diagnosis.steps : [];
+    const ans = h('textarea', {rows: '2', maxlength: '500', style: 'width:100%;resize:vertical', placeholder: t('fb_answer_ph')});
+    box.replaceChildren(h('div', {class: 'stack', style: 'gap:8px;padding:8px 0 4px'},
+      d.text ? h('div', {style: 'white-space:pre-wrap;overflow-wrap:anywhere'}, d.text) : null,
+      h('small', {class: 'muted', style: 'overflow-wrap:anywhere'}, Object.entries(d.client || {}).map(([k, v]) => k + ': ' + v).join(' · ')),
+      steps.length ? h('div', null, h('b', null, t('fb_diag')), h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px'},
+        ...steps.map(st => chip(st.ok ? 'ok' : 'bad', String(st.id || '?') + (st.detail ? ' · ' + String(st.detail).slice(0, 80) : ''))))) :
+        (d.diagnosis && Object.keys(d.diagnosis).length ? h('pre', {class: 'mono', style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:200px;overflow:auto;font-size:12px'}, JSON.stringify(d.diagnosis, null, 1)) : null),
+      d.log ? h('details', null, h('summary', null, t('fb_log') + ' (' + Math.max(1, Math.ceil(d.log.length / 1024)) + ' KB)'),
+        h('pre', {class: 'mono', style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font-size:12px'}, d.log),
+        h('button', {class: 'btn sm', onclick: () => copyText(d.log, t('fb_log'))}, icon('copy'), t('fb_copy'))) : null,
+      d.answer ? h('div', {class: 'muted'}, t('fb_replied') + d.answer) : null,
+      ans, h('div', {class: 'act-grid'},
+        h('button', {class: 'btn sm primary', onclick: () => fbAct(x, 'answer', {answer: ans.value})}, icon('check'), t('fb_answer')),
+        x.status === 'open' ? h('button', {class: 'btn sm', onclick: () => fbAct(x, 'done')}, t('fb_mark')) : h('button', {class: 'btn sm', onclick: () => fbAct(x, 'reopen')}, t('fb_reopen')),
+        h('button', {class: 'btn sm danger', onclick: async () => { if (await confirmBox(t('fb_del'), t('fb_del_q'), {danger: true, confirm: t('fb_del')})) fbAct(x, 'delete'); }}, icon('x'), t('fb_del')))));
+  };
+  const fbRows = fb ? fb.items.map(x => {
+    const box = h('div'), btn = h('button', {class: 'btn sm'}, t('fb_view'));
+    btn.onclick = () => fbDetail(x, box, btn);
+    const c = x.client || {};
+    return h('div', null, h('div', {class: 'tl-row'}, h('b', null, x.name),
+      h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, fmt.time(x.created_at) + ' · ' + [c.platform, c.version].filter(Boolean).join(' ') + (x.text ? ' · ' + x.text : '')),
+      h('span', {class: 'tl-acts'}, chip(x.status === 'open' ? 'warn' : 'ok', t(x.status === 'open' ? 'fb_open' : 'fb_done')), btn)), box);
+  }) : [];
+  const fbOpen = fb ? fb.items.filter(x => x.status === 'open').length : 0;
+  const fbPanel = fb ? panel(t('fb'), null, fbOpen ? chip('warn', fbOpen + ' ' + t('fb_open')) : null, tip(t('fb_tip')), h('div', {class: 'stack'},
+    cb('client_feedback'),
+    h('div', {class: 'tl'}, ...(fbRows.length ? fbRows : [h('div', {class: 'empty', style: 'padding:18px'}, t('fb_none'))])))) : null;
   view.replaceChildren(h('section', {class: 'page'},
+    fbPanel,
     h('div', {class: 'grid g-2-1'},
       panel(t('requests'), null, pend.length ? chip('warn', pend.length + ' ' + t('pending')) : null,
         h('div', {class: 'tl'}, ...(reqRows.length ? reqRows : [h('div', {class: 'empty', style: 'padding:18px'}, t('req_none'))])),
@@ -1265,6 +1310,7 @@ function clientPanel(s, inp) {
       (() => { const e = h('input', {type: 'checkbox', checked: s.client_auto_update !== false}); e.onchange = () => saveSettings({client_auto_update: e.checked}); return check(t('client_auto_update'), e); })(),
       (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_traffic_rank}); e.onchange = () => saveSettings({client_traffic_rank: e.checked}); return check(t('client_traffic_rank'), e); })(),
       (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_node_status}); e.onchange = () => saveSettings({client_node_status: e.checked}); return check(t('client_node_status'), e); })(),
+      (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_feedback}); e.onchange = () => saveSettings({client_feedback: e.checked}); return check(t('client_feedback'), e); })(),
       h('div', {class: 'form-grid'}, field(t('client_ver'), inp('client_version')), field(t('client_url'), inp('client_url'))),
       field(t('client_notes'), inp('client_notes'))));
 }

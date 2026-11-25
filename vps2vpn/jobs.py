@@ -906,6 +906,9 @@ class Scheduler:
             self.in_background('ipwatch', self.ipwatch.check, s)
         if paths.LIVE and self.due('aicheck', 86400):
             self.in_background('aicheck', ai_recheck, s, log)
+        if self.due('feedback', 86400):
+            from . import feedback
+            feedback.prune()
         if self.due('backup', 86400):
             name = backup()
             if s['tg_backup'] and s['tg_token'] and s['tg_chat']:

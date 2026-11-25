@@ -77,10 +77,14 @@ def nodes(s, u):
     if db.allowed_on(u, db.MAIN_SERVER) and not (slowed and not cores.can_slow_here(s)):
         out = _ordered(s, server_nodes(dict(s, hy2_hop=system.hopping_listed(s), shaping=shaper.active()),
                                        tls_info(s), main_label, u['id'], u))
+    # a server the owner marked "maintenance" (and announces: client_node_status) is left out of "Auto"
+    from . import nodestatus
+    marked = nodestatus.on(s)
     for n in out:
         n['ai_score'] = aicheck.score(aicheck.latest())
         n['rate'] = main_rate
         n['server_id'] = db.MAIN_SERVER
+        n['maintenance'] = marked and nodestatus.of(s, db.MAIN_SERVER)['state'] == 'maintenance'
     seen_labels = {main_label}
     for x in s.get('servers') or []:
         info, lid = x.get('info'), (x.get('idmap') or {}).get(str(u['id']))
@@ -95,10 +99,12 @@ def nodes(s, u):
             label += '_'
         seen_labels.add(label)
         more = server_nodes(info, info.get('tls') or {'sni': info['public_host'], 'pin': '', 'pem': ''}, label, lid, u)
+        down = marked and nodestatus.current(x.get('status'))['state'] == 'maintenance'
         for n in more:
             n['ai_score'] = info.get('ai_score', -1)
             n['rate'] = cluster.server_rate(x)
             n['server_id'] = x['id']
+            n['maintenance'] = down
         out += _ordered(s, more)
     if s.get('ipv4_only'):            # the old panel's ".ipv4.yaml" link
         out = [n for n in out if ':' not in n['server']]
@@ -126,22 +132,29 @@ def server_groups(ns):
 def auto_servers(ns, per):
     """Server labels "Auto" may switch to. Not one whose traffic counts more than once (x2, x5): "Auto" picks by
     speed alone, and the member would burn quota several times as fast without ever choosing that server. It
-    stays in the server list, with its rate in its name. When every server costs more, all of them."""
-    rate = {}
+    stays in the server list, with its rate in its name. When every server costs more, all of them.
+    Not one marked "maintenance" either: it may still answer the speed test right up to the moment it goes away,
+    and apps other than ours cannot see the status. It stays in the list to pick by hand; its node names do not
+    change (the app matches api/me "nodes" to them). When every server is in maintenance, all of them."""
+    rate, down = {}, {}
     for n in ns:
         rate.setdefault(n['group'], n.get('rate', 1))
-    cheap = [label for label, _ in per if rate.get(label, 1) <= 1]
-    return cheap or [label for label, _ in per]
+        down.setdefault(n['group'], bool(n.get('maintenance')))
+    pool = [label for label, _ in per if not down.get(label)] or [label for label, _ in per]
+    cheap = [label for label in pool if rate.get(label, 1) <= 1]
+    return cheap or pool
 
 
 def ai_servers(ns, per):
     """Server labels for the AI group, the one whose address suits Claude / ChatGPT best first (this server
     wins ties). AI traffic then stays on one server - one address - instead of following "Auto" around:
     services like Claude are wary of accounts whose address keeps changing country."""
-    score = {}
+    score, down = {}, {}
     for n in ns:
         score.setdefault(n['group'], n.get('ai_score', -1))
-    return sorted((label for label, _ in per), key=lambda label: -score.get(label, -1))
+        down.setdefault(n['group'], bool(n.get('maintenance')))
+    # a server in maintenance last: it is the group's default choice when first
+    return sorted((label for label, _ in per), key=lambda label: (down.get(label, False), -score.get(label, -1)))
 
 
 def userinfo_header(u, quota_gb=None):

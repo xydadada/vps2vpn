@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS requests (
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, kind TEXT NOT NULL, user_id INTEGER NOT NULL DEFAULT 0,
     detail TEXT NOT NULL DEFAULT '');
+-- feedback from the vps2vpn app and the member page (feedback.py); not in backups, kept 30 days
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, created_at INTEGER NOT NULL,
+    device_id TEXT NOT NULL DEFAULT '', client TEXT NOT NULL DEFAULT '{}', text TEXT NOT NULL DEFAULT '',
+    diagnosis TEXT NOT NULL DEFAULT '{}', log TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open',
+    answer TEXT NOT NULL DEFAULT '', answered_at INTEGER NOT NULL DEFAULT 0,
+    seen INTEGER NOT NULL DEFAULT 1);          -- 0: an answer the member has not read yet
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
 CREATE INDEX IF NOT EXISTS idx_traffic_user_day ON traffic(user_id, day);
 CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind, id);
 CREATE INDEX IF NOT EXISTS idx_invites_inviter_status ON invites(inviter, status, valid_until);
@@ -239,6 +248,7 @@ DEFAULTS = {
     'client_auto_update': True,  # fetch the newest signed client from GitHub into the client folder
     'client_traffic_rank': False,  # our app may show live traffic per app; sent to it as features.traffic_rank
     'client_node_status': False,   # tell our app which servers are in maintenance / congested (api/me "nodes")
+    'client_feedback': False,      # members may send feedback from our app and the member page (feedback.py)
     'node_status': {},             # this server's: {'state': 'maintenance', 'note': '...', 'until': ts} (nodestatus.py)
     'client_notes': '',         # {'hy2': {'<user id>': [time, host]}} lines the apps say they cannot reach         # {'period': 'YYYY-MM', 'rx': bytes, 'tx': bytes, 'last_rx':..., 'last_tx':...}
     # Watching
@@ -555,6 +565,7 @@ def delete_user(uid):
         c.execute('DELETE FROM traffic WHERE user_id=?', (uid,))
         c.execute('DELETE FROM member_sessions WHERE user_id=?', (uid,))
         c.execute('DELETE FROM requests WHERE user_id=?', (uid,))
+        c.execute('DELETE FROM feedback WHERE user_id=?', (uid,))
         c.execute("UPDATE invites SET status='revoked' WHERE inviter=? AND status='unused'", (uid,))
         parent = row['invited_by'] if row else 0
         if parent and c.execute('SELECT 1 FROM users WHERE id=?', (parent,)).fetchone():
@@ -1054,6 +1065,7 @@ def import_all(data):
         c.execute('DELETE FROM alerts_sent')    # keys name the old install's users/servers: stale after a restore
         c.execute('DELETE FROM invites')
         c.execute('DELETE FROM requests')
+        c.execute('DELETE FROM feedback')       # never in a backup; account ids of the replaced data mean nothing now
         c.execute('DELETE FROM users')
         for u in data['users']:
             vals = [u.get(k, IMPORT_DEFAULTS.get(k, 0)) for k in cols]

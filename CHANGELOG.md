@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.43
+
+Phase 2 for the vps2vpn app, second part: one-tap feedback (docs/phase2-api.md section 1). And "Auto" no longer picks a server in maintenance (docs/logic-review.md C-19).
+第二阶段第二部分：一键反馈（docs/phase2-api.md 第 1 节）。另外「自动选择」不再挑维护中的服务器（docs/logic-review.md C-19）。
+
+- Feedback: once "Members may send feedback" is on (Members page, or Settings → vps2vpn app updates), the vps2vpn app can send what went wrong with its diagnosis and a redacted log, and the member page has a box for a few words. The Members page lists them; the admin can reply (the member sees it), mark done or delete. Telegram says when one arrives (at most once an hour per account).
+  反馈：打开「允许会员发反馈」后（在「会员」页，或「设置 → vps2vpn 客户端更新」），vps2vpn 客户端可以把问题连同诊断结果和打过码的日志一起发来，会员中心网页上也有一个写几句话的框。「会员」页列出所有反馈，管理员可以回复（会员看得到）、标为已处理或删除。收到反馈时 Telegram 会提醒（同一账号一小时最多一条）。
+- The server redacts again before storing: the account's own link, UUID and password, and every full IP address (203.0.x.x). Feedback is kept 30 days (20 per account, 500 in all), is not in backups, and goes with the account.
+  服务端存之前会再打一次码：这个账号自己的链接、UUID、密码，以及所有完整的 IP 地址（变成 203.0.x.x）。反馈保留 30 天（每个账号 20 条，全部最多 500 条），不进备份，账号删掉时一起删。
+- A server marked "maintenance" is left out of "Auto" in every subscription format (Clash, sing-box, Shadowrocket), so apps other than ours stop switching to it; it can still be picked by hand, and its name does not change. It comes back by itself when the maintenance ends. Other apps notice after their next subscription update, so mark it ahead of time.
+  标成「维护中」的服务器不再进「自动选择」（Clash、sing-box、小火箭都一样），用其他软件的人也不会被自动切过去；手动仍能选，名字不变。维护结束后自动回来。其他软件要等下次更新订阅才生效，所以请提前标。
+
 ## 0.2.42
 
 Phase 2 for the vps2vpn app, first part: server status (docs/phase2-api.md section 3).

@@ -30,8 +30,8 @@ import time
 import urllib.error
 import urllib.parse
 
-from . import (VERSION, abuse, aicheck, certs, clock, cluster, cores, db, doctor, jobs, members, monitor, nodestatus, notify, paths, qr,
-               rules, secure, shaper, subscription, system)
+from . import (VERSION, abuse, aicheck, certs, clock, cluster, cores, db, doctor, jobs, feedback, members, monitor, nodestatus, notify, paths,
+               qr, rules, secure, shaper, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
 _fails = {}                    # rate-limit bucket -> [monotonic timestamps] of failed attempts
@@ -935,6 +935,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         m = re.fullmatch(r'invites/(\d+)/revoke', api)
         if m:
             return self.refused(lambda: members.revoke_invite(int(m.group(1)))) if method == 'POST' else self.json({'error': 'POST only'}, 405)
+        m = re.fullmatch(r'feedback/(\d+)(?:/(answer|done|reopen|delete))?', api)
+        if m:
+            fid = int(m.group(1))
+            if not m.group(2):
+                row = feedback.admin_get(fid) if method == 'GET' else None
+                return self.json(row) if row else self.json({'error': 'no such feedback'}, 404)
+            if method != 'POST':
+                return self.json({'error': 'POST only'}, 405)
+            try:
+                found = feedback.admin_act(fid, m.group(2), self.body_json().get('answer', ''))
+            except feedback.Refused as e:
+                return self.json({'error': str(e)}, 400)
+            return self.json({'ok': True}) if found else self.json({'error': 'no such feedback'}, 404)
         m = re.fullmatch(r'requests/(\d+)/(approve|reject)', api)
         if m:
             if method != 'POST':
@@ -964,6 +977,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'monitor': (('GET', 'POST'), self.api_monitor),
             'abuse': (('GET', 'POST'), self.api_abuse),
             'servers': (('GET', 'POST'), self.api_servers),
+            'feedback': (('GET',), lambda method, s: self.json({'on': feedback.on(s), 'items': feedback.admin_list()})),
             'node-status': (('GET', 'POST'), self.api_node_status),
             'node-key': (('POST',), self.api_node_key),
             'password': (('POST',), self.api_password),
@@ -1292,6 +1306,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'member_url': '%s/%s/' % (base, s['member_path']) if s['member_enabled'] else '',
             'node_master': s['node_master'],
             'pending_requests': len(db.requests(status='pending')), 'servers': cluster.view(s),
+            'open_feedback': feedback.open_count(),
             'server_month': {k: v for k, v in (s['server_month'] or {}).items() if not k.startswith('last_')},
             'renew_days': jobs.renew_days_left(s), 'line_trouble': self.trouble_view(s),
             'client': {'found': client_files(), 'dir': paths.CLIENT},
@@ -1756,7 +1771,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._release_attempt()
             return self.json({'ok': True}, headers={'Set-Cookie': self.member_cookie(session)})
         if u is None:
-            return self.json({'error': 'login required'}, 401)
+            return self.json({'error': 'login required', 'code': 'login_required'}, 401)
+        if api == 'feedback':
+            return self.member_feedback(method, s, u)
         if api == 'logout' and not by_link:
             if method != 'POST':
                 return self.json({'error': 'POST only'}, 405)
@@ -1882,6 +1899,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 left -= len(chunk)
 
+    def member_feedback(self, method, s, u):
+        """GET: this account's last 10 with the admin's answers. POST: send one (docs/phase2-api.md section 1)."""
+        if not feedback.on(s):
+            return self.json({'error': 'feedback is turned off', 'code': 'feature_off'}, 503)
+        if method == 'GET':
+            return self.json({'items': feedback.for_member(u['id'])})
+        if method != 'POST':
+            return self.json({'error': 'POST only', 'code': 'post_only'}, 405)
+        # read up to the usual 4 MB first, so the app gets the 413 (closing on an unread body loses the answer)
+        too_large = {'error': 'request too large (128 KB at most)', 'code': 'too_large'}
+        try:
+            d = self.body_json()
+        except _BadRequest as e:
+            if str(e) == 'request too large':
+                return self.json(too_large, 413)
+            return self.json({'error': str(e)[:120], 'code': 'bad_request'}, 400)
+        if len(self._raw or b'') > feedback.BODY_MAX:
+            return self.json(too_large, 413)
+        try:
+            fid = feedback.add(u, d)
+        except feedback.Refused as e:
+            return self.json({'error': str(e), 'code': e.code}, e.status,
+                             headers={'Retry-After': str(e.retry)} if e.retry else None)
+        row = feedback.admin_get(fid)
+        short = (row['text'] or ('(diagnosis)' if row['diagnosis'] else '(log)'))[:50].replace('\n', ' ')
+        jobs.log('feedback from %s' % u['name'])
+        notify.send('feedback from %s: %s / %s 发来反馈：%s' % (u['name'], short, u['name'], short),
+                    key='fb-%d' % u['id'], every=3600)
+        return self.json({'ok': True, 'id': fid})
+
     def member_view(self, s, u, by_link):
         base = self.base_url(s)
         sub_url = '%s/s/%s' % (base, u['sub_token'])
@@ -1918,8 +1965,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'client': client_info(s, dl_url),
             # switches for our own app; an app that finds no key keeps that feature off, so older panels are safe
             'features': {'traffic_rank': s.get('client_traffic_rank') is True,   # a hand-edited backup's "false" stays off
-                         'node_status': nodestatus.on(s)},
+                         'node_status': nodestatus.on(s), 'feedback': feedback.on(s)},
             **({'nodes': nodestatus.for_member(s, u)} if nodestatus.on(s) else {}),
+            **({'feedback_unread': feedback.unread(u['id'])} if feedback.on(s) else {}),
         }
 
     def api_password(self, method, s):
@@ -2176,7 +2224,7 @@ def validate_settings(d, s):
     bools = ('reality_enabled', 'hy2_enabled', 'tuic_enabled', 'hy2_hop', 'block_ads', 'block_bt', 'ai_group',
              'tune_network', 'ipv6_nodes', 'tcp_first', 'member_enabled', 'member_invites', 'member_requests', 'monitor_enabled',
              'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause', 'client_auto_update',
-             'client_traffic_rank', 'client_node_status')
+             'client_traffic_rank', 'client_node_status', 'client_feedback')
     for k in bools:
         if k in d:
             try:

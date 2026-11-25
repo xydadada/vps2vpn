@@ -187,24 +187,24 @@ class TrafficRankSwitch(Server):
 
     def test_off_by_default(self):
         self.assertIs(db.settings()['client_traffic_rank'], False)
-        self.assertEqual(self.features(), {'traffic_rank': False, 'node_status': False})
+        self.assertEqual(self.features(), {'traffic_rank': False, 'node_status': False, 'feedback': False})
 
     def test_admin_switch_reaches_the_app(self):
         changes = web.validate_settings({'client_traffic_rank': True}, db.settings())
         self.assertEqual(changes, {'client_traffic_rank': True})
         db.set_settings(**changes)
-        self.assertEqual(self.features(), {'traffic_rank': True, 'node_status': False})
+        self.assertEqual(self.features(), {'traffic_rank': True, 'node_status': False, 'feedback': False})
         st, _ = self.j('POST', '/mem/api/login', {'name': 'tia', 'password': 'tiapassword'})
         self.assertEqual(st, 200)
         st, d = self.j('GET', '/mem/api/me')
-        self.assertEqual((st, d['features']), (200, {'traffic_rank': True, 'node_status': False}))
+        self.assertEqual((st, d['features']), (200, {'traffic_rank': True, 'node_status': False, 'feedback': False}))
         db.set_settings(**web.validate_settings({'client_traffic_rank': 'false'}, db.settings()))
-        self.assertEqual(self.features(), {'traffic_rank': False, 'node_status': False})
+        self.assertEqual(self.features(), {'traffic_rank': False, 'node_status': False, 'feedback': False})
 
     def test_only_a_real_true_turns_it_on(self):
         self.assertIsInstance(web.validate_settings({'client_traffic_rank': 'maybe'}, db.settings()), str)
         db.set_settings(client_traffic_rank='false')          # e.g. from a hand-edited backup
-        self.assertEqual(self.features(), {'traffic_rank': False, 'node_status': False})
+        self.assertEqual(self.features(), {'traffic_rank': False, 'node_status': False, 'feedback': False})
 
     def test_admin_page_has_the_switch(self):
         with open(os.path.join(ROOT, 'vps2vpn', 'static', 'app.js'), encoding='utf-8') as f:

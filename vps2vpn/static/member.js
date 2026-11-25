@@ -28,6 +28,9 @@ const T = {
     st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', st_void: '已失效：你的额度不够了', reserved: '已预留给邀请码', used_by: '已注册', send_link: '复制注册链接',
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心（忘了订阅链接也不怕）。', pw_tip_link: '用你的专属链接打开这一页时，不用输入旧密码就能设新密码（链接本身就是钥匙）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
+    fb: '反馈问题', fb_tip: '连不上、很慢、某个网站打不开，都可以在这里告诉管理员。用 vps2vpn 客户端的话，在客户端里点「反馈」能自动附上诊断结果，更容易查。',
+    fb_ph: '比如：下午 3 点开始 YouTube 打不开', fb_send: '发送', fb_sent: '已发送，管理员回复后会显示在这里', fb_none: '还没有发过反馈。',
+    fb_open: '待处理', fb_done: '已处理', fb_reply: '管理员回复：', fb_new: '有新回复',
     node_maint: '{g} 维护中', node_cong: '{g} 比较拥堵，建议先用别的线路', node_until: '（预计 {t} 恢复）',
     notice: '管理员公告', paused_quota: '这一期的流量用完了，所以暂时停用。', q_ask: '可以在下面「申请增加流量」。', q_wait: '到 {date} 重置后会自动恢复。', q_admin: '这个账号不会自动重置，请联系管理员。',
     extra: '本期临时加量', first_use: '首次使用后 {n} 天', asked: '（申请了 {n} GB）', inv_copied: '注册链接已复制，发给朋友打开就能注册', dev_limit: '（最多同时 {n} 台）',
@@ -64,6 +67,9 @@ const T = {
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', st_void: 'void: not enough quota left', reserved: 'Kept for invite codes', used_by: 'Registered', send_link: 'Copy sign-up link',
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can log in to the member centre by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
+    fb: 'Report a problem', fb_tip: 'Cannot connect, slow, a site will not open: tell the admin here. In the vps2vpn app, "Feedback" also sends its diagnosis, which makes it easier to find.',
+    fb_ph: 'For example: YouTube stopped working at 3 pm', fb_send: 'Send', fb_sent: 'Sent. The admin\'s answer will show here', fb_none: 'Nothing sent yet.',
+    fb_open: 'open', fb_done: 'done', fb_reply: 'Answer: ', fb_new: 'new answer',
     node_maint: '{g}: down for maintenance', node_cong: '{g} is congested; another server may be faster', node_until: ' (back around {t})',
     notice: 'Notice from the admin', paused_quota: 'This period\u2019s quota is used up, so the account is paused. ', q_ask: 'You can ask for more below. ', q_wait: 'It resumes by itself after the reset on {date}.', q_admin: 'This account does not reset by itself; ask the admin.',
     extra: 'Top-up this period', first_use: '{n} days after first use', asked: ' (asked for {n} GB)', inv_copied: 'Sign-up link copied; your friend just opens it', dev_limit: ' (at most {n} at once)',
@@ -205,6 +211,7 @@ async function renderHome() {
   const blocks = [];
   if (M.hello.requests && me.quota_gb) blocks.push(requestsPanel());   // unlimited: nothing to ask for
   if (M.hello.invites) blocks.push(invitesPanel());
+  if (me.features && me.features.feedback) blocks.push(feedbackPanel());
   if (M.hello.member_url || M.hello.mode !== 'link') blocks.push(passwordPanel());   // no member centre: no login to use it on
   const colon = L === 'zh' ? '：' : ': ';
   document.body.replaceChildren(h('div', {class: 'm-wrap'}, top,
@@ -260,6 +267,27 @@ function requestsPanel() {
     h('p', {class: 'muted m-tip'}, t(me.reset_day ? 'more_tip' : 'more_tip_nr')), h('div', {class: 'form-grid'}, field(t('add_gb'), f.gb), field(t('reason'), f.why)), h('div', null, b), list));
 }
 
+function feedbackPanel() {
+  const ta = h('textarea', {rows: '3', maxlength: '1000', style: 'width:100%;resize:vertical', placeholder: t('fb_ph')});
+  const list = h('div', {class: 'tl'}), b = h('button', {class: 'btn primary'}, icon('check'), t('fb_send'));
+  // reading the list is what marks the admin's answers as seen
+  const fill = async () => {
+    let r; try { r = await api('feedback'); } catch (e) { return; }
+    list.replaceChildren(...(r.items.length ? r.items.map(x => h('div', {class: 'tl-row'},
+      h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, fmt.time(x.created_at) + (x.text ? ' · ' + x.text : '')),
+      x.answer ? h('b', {style: 'overflow-wrap:anywhere'}, t('fb_reply') + x.answer) : null,
+      chip(x.status === 'done' ? 'ok' : 'warn', t(x.status === 'done' ? 'fb_done' : 'fb_open')))) : [h('div', {class: 'muted m-tip'}, t('fb_none'))]));
+  };
+  b.onclick = async () => {
+    if (!ta.value.trim()) return ta.focus();
+    b.disabled = true;
+    try { await api('feedback', {text: ta.value, client: {platform: 'web', version: 'web'}}); ta.value = ''; toast(t('fb_sent')); fill(); } catch (e) { err(e); }
+    b.disabled = false;
+  };
+  fill();
+  return panel(t('fb'), null, M.me.feedback_unread ? chip('info', t('fb_new')) : null, h('div', {class: 'stack'},
+    h('p', {class: 'muted m-tip'}, t('fb_tip')), ta, h('div', null, b), list));
+}
 function invitesPanel() {
   const me = M.me;
   if (me.capacity == null) return panel(t('invites'), null, null, h('p', {class: 'muted m-tip'}, t('no_share')), invList());
