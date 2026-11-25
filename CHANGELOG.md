@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.47
+
+"Sign out all other devices" in the vps2vpn app can be retried safely.
+vps2vpn 客户端的「踢掉其他所有设备」可以放心重试了。
+
+- The app's hard kick ends the link it was sent on. If its answer was lost on the way, the app was left with a dead link and no new one, and that device was cut off as well. The app now sends a random `request_id`; for 10 minutes the same request on the old link gets the same new link back (no second new link, not counted again). Everything else on the old link still fails at once.
+  客户端的「换链接踢人」会让发请求用的那条链接立刻失效。以前回应要是在路上丢了，客户端手里只剩一条失效的旧链接，又拿不到新链接，这台设备自己也断了。现在客户端带一个随机的 `request_id`：10 分钟内用旧链接加同一个 `request_id` 重发，会拿回同一条新链接（不会再换一次，也不再计次）。旧链接的其他请求照样立刻失效。
+
 ## 0.2.46
 
 The vps2vpn app API (0.2.42–0.2.45) checked from the member's side: a paused account, a new link, the limits.

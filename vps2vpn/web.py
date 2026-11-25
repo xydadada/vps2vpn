@@ -717,6 +717,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         and (m.group(2) in ('/api/me', '/api/report') or m.group(2).startswith('/download/'))
                         and not self.secure_ok()):
                     return self.json({'service': 'vps2vpn', 'error': 'https_required'}, 426, {'Upgrade': 'TLS/1.2'})
+                if (not u and method == 'POST' and m.group(2) == '/api/devices/kick-others' and s['setup_done']
+                        and self.secure_ok() and self.headers.get('X-V2V') == '1' and devices.on(s)):
+                    return self.kick_retry(s, m.group(1))       # the answer to a kick got lost: same new link
                 if not u or not s['setup_done'] or not self.secure_ok():
                     return self.not_found()
                 return self.member_area(method, m.group(2), s, u, '/s/%s/' % m.group(1))
@@ -1972,15 +1975,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                  headers={'Retry-After': str(e.retry)} if e.retry else None)
             return self.json({'ok': True, 'revoked': revoked})
         if api == 'devices/kick-others':
-            wait = devices.kick_allowed(u['id'])
-            if wait:
-                return self.json({'error': 'too many new links, wait an hour', 'code': 'rate_limited'}, 429,
-                                 headers={'Retry-After': str(wait)})
-            keep = this or str(d.get('device_id') or '').strip().lower()
-            db.rotate_user(u['id'])
+            try:
+                rid = devices.request_id(d.get('request_id'))
+            except devices.Refused as e:
+                return self.json({'error': str(e), 'code': 'bad_request'}, 400)
+            old = u['sub_token']
+            with devices.kick_lock:
+                if db.user(u['id'])['sub_token'] != old:
+                    # another kick ended this link while this one waited: a retry of it, or nothing
+                    return self.kick_retry(s, old, rid) if by_link else self.not_found()
+                wait = devices.kick_allowed(u['id'])
+                if wait:
+                    return self.json({'error': 'too many new links, wait an hour', 'code': 'rate_limited'}, 429,
+                                     headers={'Retry-After': str(wait)})
+                keep = this or str(d.get('device_id') or '').strip().lower()
+                db.rotate_user(u['id'])
+                nu = db.user(u['id'])
+                if by_link:
+                    devices.remember_kick(old, rid, u['id'], nu['sub_token'])
             devices.forget_others(u['id'], keep)
             apply_async()
-            nu = db.user(u['id'])
             jobs.log('%s changed their own subscription link (kick other devices)' % nu['name'])
             headers = None if by_link else {'Set-Cookie': self.member_cookie(db.new_member_session(u['id']))}
             return self.json({'ok': True, 'sub_url': '%s/s/%s' % (self.base_url(s), nu['sub_token']),
@@ -1992,6 +2006,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             jobs.log('%s %s a device' % (u['name'], 'revoked' if m.group(2) == 'revoke' else 'restored'))
             return self.json({'ok': True})
         return self.json({'error': 'unknown endpoint', 'code': 'not_found'}, 404)
+
+    def kick_retry(self, s, old_token, rid=None):
+        """A kick-others retried on the link that kick ended: the same new link again, if the request_id matches
+        and the account still has that link. Anything else gets the usual 404 of an unknown link."""
+        if rid is None:
+            try:
+                rid = self.body_json(limit=64 << 10).get('request_id')
+            except _BadRequest:
+                return self.not_found()
+            if not isinstance(rid, str) or not devices.REQUEST_ID_RE.fullmatch(rid):
+                return self.not_found()
+        hit = devices.replayed_kick(old_token, rid)
+        cur = db.user(hit[0]) if hit else None
+        if not cur or cur['sub_token'] != hit[1]:
+            return self.not_found()
+        return self.json({'ok': True, 'sub_url': '%s/s/%s' % (self.base_url(s), cur['sub_token']),
+                          'base': '/s/%s/' % cur['sub_token'], 'replayed': True})
 
     def member_view(self, s, u, by_link):
         base = self.base_url(s)

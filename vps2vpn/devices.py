@@ -9,8 +9,15 @@ everything.
 
 The list is for seeing, never for enforcing: the device limit (`max_ips`) keeps counting the addresses the cores
 report, because a device list sent by the app can be made up. Not in backups; gone with the account; a device
-not seen for 90 days is forgotten."""
+not seen for 90 days is forgotten.
+
+The hard kick can be retried safely (0.2.47): it ends the link the request came in on, so an app whose answer got
+lost would be left with a dead link and no new one. The app sends a random `request_id` with the kick; for 10
+minutes the same old link with the same id gets the same new link back instead of a 404 (and no second kick).
+Kept in memory only: a panel restart in those minutes loses it, and the member re-imports from the member page."""
+import hashlib
 import re
+import threading
 import time
 
 from . import db, feedback
@@ -24,7 +31,14 @@ KEEP_DAYS = 90
 KICK_MAX = 3                      # new links per account and hour, from the app
 UUID_RE = feedback.UUID_RE
 
+REQUEST_ID_RE = re.compile(r'[A-Za-z0-9_-]{22,128}')    # 22 base64url characters = 132 bits
+REPLAY_SECONDS = 600
+REPLAY_MAX = 2000
+
 _kicks = {}                       # user id -> [times]
+kick_lock = threading.Lock()      # one hard kick at a time: a retry racing the first one must not kick twice
+_replays = {}                     # (sha256 of the old token, request_id) -> (user id, new token, expires)
+_replay_lock = threading.Lock()
 
 
 class Refused(feedback.Refused):
@@ -108,6 +122,44 @@ def kick_allowed(uid, now=None):
         return max(1, int(times[0] + 3600 - now))
     _kicks[uid] = times + [now]
     return 0
+
+
+def request_id(value):
+    """The kick's retry id: '' when there is none, Refused when it is not long and random-looking."""
+    if value is None or value == '':
+        return ''
+    if not isinstance(value, str) or not REQUEST_ID_RE.fullmatch(value):
+        raise Refused('request_id must be 22-128 characters of A-Z a-z 0-9 _ - (128 random bits or more)')
+    return value
+
+
+def _replay_key(old_token, rid):
+    return hashlib.sha256(old_token.encode()).hexdigest(), rid
+
+
+def remember_kick(old_token, rid, uid, new_token, now=None):
+    """After a kick with a request_id: the same retry gets the same new link for REPLAY_SECONDS."""
+    if not rid:
+        return
+    now = now or time.time()
+    with _replay_lock:
+        for k in [k for k, v in _replays.items() if v[2] <= now]:
+            del _replays[k]
+        while len(_replays) >= REPLAY_MAX:
+            del _replays[next(iter(_replays))]
+        _replays[_replay_key(old_token, rid)] = (uid, new_token, now + REPLAY_SECONDS)
+
+
+def replayed_kick(old_token, rid, now=None):
+    """(user id, new token) of the kick this old link and request_id already made, or None."""
+    if not rid:
+        return None
+    now = now or time.time()
+    with _replay_lock:
+        hit = _replays.get(_replay_key(old_token, rid))
+    if not hit or hit[2] <= now:
+        return None
+    return hit[0], hit[1]
 
 
 def recent_names(uid, now=None, within=3600):

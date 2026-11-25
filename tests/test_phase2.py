@@ -6,6 +6,7 @@
 0.2.44  devices the app reports, soft and hard kick (section 2)
 0.2.45  api/me config_version: the app notices a changed subscription at once (logic review O-10)
 0.2.46  the member's view of all of it: a paused account, a new link, the limits a normal app meets
+0.2.47  kick-others can be retried: same old link + same request_id -> the same new link for 10 minutes
 """
 import base64
 import datetime as dt
@@ -788,3 +789,124 @@ class AsTheMemberSeesIt(OverHttps):
         self.assertTrue(0 < int(r.getheader('Retry-After')) <= feedback.GAP)
         self.assertEqual(self.req('GET', self.me)[0], 200)                     # nothing else is held back
         self.assertEqual(web._fails, {})                                       # and no sign-in budget was spent
+
+
+RID = 'Zq3xV9-kP2_mN7bR4tY8wL'          # 22 base64url characters: what a 128-bit random id looks like
+RID2 = '0123456789abcdef0123456789abcdef'
+
+
+class KickRetryValues(tu.Base):
+    def setUp(self):
+        super().setUp()
+        devices._replays.clear()
+
+    def test_request_id(self):
+        self.assertEqual(devices.request_id(None), '')
+        self.assertEqual(devices.request_id(''), '')
+        self.assertEqual(devices.request_id(RID), RID)
+        for bad in ('short', 'x' * 21, 'x' * 129, 'has space ' * 3, 12345678901234567890123, ['x' * 30], 'é' * 30):
+            with self.assertRaises(devices.Refused, msg=bad):
+                devices.request_id(bad)
+
+    def test_remembered_for_ten_minutes_by_old_link_and_id(self):
+        now = 1_800_000_000
+        devices.remember_kick('oldtoken', RID, 7, 'newtoken', now)
+        self.assertEqual(devices.replayed_kick('oldtoken', RID, now + 599), (7, 'newtoken'))
+        self.assertIsNone(devices.replayed_kick('oldtoken', RID, now + 600))
+        self.assertIsNone(devices.replayed_kick('oldtoken', RID2, now))
+        self.assertIsNone(devices.replayed_kick('othertoken', RID, now))
+        self.assertIsNone(devices.replayed_kick('oldtoken', '', now))
+        self.assertNotIn('oldtoken', repr(devices._replays))                 # only a hash of the old link is kept
+        devices.remember_kick('oldtoken', '', 7, 'x', now)                    # no id: nothing to remember
+        self.assertEqual(len(devices._replays), 1)
+        devices.remember_kick('t2', RID, 8, 'n2', now + 601)                  # the expired one is cleaned up
+        self.assertEqual(len(devices._replays), 1)
+
+    def test_bounded(self):
+        with mock.patch.object(devices, 'REPLAY_MAX', 3):
+            for i in range(5):
+                devices.remember_kick('t%d' % i, RID, i, 'n%d' % i, 1000)
+            self.assertEqual(len(devices._replays), 3)
+            self.assertIsNone(devices.replayed_kick('t0', RID, 1000))         # the oldest went first
+            self.assertEqual(devices.replayed_kick('t4', RID, 1000), (4, 'n4'))
+
+
+class KickRetryOverHttps(OverHttps):
+    def setUp(self):
+        super().setUp()
+        devices._kicks.clear()
+        devices._replays.clear()
+
+    def _kick(self, tok, body):
+        return self.j('POST', '/s/%s/api/devices/kick-others' % tok, body)
+
+    def test_a_lost_answer_is_retried_safely(self):
+        db.set_settings(client_devices=True)
+        old = db.user(self.uid)['sub_token']
+        st, first = self._kick(old, {'device_id': DEV1, 'request_id': RID})
+        self.assertEqual(st, 200, first)
+        new = db.user(self.uid)['sub_token']
+        self.assertTrue(first['sub_url'].endswith('/s/' + new))
+        # the answer never arrived: the app sends the same request again on the old link
+        for _ in range(2):
+            st, again = self._kick(old, {'device_id': DEV1, 'request_id': RID})
+            self.assertEqual(st, 200, again)
+            self.assertEqual((again['sub_url'], again['base'], again['replayed']), (first['sub_url'], first['base'], True))
+        self.assertEqual(db.user(self.uid)['sub_token'], new)                 # no second kick
+        self.assertEqual(len(devices._kicks[self.uid]), 1)                    # and not counted again
+        # everything else on the old link is still gone
+        for body in ({'request_id': RID2}, {}, {'request_id': 'short'}, {'device_id': DEV1}):
+            st, _, _ = self.req('POST', '/s/%s/api/devices/kick-others' % old, body)
+            self.assertEqual(st, 404, body)
+        st, _, _ = self.req('POST', '/s/%s/api/devices/kick-others' % old, None, headers={'Content-Type': 'text/plain'})
+        self.assertEqual(st, 404)
+        for path in ('me', 'devices'):
+            self.assertEqual(self.req('GET', '/s/%s/api/%s' % (old, path))[0], 404)
+        st, _, _ = self.req('POST', '/s/%s/api/devices/kick-others' % old, {'request_id': RID}, headers={'X-V2V': ''})
+        self.assertEqual(st, 404)
+        # a later new link (here: the admin's) ends the retry too
+        st, _ = self.j('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
+        self.assertEqual(self.j('POST', '/adm/api/users/%d/rotate' % self.uid, {})[0], 200)
+        self.cookie = ''
+        self.assertEqual(self.req('POST', '/s/%s/api/devices/kick-others' % old, {'request_id': RID})[0], 404)
+
+    def test_ten_minutes_then_gone(self):
+        db.set_settings(client_devices=True)
+        old = db.user(self.uid)['sub_token']
+        self.assertEqual(self._kick(old, {'request_id': RID})[0], 200)
+        for k, v in list(devices._replays.items()):
+            devices._replays[k] = (v[0], v[1], time.time() - 1)
+        self.assertEqual(self.req('POST', '/s/%s/api/devices/kick-others' % old, {'request_id': RID})[0], 404)
+
+    def test_switch_off_or_bad_id(self):
+        db.set_settings(client_devices=True)
+        old = db.user(self.uid)['sub_token']
+        st, d = self._kick(old, {'request_id': 'not random enough'})
+        self.assertEqual((st, d['code']), (400, 'bad_request'))
+        self.assertEqual(db.user(self.uid)['sub_token'], old)                 # refused before any kick
+        self.assertEqual(self._kick(old, {'request_id': RID})[0], 200)
+        db.set_settings(client_devices=False)
+        self.assertEqual(self.req('POST', '/s/%s/api/devices/kick-others' % old, {'request_id': RID})[0], 404)
+
+    def test_a_retry_racing_the_first_kick(self):
+        """The retry arrives while the first kick still runs: it waits, then gets the same link (no second kick)."""
+        db.set_settings(client_devices=True)
+        old = db.user(self.uid)['sub_token']
+        results = []
+        rotate = db.rotate_user
+
+        def slow_rotate(uid):
+            time.sleep(0.5)
+            rotate(uid)
+        with mock.patch.object(db, 'rotate_user', slow_rotate):
+            threads = [threading.Thread(target=lambda: results.append(self._kick(old, {'request_id': RID})))
+                       for _ in range(2)]
+            for t in threads:
+                t.start()
+                time.sleep(0.1)
+            for t in threads:
+                t.join(10)
+        self.assertEqual(sorted(st for st, _ in results), [200, 200])
+        self.assertEqual(len({d['sub_url'] for _, d in results}), 1)
+        self.assertEqual(len(devices._kicks[self.uid]), 1)
+
