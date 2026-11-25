@@ -28,6 +28,9 @@ const T = {
     st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', st_void: '已失效：你的额度不够了', reserved: '已预留给邀请码', used_by: '已注册', send_link: '复制注册链接',
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心（忘了订阅链接也不怕）。', pw_tip_link: '用你的专属链接打开这一页时，不用输入旧密码就能设新密码（链接本身就是钥匙）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
+    dv: '我的设备', dv_tip: '这里只列出装了 vps2vpn 客户端（1.0.29 起）的设备；用其他软件的设备不在列表里，但算在「同时在线」里。「踢下线」只对 vps2vpn 客户端有效：那台设备下次联网时会断开并删掉订阅。要让所有设备都连不上，用下面的「更换订阅链接」。',
+    dv_none: '还没有设备登记。打开 vps2vpn 客户端连一次就会出现在这里。', dv_revoke: '踢下线', dv_unrevoke: '恢复', dv_revoked: '已踢下线', dv_this: '这台', dv_seen: '最后在线',
+    dv_online: '现在有 {n} 个地址在用这个账号', dv_limit: '（最多 {m} 台）', dv_revoke_q: '把「{d}」踢下线？它下次联网时会断开并删掉这个订阅。',
     fb: '反馈问题', fb_tip: '连不上、很慢、某个网站打不开，都可以在这里告诉管理员。用 vps2vpn 客户端的话，在客户端里点「反馈」能自动附上诊断结果，更容易查。',
     fb_ph: '比如：下午 3 点开始 YouTube 打不开', fb_send: '发送', fb_sent: '已发送，管理员回复后会显示在这里', fb_none: '还没有发过反馈。',
     fb_open: '待处理', fb_done: '已处理', fb_reply: '管理员回复：', fb_new: '有新回复',
@@ -67,6 +70,9 @@ const T = {
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', st_void: 'void: not enough quota left', reserved: 'Kept for invite codes', used_by: 'Registered', send_link: 'Copy sign-up link',
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can log in to the member centre by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
+    dv: 'My devices', dv_tip: 'Only devices running the vps2vpn app (1.0.29 or later) are listed; devices using other apps are not, but they count as online. "Sign out" works on the vps2vpn app only: that device disconnects and forgets the subscription the next time it is online. To stop every device, use "New subscription link" below.',
+    dv_none: 'No devices yet. Connect once with the vps2vpn app and it shows up here.', dv_revoke: 'Sign out', dv_unrevoke: 'Restore', dv_revoked: 'signed out', dv_this: 'this one', dv_seen: 'last seen',
+    dv_online: '{n} address(es) are using this account now', dv_limit: ' (limit {m})', dv_revoke_q: 'Sign out "{d}"? It disconnects and forgets this subscription the next time it is online.',
     fb: 'Report a problem', fb_tip: 'Cannot connect, slow, a site will not open: tell the admin here. In the vps2vpn app, "Feedback" also sends its diagnosis, which makes it easier to find.',
     fb_ph: 'For example: YouTube stopped working at 3 pm', fb_send: 'Send', fb_sent: 'Sent. The admin\'s answer will show here', fb_none: 'Nothing sent yet.',
     fb_open: 'open', fb_done: 'done', fb_reply: 'Answer: ', fb_new: 'new answer',
@@ -212,6 +218,7 @@ async function renderHome() {
   if (M.hello.requests && me.quota_gb) blocks.push(requestsPanel());   // unlimited: nothing to ask for
   if (M.hello.invites) blocks.push(invitesPanel());
   if (me.features && me.features.feedback) blocks.push(feedbackPanel());
+  if (me.features && me.features.devices) blocks.push(devicesPanel());
   if (M.hello.member_url || M.hello.mode !== 'link') blocks.push(passwordPanel());   // no member centre: no login to use it on
   const colon = L === 'zh' ? '：' : ': ';
   document.body.replaceChildren(h('div', {class: 'm-wrap'}, top,
@@ -267,6 +274,26 @@ function requestsPanel() {
     h('p', {class: 'muted m-tip'}, t(me.reset_day ? 'more_tip' : 'more_tip_nr')), h('div', {class: 'form-grid'}, field(t('add_gb'), f.gb), field(t('reason'), f.why)), h('div', null, b), list));
 }
 
+function devicesPanel() {
+  const list = h('div', {class: 'tl'}), info = h('p', {class: 'muted m-tip'});
+  const fill = async () => {
+    let r; try { r = await api('devices'); } catch (e) { return; }
+    info.textContent = t('dv_online').replace('{n}', r.online_ips) + (r.max_ips ? t('dv_limit').replace('{m}', r.max_ips) : '');
+    list.replaceChildren(...(r.devices.length ? r.devices.map(x => {
+      const b = h('button', {class: 'btn sm' + (x.revoked ? '' : ' danger')}, t(x.revoked ? 'dv_unrevoke' : 'dv_revoke'));
+      b.onclick = async () => {
+        if (!x.revoked && !await confirmBox(t('dv_revoke'), t('dv_revoke_q').replace('{d}', x.name || x.platform), {danger: true, confirm: t('dv_revoke')})) return;
+        b.disabled = true;
+        try { await api(`devices/${x.device_id}/${x.revoked ? 'unrevoke' : 'revoke'}`, {}); toast(t('saved')); fill(); } catch (e) { err(e); b.disabled = false; }
+      };
+      return h('div', {class: 'tl-row'}, h('b', {style: 'overflow-wrap:anywhere'}, x.name || x.platform),
+        h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, [x.platform, x.version, t('dv_seen') + ' ' + fmt.time(x.last_seen), x.ip].filter(Boolean).join(' · ')),
+        x.this_device ? chip('info', t('dv_this')) : null, x.revoked ? chip('bad', t('dv_revoked')) : null, b);
+    }) : [h('div', {class: 'muted m-tip'}, t('dv_none'))]));
+  };
+  fill();
+  return panel(t('dv'), null, null, h('div', {class: 'stack'}, h('p', {class: 'muted m-tip'}, t('dv_tip')), info, list));
+}
 function feedbackPanel() {
   const ta = h('textarea', {rows: '3', maxlength: '1000', style: 'width:100%;resize:vertical', placeholder: t('fb_ph')});
   const list = h('div', {class: 'tl'}), b = h('button', {class: 'btn primary'}, icon('check'), t('fb_send'));

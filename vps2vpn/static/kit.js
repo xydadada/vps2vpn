@@ -105,7 +105,8 @@ const ERR_ZH=[
  [/^state must be ok, maintenance or congested/,'状态只能是正常、维护中或拥堵'],
  [/^until: expected/,'恢复时间的格式不对'],[/^until must be in the future/,'恢复时间要在现在之后、一年以内'],[/^note must be text/,'说明要填文字'],
  [/^too many reports, wait a moment/,'发得太快了，请过两分钟再发'],[/^too many reports today/,'今天已经发了 5 条，请明天再发'],
- [/^feedback is turned off/,'管理员没有打开反馈功能'],[/^no such feedback/,'这条反馈已经不在了'],[/^answer: at most/,'回复最多 500 字'],[/^text: at most/,'最多 1000 个字'],
+ [/^feedback is turned off/,'管理员没有打开反馈功能'],[/^devices are turned off/,'管理员没有打开设备管理'],[/^no such device/,'没有这台设备'],
+ [/^too many new links, wait an hour/,'一小时内换链接太多次了，请过一会儿再试'],[/^no such feedback/,'这条反馈已经不在了'],[/^answer: at most/,'回复最多 500 字'],[/^text: at most/,'最多 1000 个字'],
  [/^internal error/,'服务器内部出错，请看日志'],[/^unknown endpoint/,'这个功能不可用（可能被管理员关掉了）'],[/^login required/,'请先登录']];
 function errText(m){if(typeof KT==='undefined'||KT!==KT_ZH||!m)return m;for(const [re,f] of ERR_ZH){const x=String(m).match(re);if(x)return typeof f==='string'?f:f(...x);}return m;}
 function toast(text,kind){if(kind==='err')text=errText(text);let box=$('toasts');if(!box){box=h('div',{id:'toasts','aria-live':'polite'});document.body.append(box);}const t=h('div',{class:'toast'+(kind==='err'?' err':''),role:'status'},text);const close=()=>{t.classList.add('out');setTimeout(()=>t.remove(),200);};t.onclick=close;box.append(t);setTimeout(close,kind==='err'?8000:4500);while(box.children.length>4)box.firstChild.remove();}

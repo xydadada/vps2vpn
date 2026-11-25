@@ -3,6 +3,7 @@
 0.2.42  server status (section 3): maintenance / congested per server, sent in api/me "nodes"
 0.2.43  a server in maintenance is left out of "Auto" in every subscription format (logic review C-19);
         one-tap feedback (section 1)
+0.2.44  devices the app reports, soft and hard kick (section 2)
 """
 import base64
 import datetime as dt
@@ -14,7 +15,7 @@ import unittest
 from unittest import mock
 
 from tests import test_unit as tu          # sets VPS2VPN_ROOT / dev mode first
-from vps2vpn import certs, clock, cluster, db, feedback, jobs, nodestatus, notify, secure, subscription, web
+from vps2vpn import certs, clock, cluster, cores, db, devices, feedback, jobs, nodestatus, notify, secure, subscription, web
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SID = 'a1b2c3d4'
@@ -470,6 +471,178 @@ class FeedbackPages(unittest.TestCase):
         m = _static('member.js')
         self.assertIn("me.features.feedback) blocks.push(feedbackPanel())", m)
         self.assertIn("client: {platform: 'web', version: 'web'}", m)
+
+
+
+DEV1 = '3f2c9a1e-7b1d-4c3e-9a55-0d1e2f3a4b5c'
+DEV2 = '0b7e2a44-1c3d-4e5f-8a9b-0c1d2e3f4a5b'
+PIXEL = {'device_id': DEV1, 'name': '小明的 Pixel 8', 'platform': 'android', 'version': '1.0.29'}
+
+
+class DeviceValues(tu.Base):
+    def setUp(self):
+        super().setUp()
+        self.uid = db.add_user('dan')
+        self.u = db.user(self.uid)
+
+    def test_report_list_revoke(self):
+        now = 1_800_000_000
+        self.assertFalse(devices.report(self.u, PIXEL, '198.51.100.23', now))
+        with self.assertRaises(devices.Refused) as cm:
+            devices.report(self.u, PIXEL, '198.51.100.23', now + 30)                     # once a minute
+        self.assertEqual((cm.exception.code, cm.exception.retry), ('rate_limited', 30))
+        self.assertFalse(devices.report(self.u, dict(PIXEL, name='Pixel', version='1.0.30'), '2001:db8:1::9', now + 61))
+        rows = devices.listing(self.uid, DEV1)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual((r['name'], r['version'], r['first_seen'], r['last_seen'], r['ip'], r['this_device'], r['revoked']),
+                         ('Pixel', '1.0.30', now, now + 61, '2001:db8:x:x:...', True, False))
+        self.assertTrue(devices.set_revoked(self.uid, DEV1, True))
+        self.assertTrue(devices.report(self.u, PIXEL, '198.51.100.23', now + 200))       # it is told on its next report
+        self.assertTrue(devices.report(self.u, PIXEL, '198.51.100.23', now + 300))       # and keeps being told
+        self.assertTrue(devices.set_revoked(self.uid, DEV1, False))
+        self.assertFalse(devices.report(self.u, PIXEL, '198.51.100.23', now + 400))
+        self.assertFalse(devices.set_revoked(self.uid, DEV2, True))
+        other = db.add_user('eve')
+        self.assertFalse(devices.set_revoked(other, DEV1, True))                         # not someone else's device
+
+    def test_what_is_refused(self):
+        for bad in ({}, dict(PIXEL, device_id='3F2C9A1E-7B1D-4C3E-9A55-0D1E2F3A4B5C'), dict(PIXEL, device_id='x'),
+                    dict(PIXEL, platform='web'), dict(PIXEL, name='n' * 41), dict(PIXEL, version=1.0),
+                    dict(PIXEL, version='v' * 33)):
+            with self.assertRaises(devices.Refused, msg=bad):
+                devices.report(self.u, bad, '')
+        devices.report(self.u, dict(PIXEL, name=' a\u200bb\nc '), '')
+        self.assertEqual(devices.listing(self.uid)[0]['name'], 'abc')
+
+    def test_fifty_per_account_and_ninety_days(self):
+        now = 1_800_000_000
+        for i in range(52):
+            devices.report(self.u, dict(PIXEL, device_id='%08x-0000-4000-8000-000000000000' % i), '', now + i)
+        ids = [r['device_id'] for r in devices.listing(self.uid)]
+        self.assertEqual(len(ids), 50)
+        self.assertNotIn('%08x-0000-4000-8000-000000000000' % 0, ids)                     # the longest unseen goes
+        self.assertEqual(devices.prune(now + 46 + 90 * 86400), 44)              # last seen before now+46
+        self.assertEqual(len(devices.listing(self.uid)), 6)
+        self.assertEqual(devices.recent_names(self.uid, now + 52), ['小明的 Pixel 8'] * 6)
+
+    def test_new_link_forgets_the_others_and_kicks_are_counted(self):
+        devices.report(self.u, PIXEL, '', 1)
+        devices.report(self.u, dict(PIXEL, device_id=DEV2), '', 1)
+        devices.forget_others(self.uid, DEV2)
+        self.assertEqual([r['device_id'] for r in devices.listing(self.uid)], [DEV2])
+        devices.forget_others(self.uid)
+        self.assertEqual(devices.listing(self.uid), [])
+        devices._kicks.clear()
+        self.assertEqual([devices.kick_allowed(self.uid, 1000 + i) for i in range(3)], [0, 0, 0])
+        self.assertEqual(devices.kick_allowed(self.uid, 1500), 3100)
+        self.assertEqual(devices.kick_allowed(self.uid, 4601), 0)
+
+    def test_not_in_backups_and_gone_with_the_account(self):
+        devices.report(self.u, PIXEL, '', 1)
+        data = db.export_all()
+        self.assertNotIn(DEV1, json.dumps(data))
+        db.import_all(data)
+        self.assertEqual(db.q('SELECT COUNT(*) FROM devices')[0][0], 0)
+        uid = db.add_user('fay')
+        devices.report(db.user(uid), PIXEL, '', 1)
+        db.delete_user(uid)
+        self.assertEqual(db.q('SELECT COUNT(*) FROM devices')[0][0], 0)
+
+    def test_device_limit_notice_names_the_apps_devices(self):
+        db.set_settings(client_devices=True)
+        db.update_user(self.uid, max_ips=1)
+        devices.report(self.u, PIXEL, '', int(time.time()))
+        sent = []
+        with mock.patch.object(notify, 'send', lambda text, **k: sent.append(text)):
+            jobs.device_limits(db.settings(), {self.uid: {'ips': ['198.51.100.1', '198.51.100.2']}})
+        self.assertIn('vps2vpn: 小明的 Pixel 8', sent[0])
+        self.assertIn('小明的 Pixel 8', db.events('devices')[0]['detail'] if hasattr(db, 'events') else sent[0])
+
+
+class DevicesOverHttps(OverHttps):
+    def setUp(self):
+        super().setUp()
+        self.base = '/s/%s/api/' % db.user(self.uid)['sub_token']
+        devices._kicks.clear()
+
+    def test_off_until_the_admin_turns_it_on(self):
+        st, d = self.j('POST', self.base + 'device', PIXEL)
+        self.assertEqual((st, d['code']), (503, 'feature_off'))
+        st, d = self.j('GET', self.me)
+        self.assertIs(d['features']['devices'], False)
+
+    def test_report_list_revoke_kick(self):
+        db.set_settings(client_devices=True)
+        st, d = self.j('POST', self.base + 'device', PIXEL)
+        self.assertEqual((st, d), (200, {'ok': True, 'revoked': False}))
+        st, d = self.j('POST', self.base + 'device', PIXEL)
+        self.assertEqual((st, d['code']), (429, 'rate_limited'))
+        st, d = self.j('POST', self.base + 'device', dict(PIXEL, platform='symbian'))
+        self.assertEqual((st, d['code']), (400, 'bad_request'))
+        st, d = self.j('GET', self.base + 'device')
+        self.assertEqual((st, d['code']), (405, 'post_only'))
+        st, _, r = self.req('GET', self.base + 'devices', headers={'X-V2V-Device': DEV1})
+        d = json.loads(_)
+        self.assertEqual(st, 200)
+        self.assertEqual((d['devices'][0]['ip'], d['devices'][0]['this_device'], d['max_ips']), ('127.0.x.x', True, 0))
+        self.assertIn('online_ips', d)
+        st, d = self.j('POST', self.base + 'devices/%s/revoke' % DEV1, {})
+        self.assertEqual((st, d), (200, {'ok': True}))
+        st, d = self.j('POST', self.base + 'devices/%s/revoke' % DEV2, {})
+        self.assertEqual((st, d['code']), (404, 'not_found'))
+        db.q('UPDATE devices SET last_seen=last_seen-120')
+        st, d = self.j('POST', self.base + 'device', PIXEL)
+        self.assertEqual(d, {'ok': True, 'revoked': True})
+        st, d = self.j('GET', self.me)
+        self.assertIs(d['features']['devices'], True)
+        # the admin sees and restores it
+        st, _ = self.j('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
+        st, d = self.j('GET', '/adm/api/users/%d/devices' % self.uid)
+        self.assertEqual((st, d['on'], d['devices'][0]['revoked']), (200, True, True))
+        st, d = self.j('POST', '/adm/api/users/%d/devices/%s/unrevoke' % (self.uid, DEV1), {})
+        self.assertEqual(st, 200)
+        self.assertFalse(devices.listing(self.uid)[0]['revoked'])
+        st, d = self.j('POST', '/adm/api/users/%d/devices/%s/unrevoke' % (self.uid, DEV2), {})
+        self.assertEqual(st, 404)
+        self.cookie = ''
+        # hard kick: a new link; the device that asked stays listed, the others are forgotten
+        devices.report(db.user(self.uid), dict(PIXEL, device_id=DEV2), '', 1)
+        old = db.user(self.uid)
+        st, d = self.j('POST', self.base + 'devices/kick-others', {'device_id': DEV1})
+        self.assertEqual(st, 200, d)
+        new = db.user(self.uid)
+        self.assertNotEqual((new['sub_token'], new['uuid'], new['hy2_pass']), (old['sub_token'], old['uuid'], old['hy2_pass']))
+        self.assertTrue(d['sub_url'].endswith('/s/' + new['sub_token']))
+        self.assertEqual([r['device_id'] for r in devices.listing(self.uid)], [DEV1])
+        st, _, _ = self.req('GET', self.me)
+        self.assertEqual(st, 404)                                                     # the old link is gone
+        base = '/s/%s/api/' % new['sub_token']
+        for _ in range(2):
+            st, d = self.j('POST', base + 'devices/kick-others', {}, )
+            self.assertEqual(st, 200)
+            base = '/s/%s/api/' % db.user(self.uid)['sub_token']
+        st, _, r = self.req('POST', base + 'devices/kick-others', {})
+        self.assertEqual(st, 429)
+        self.assertTrue(int(r.getheader('Retry-After')) > 3000)
+
+    def test_admin_new_link_forgets_every_device(self):
+        db.set_settings(client_devices=True)
+        devices.report(db.user(self.uid), PIXEL, '', 1)
+        st, _ = self.j('POST', '/adm/api/login', {'username': 'admin', 'password': 'adminpassword'})
+        st, d = self.j('POST', '/adm/api/users/%d/rotate' % self.uid, {})
+        self.assertEqual(st, 200, d)
+        self.assertEqual(devices.listing(self.uid), [])
+
+
+class DevicePages(unittest.TestCase):
+    def test_panel_and_member_page(self):
+        js = _static('app.js')
+        self.assertEqual(js.count("client_devices: '"), 2)
+        self.assertIn("api('users/' + u.id + '/devices')", js)
+        m = _static('member.js')
+        self.assertIn("me.features.devices) blocks.push(devicesPanel())", m)
+        self.assertEqual(m.count("dv_tip: '"), 2)
 
 
 if __name__ == '__main__':

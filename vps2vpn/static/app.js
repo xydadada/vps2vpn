@@ -79,6 +79,9 @@ const T = {
     node_status: '服务器状态', node_status_tip: '某台服务器要维护或很拥堵时在这里标一下。vps2vpn 客户端会把维护中的标灰、自动选线路时跳过，拥堵的排到后面；用户手动选的照样能连。其他软件看不到这些，只在「维护中」时在订阅公告里写一句（Hiddify、Happ 等会显示），会员页顶部也会显示。订阅里的节点名不变；维护中的服务器不会被「自动选择」挑中（所有软件都一样，但其他软件要等下次更新订阅才生效，所以请提前标）。',
     st_state: '状态', st_ok: '正常', st_maint: '维护中', st_cong: '拥堵', st_note: '说明（可不填，最多 100 字）', st_until: '到这个时间自动恢复正常（可不填）',
     st_this: '（本机）',
+    client_devices: '让客户端登记设备（会员能看到自己的设备、把某一台踢下线；仅 vps2vpn 客户端支持）',
+    dv: '设备', dv_tip: '这里只列出 vps2vpn 客户端（1.0.29 起）登记的设备；用其他软件的设备不在列表里，但算在「同时在线设备」里。「踢下线」只对 vps2vpn 客户端有效；要让所有软件都连不上，用下面的「换订阅链接」。',
+    dv_none: '还没有设备登记。', dv_revoke: '踢下线', dv_unrevoke: '恢复', dv_revoked: '已踢下线', dv_seen: '最后在线',
     client_feedback: '允许会员发反馈（vps2vpn 客户端带诊断和日志；会员中心网页只能写文字）',
     fb: '用户反馈', fb_tip: '会员在 vps2vpn 客户端里点「反馈」，或在会员中心网页写几句话，就会出现在这里。日志和 IP 地址在发出前和存进来前都打过码。保留 30 天，不进备份。',
     fb_none: '还没有反馈。', fb_open: '待处理', fb_done: '已处理', fb_view: '详情', fb_hide: '收起', fb_answer: '回复并标为已处理', fb_answer_ph: '回复会员（会显示在他的客户端和会员页里，最多 500 字）',
@@ -199,6 +202,9 @@ const T = {
     node_status: 'Server status', node_status_tip: 'Mark a server that is down for maintenance or congested. The vps2vpn app greys out one in maintenance and skips it when choosing automatically, and puts a congested one last; a server picked by hand still connects. Other apps see none of this, except a line in the subscription\'s announcement during maintenance (Hiddify, Happ and others show it); the member page shows it at the top. Node names in subscriptions never change for it; a server in maintenance is left out of "Auto" in every app (other apps only after their next subscription update, so mark it ahead of time).',
     st_state: 'Status', st_ok: 'Normal', st_maint: 'Maintenance', st_cong: 'Congested', st_note: 'Note (optional, up to 100 characters)', st_until: 'Back to normal at (optional)',
     st_this: ' (this server)',
+    client_devices: 'Let the app register devices (members see theirs and can sign one out; the vps2vpn app only)',
+    dv: 'Devices', dv_tip: 'Only devices running the vps2vpn app (1.0.29 or later) are listed; devices using other apps are not, but they count towards "devices online". "Sign out" works on the vps2vpn app only; to stop every app, use "New subscription link" below.',
+    dv_none: 'No devices registered yet.', dv_revoke: 'Sign out', dv_unrevoke: 'Restore', dv_revoked: 'signed out', dv_seen: 'last seen',
     client_feedback: 'Members may send feedback (the vps2vpn app adds its diagnosis and log; the member page sends text only)',
     fb: 'Feedback', fb_tip: 'What members send with "Feedback" in the vps2vpn app, or write on the member page. Logs and IP addresses are redacted before sending and again before they are stored. Kept 30 days, not in backups.',
     fb_none: 'No feedback yet.', fb_open: 'open', fb_done: 'done', fb_view: 'Details', fb_hide: 'Hide', fb_answer: 'Reply and mark done', fb_answer_ph: 'Reply to the member (shown in their app and on the member page; up to 500 characters)',
@@ -853,6 +859,7 @@ async function openUser(id, first) {
   if (seq !== S.drawerSeq || !$('drawer')) return;
   const used = u.used_up + u.used_down, q = quotaBytes(u);
   const histBox = h('div', {class: 'chart h160'});
+  const devBox = h('div');
   const pwIn = h('input', {type: 'password', autocomplete: 'new-password', placeholder: t('pw_ph'), 'aria-label': t('pw_ph')});
   const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q ? fmt.pct(used / q) : '∞'), h('small', null, t('used'))));
   const act = async (btn, fn, ok) => {
@@ -892,6 +899,7 @@ async function openUser(id, first) {
           u.invited_by_name ? h('div', null, h('small', null, t('invited_by')), h('b', null, u.invited_by_name)) : null,
           u.online && u.online.ips.length ? h('div', {style: 'grid-column:1/-1'}, h('small', null, t('online_now') + ' · ' + u.online.ips.length + ' ' + t('devices')), h('b', {style: 'font-size:12px'}, u.online.ips.join('  '))) : null))),
       h('div', {class: 'dr-sec'}, h('h4', null, t('history'), h('span', {class: 'right muted', style: 'font-weight:500'}, t('history_sub'))), histBox),
+      devBox,
       u.remote_id ? null : h('div', {class: 'dr-sec'}, h('h4', null, t('member_login'), h('span', {class: 'right'}, u.has_login ? chip('ok', t('login_on')) : chip('off', t('login_off')))),
         h('p', {class: 'muted', style: 'font-size:12.5px;margin:0 0 10px;line-height:1.7'}, t('member_login_tip')),
         h('div', {style: 'display:flex;gap:8px;flex-wrap:wrap'}, pwIn,
@@ -909,6 +917,17 @@ async function openUser(id, first) {
         actBtn('btn danger', 'x', t('del'), async b => { if (await confirmBox(t('del') + ' · ' + u.name, t('confirm_del'), {danger: true, confirm: t('del')})) await act(b, () => api(`users/${u.id}/delete`, {})); })))));
   openDrawer();
   new Ring(ringBox.firstChild).set(q ? used / q : 0, q && used / q > .9 ? 'danger' : 'down');
+  const drawDevices = () => api('users/' + u.id + '/devices').then(r => {
+    if (seq !== S.drawerSeq || !devBox.isConnected || !r.on) return;
+    const flip = async (x, b) => { b.disabled = true; try { await api(`users/${u.id}/devices/${x.device_id}/${x.revoked ? 'unrevoke' : 'revoke'}`, {}); toast(t('saved')); drawDevices(); } catch (e) { err(e); b.disabled = false; } };
+    devBox.replaceChildren(h('div', {class: 'dr-sec'}, h('h4', null, t('dv'), h('span', {class: 'right muted', style: 'font-weight:500'}, String(r.devices.length))),
+      h('p', {class: 'muted', style: 'font-size:12.5px;margin:0 0 10px;line-height:1.7'}, t('dv_tip')),
+      h('div', {class: 'tl'}, ...(r.devices.length ? r.devices.map(x => { const b = h('button', {class: 'btn sm' + (x.revoked ? '' : ' danger')}, t(x.revoked ? 'dv_unrevoke' : 'dv_revoke')); b.onclick = () => flip(x, b);
+        return h('div', {class: 'tl-row'}, h('b', {style: 'overflow-wrap:anywhere'}, x.name || x.platform),
+          h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, [x.platform, x.version, t('dv_seen') + ' ' + fmt.ago(x.last_seen), x.ip].filter(Boolean).join(' · ')),
+          h('span', {class: 'tl-acts'}, x.revoked ? chip('bad', t('dv_revoked')) : null, b)); }) : [h('div', {class: 'empty', style: 'padding:12px'}, t('dv_none'))]))));
+  }).catch(() => {});
+  if (!u.remote_id) drawDevices();
   api('users/' + u.id + '/history?days=30').then(r => {
     if (seq === S.drawerSeq && histBox.isConnected) new DayBars(histBox).set(r.days.map(x => ({day: x.day, upload: x.up, download: x.down})), last30());
   }).catch(() => {});
@@ -1311,6 +1330,7 @@ function clientPanel(s, inp) {
       (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_traffic_rank}); e.onchange = () => saveSettings({client_traffic_rank: e.checked}); return check(t('client_traffic_rank'), e); })(),
       (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_node_status}); e.onchange = () => saveSettings({client_node_status: e.checked}); return check(t('client_node_status'), e); })(),
       (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_feedback}); e.onchange = () => saveSettings({client_feedback: e.checked}); return check(t('client_feedback'), e); })(),
+      (() => { const e = h('input', {type: 'checkbox', checked: !!s.client_devices}); e.onchange = () => saveSettings({client_devices: e.checked}); return check(t('client_devices'), e); })(),
       h('div', {class: 'form-grid'}, field(t('client_ver'), inp('client_version')), field(t('client_url'), inp('client_url'))),
       field(t('client_notes'), inp('client_notes'))));
 }

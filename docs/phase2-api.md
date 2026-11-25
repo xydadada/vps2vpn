@@ -1,6 +1,6 @@
 # 第二阶段服务端接口设计：一键反馈、设备管理、节点状态
 
-状态：第 3 节（节点状态）**0.2.42 已实现**，见 3.4；第 1 节（一键反馈）**0.2.43 已实现**，见 1.7；第 2 节还只是设计（2026-11-24）。需求来自客户端仓库 `ROADMAP.md` 第六节第 2、3、4 条。
+状态：第 3 节（节点状态）**0.2.42 已实现**，见 3.4；第 1 节（一键反馈）**0.2.43 已实现**，见 1.7；第 2 节（设备管理）**0.2.44 已实现**，见 2.8（2026-11-24）。需求来自客户端仓库 `ROADMAP.md` 第六节第 2、3、4 条。
 字段名定了以后，客户端会话把它们写回 `ROADMAP.md`。这里改了，也要同步过去。
 
 这个仓库是公开的：文档、代码、测试里的示例地址只用 192.0.2.x、198.51.100.x、203.0.113.x、2001:db8::。
@@ -269,6 +269,39 @@ CREATE TABLE IF NOT EXISTS devices (
 
 - 用户编辑窗口里加「设备」一栏：设备列表（名字、平台、版本、最后在线、打码 IP、是否已踢）、「踢下线」「恢复」「换订阅链接」。
 - 用户列表的「在线」那一列不变（仍是核心报的 IP 数）。
+
+### 2.8 实际实现（0.2.44）
+
+和上面设计一致，补充几点（代码在 `vps2vpn/devices.py`）：
+
+- 开关：设置项 `client_devices`，`api/me` 里是 `features.devices`。关着时这几个接口返回 `503 feature_off`。
+- 所有 POST 都要带 `X-V2V: 1` 请求头（和其他会员接口一样）。
+- `POST <sub>/api/device`：`platform` 只能是 `windows` / `android` / `macos` / `linux` / `ios`（没有 `web`：网页不登记设备）；`device_id` 必须是小写 UUID。同一台 1 分钟内第二次报到返回 `429 rate_limited`（带 `Retry-After`），客户端忽略就行。被踢的设备每次报到都返回 `"revoked": true`，直到在列表里点「恢复」。
+- `GET <sub>/api/devices`：请求头 `X-V2V-Device: <device_id>` 用来标出 `this_device`。`ip` 已经打码（`198.51.x.x`）。`online_ips` 是服务器现在看到的、用这个账号的地址数（没人在线是 0）。
+- `POST <sub>/api/devices/<device_id>/revoke`、`.../unrevoke`：成功 `{"ok": true}`，没有这台设备 `404 not_found`。
+- `POST <sub>/api/devices/kick-others`：就是「换订阅链接」。请求体可以带 `{"device_id": "..."}`（或用 `X-V2V-Device` 头）说明是哪一台发起的，这一台留在列表里，其他都删掉。返回 `{"ok": true, "sub_url": "https://.../s/<新 token>", "base": "/s/<新 token>/"}`。**旧链接立刻失效**，客户端要马上换上 `sub_url`。每个账号 1 小时最多 3 次（`429`，`Retry-After`）。这个计数存在内存里，面板重启后清零。
+- 会员页原来的「更换订阅链接」（`api/rotate`）和管理员的「换订阅链接」也会清空设备列表（会员自己换时留下带 `X-V2V-Device` 的那一台）。
+- 管理面板：用户窗口里多一栏「设备」，可以踢下线和恢复。管理接口：`GET api/users/<id>/devices`、`POST api/users/<id>/devices/<device_id>/revoke`、`.../unrevoke`。
+
+例子：
+
+```
+POST https://<面板地址>/s/<订阅 token>/api/device
+X-V2V: 1
+Content-Type: application/json
+
+{"device_id": "3f2c9a1e-7b1d-4c3e-9a55-0d1e2f3a4b5c", "name": "小明的 Pixel 8", "platform": "android", "version": "1.0.29"}
+
+200 {"ok": true, "revoked": false}
+
+GET https://<面板地址>/s/<订阅 token>/api/devices
+X-V2V-Device: 3f2c9a1e-7b1d-4c3e-9a55-0d1e2f3a4b5c
+
+200 {"devices": [{"device_id": "3f2c9a1e-7b1d-4c3e-9a55-0d1e2f3a4b5c", "name": "小明的 Pixel 8", "platform": "android",
+                  "version": "1.0.29", "first_seen": 1795000000, "last_seen": 1795003600, "ip": "198.51.x.x",
+                  "revoked": false, "this_device": true}],
+     "online_ips": 2, "max_ips": 3}
+```
 
 ## 3. 节点状态下发
 

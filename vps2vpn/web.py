@@ -30,8 +30,8 @@ import time
 import urllib.error
 import urllib.parse
 
-from . import (VERSION, abuse, aicheck, certs, clock, cluster, cores, db, doctor, jobs, feedback, members, monitor, nodestatus, notify, paths,
-               qr, rules, secure, shaper, subscription, system)
+from . import (VERSION, abuse, aicheck, certs, clock, cluster, cores, db, devices, doctor, feedback, jobs, members,
+               monitor, nodestatus, notify, paths, qr, rules, secure, shaper, subscription, system)
 
 SETUP_TOKEN_FILE = paths.ETC + '/setup-token'
 _fails = {}                    # rate-limit bucket -> [monotonic timestamps] of failed attempts
@@ -923,6 +923,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         m = re.fullmatch(r'users/(\d+)/(save|delete|rotate|reset|login)', api)
         if m:
             return self.api_user_action(int(m.group(1)), m.group(2)) if method == 'POST' else self.json({'error': 'POST only'}, 405)
+        m = re.fullmatch(r'users/(\d+)/devices(?:/([0-9a-f-]{36})/(revoke|unrevoke))?', api)
+        if m:
+            uid = int(m.group(1))
+            if not db.user(uid):
+                return self.json({'error': 'no such user'}, 404)
+            if not m.group(2):
+                return self.json({'on': devices.on(s), 'devices': devices.listing(uid)})
+            if method != 'POST':
+                return self.json({'error': 'POST only'}, 405)
+            if not devices.set_revoked(uid, m.group(2), m.group(3) == 'revoke'):
+                return self.json({'error': 'no such device'}, 404)
+            return self.json({'ok': True})
         m = re.fullmatch(r'users/(\d+)/history', api)
         if m:
             if method != 'GET':
@@ -1527,6 +1539,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             db.delete_user(uid)
         elif action == 'rotate':
             db.rotate_user(uid)
+            devices.forget_others(uid)          # every device imports the new link: the list starts again
         elif action == 'reset':
             db.update_user(uid, used_up=0, used_down=0, extra_gb=0)   # a new period: last one's top-up ends
             jobs.forget_quota_alerts(uid)
@@ -1774,6 +1787,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'login required', 'code': 'login_required'}, 401)
         if api == 'feedback':
             return self.member_feedback(method, s, u)
+        if api == 'device' or api == 'devices' or api.startswith('devices/'):
+            return self.member_devices(method, api, s, u, by_link)
         if api == 'logout' and not by_link:
             if method != 'POST':
                 return self.json({'error': 'POST only'}, 405)
@@ -1837,6 +1852,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if api == 'rotate':
             # New link and credentials (the old link stops working at once), e.g. after it leaked.
             db.rotate_user(u['id'])
+            devices.forget_others(u['id'], self.headers.get('X-V2V-Device', '').strip().lower())
             apply_async()
             nu = db.user(u['id'])
             jobs.log('%s changed their own subscription link' % nu['name'])
@@ -1929,6 +1945,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     key='fb-%d' % u['id'], every=3600)
         return self.json({'ok': True, 'id': fid})
 
+    def member_devices(self, method, api, s, u, by_link):
+        """docs/phase2-api.md section 2: the app's report (POST device), the list (GET devices), the soft kick
+        (POST devices/<id>/revoke, .../unrevoke) and the hard kick (POST devices/kick-others: a new link)."""
+        if not devices.on(s):
+            return self.json({'error': 'devices are turned off', 'code': 'feature_off'}, 503)
+        this = self.headers.get('X-V2V-Device', '').strip().lower()
+        if api == 'devices':
+            if method != 'GET':
+                return self.json({'error': 'GET only', 'code': 'bad_request'}, 405)
+            online = (cores.online_detail(s) or {}).get(u['id']) or {}
+            return self.json({'devices': devices.listing(u['id'], this),
+                              'online_ips': online.get('devices', len(online.get('ips', []))) if online else 0,
+                              'max_ips': u['max_ips']})
+        if method != 'POST':
+            return self.json({'error': 'POST only', 'code': 'post_only'}, 405)
+        try:
+            d = self.body_json(limit=64 << 10)
+        except _BadRequest as e:
+            return self.json({'error': str(e)[:120], 'code': 'too_large' if 'too large' in str(e) else 'bad_request'},
+                             413 if 'too large' in str(e) else 400)
+        if api == 'device':
+            try:
+                revoked = devices.report(u, d, self.client_ip())
+            except devices.Refused as e:
+                return self.json({'error': str(e), 'code': e.code}, e.status,
+                                 headers={'Retry-After': str(e.retry)} if e.retry else None)
+            return self.json({'ok': True, 'revoked': revoked})
+        if api == 'devices/kick-others':
+            wait = devices.kick_allowed(u['id'])
+            if wait:
+                return self.json({'error': 'too many new links, wait an hour', 'code': 'rate_limited'}, 429,
+                                 headers={'Retry-After': str(wait)})
+            keep = this or str(d.get('device_id') or '').strip().lower()
+            db.rotate_user(u['id'])
+            devices.forget_others(u['id'], keep)
+            apply_async()
+            nu = db.user(u['id'])
+            jobs.log('%s changed their own subscription link (kick other devices)' % nu['name'])
+            headers = None if by_link else {'Set-Cookie': self.member_cookie(db.new_member_session(u['id']))}
+            return self.json({'ok': True, 'sub_url': '%s/s/%s' % (self.base_url(s), nu['sub_token']),
+                              'base': '/s/%s/' % nu['sub_token'] if by_link else ''}, headers=headers)
+        m = re.fullmatch(r'devices/([0-9a-f-]{36})/(revoke|unrevoke)', api)
+        if m and devices.UUID_RE.fullmatch(m.group(1)):
+            if not devices.set_revoked(u['id'], m.group(1), m.group(2) == 'revoke'):
+                return self.json({'error': 'no such device', 'code': 'not_found'}, 404)
+            jobs.log('%s %s a device' % (u['name'], 'revoked' if m.group(2) == 'revoke' else 'restored'))
+            return self.json({'ok': True})
+        return self.json({'error': 'unknown endpoint', 'code': 'not_found'}, 404)
+
     def member_view(self, s, u, by_link):
         base = self.base_url(s)
         sub_url = '%s/s/%s' % (base, u['sub_token'])
@@ -1965,7 +2030,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'client': client_info(s, dl_url),
             # switches for our own app; an app that finds no key keeps that feature off, so older panels are safe
             'features': {'traffic_rank': s.get('client_traffic_rank') is True,   # a hand-edited backup's "false" stays off
-                         'node_status': nodestatus.on(s), 'feedback': feedback.on(s)},
+                         'node_status': nodestatus.on(s), 'feedback': feedback.on(s), 'devices': devices.on(s)},
             **({'nodes': nodestatus.for_member(s, u)} if nodestatus.on(s) else {}),
             **({'feedback_unread': feedback.unread(u['id'])} if feedback.on(s) else {}),
         }
@@ -2224,7 +2289,7 @@ def validate_settings(d, s):
     bools = ('reality_enabled', 'hy2_enabled', 'tuic_enabled', 'hy2_hop', 'block_ads', 'block_bt', 'ai_group',
              'tune_network', 'ipv6_nodes', 'tcp_first', 'member_enabled', 'member_invites', 'member_requests', 'monitor_enabled',
              'abuse_guard', 'tg_backup', 'tg_bot', 'ip_limit_pause', 'client_auto_update',
-             'client_traffic_rank', 'client_node_status', 'client_feedback')
+             'client_traffic_rank', 'client_node_status', 'client_feedback', 'client_devices')
     for k in bools:
         if k in d:
             try:

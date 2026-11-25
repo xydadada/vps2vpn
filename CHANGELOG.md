@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.44
+
+Phase 2 for the vps2vpn app, third part: devices (docs/phase2-api.md section 2).
+第二阶段第三部分：设备管理（docs/phase2-api.md 第 2 节）。
+
+- Once "Let the app register devices" is on (Settings → vps2vpn app updates), the vps2vpn app reports each device (name, platform, version). Members see their devices on the member page and in the app; the admin sees them in the user window. Only the vps2vpn app reports: devices using other apps are not listed, and the page says so.
+  打开「让客户端登记设备」后（「设置 → vps2vpn 客户端更新」），vps2vpn 客户端会登记每台设备（名字、平台、版本）。会员在会员页和客户端里能看到自己的设备，管理员在用户窗口里能看到。只有 vps2vpn 客户端会登记，用其他软件的设备不在列表里，页面上写明了。
+- "Sign out" one device: the vps2vpn app on it disconnects and forgets the subscription the next time it is online; "Restore" undoes it. It has no effect on other apps: "New subscription link" still stops every device, and the list then starts again with the device that asked for it.
+  把某一台「踢下线」：那台上的 vps2vpn 客户端下次联网时会断开并删掉订阅；点「恢复」可以撤回。对其他软件没有效果：要让所有设备都连不上，仍然用「更换订阅链接」，换完后设备列表只留下发起更换的那一台。
+- The device limit is unchanged (it still counts the addresses the server sees); its Telegram notice now names the vps2vpn devices that were online in the last hour.
+  设备数上限不变（仍按服务器看到的地址数算）；超限的 Telegram 提醒里会附上最近一小时在线的 vps2vpn 设备名。
+- Devices not seen for 90 days are forgotten; devices are not in backups.
+  90 天没出现的设备会自动删掉；设备列表不进备份。
+
 ## 0.2.43
 
 Phase 2 for the vps2vpn app, second part: one-tap feedback (docs/phase2-api.md section 1). And "Auto" no longer picks a server in maintenance (docs/logic-review.md C-19).

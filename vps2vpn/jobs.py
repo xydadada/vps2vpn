@@ -541,10 +541,15 @@ def device_limits(s, online=None, now=None):
             continue
         # With warnings only, an account stays over its limit check after check; one event an hour is
         # enough, and the event log keeps only the latest 1000 rows (registrations and requests included).
+        # the vps2vpn app's own devices that reported within the hour, to help tell who is who (apps other
+        # than ours report nothing, so this is never the whole story)
+        from . import devices
+        named = devices.recent_names(u['id'], now) if devices.on(s) else []
+        seen = (' · vps2vpn: %s' % ', '.join(named)) if named else ''
         if s['ip_limit_pause'] or now - _device_events.get(u['id'], 0) >= DEVICE_EVENT_EVERY:
             _device_events[u['id']] = now
-            db.add_event('devices', u['id'], '%s: %d devices online, limit %d (%s)' % (
-                u['name'], n, u['max_ips'], ', '.join(d.get('ips', [])[:8])))
+            db.add_event('devices', u['id'], '%s: %d devices online, limit %d (%s)%s' % (
+                u['name'], n, u['max_ips'], ', '.join(d.get('ips', [])[:8]), seen))
         if s['ip_limit_pause']:
             if not db.pause_for_devices(u['id'], now + DEVICE_PAUSE):
                 continue                        # turned off meanwhile (by an admin, say): leave it so
@@ -552,7 +557,7 @@ def device_limits(s, online=None, now=None):
             changed = True
         notify.send('%s: %d devices online (limit %d)%s / %s 同时在线 %d 台设备（上限 %d）%s' % (
             u['name'], n, u['max_ips'], ', paused 10 min' if s['ip_limit_pause'] else '',
-            u['name'], n, u['max_ips'], '，暂停 10 分钟' if s['ip_limit_pause'] else ''),
+            u['name'], n, u['max_ips'], '，暂停 10 分钟' if s['ip_limit_pause'] else '') + seen,
             # warnings only: the same account over its limit all day was told every hour; once a day now
             key='dev-%d' % u['id'], every=6 * 3600 if s['ip_limit_pause'] else 86400)
     return changed
@@ -907,8 +912,9 @@ class Scheduler:
         if paths.LIVE and self.due('aicheck', 86400):
             self.in_background('aicheck', ai_recheck, s, log)
         if self.due('feedback', 86400):
-            from . import feedback
+            from . import devices, feedback
             feedback.prune()
+            devices.prune()
         if self.due('backup', 86400):
             name = backup()
             if s['tg_backup'] and s['tg_token'] and s['tg_chat']:
