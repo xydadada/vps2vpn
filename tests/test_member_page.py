@@ -2,6 +2,8 @@
 rotating the link, sign-up errors, app buttons, the plain fallback page and passwords in link mode."""
 import json
 import os
+import shutil
+import subprocess
 import threading
 import unittest
 
@@ -101,7 +103,7 @@ class LinkMode(Server):
         src = member_js()
         self.assertIn("modal({title: t('new_link')", src)
         self.assertIn("t(byLink ? 'rotate_q_link' : 'rotate_q')", src)
-        self.assertIn('还没设密码的话', src)
+        self.assertIn('如果还没有设置密码，建议先在上方设置', src)
 
 
 class ReservedQuota(Server):
@@ -129,13 +131,13 @@ class Texts(unittest.TestCase):
     def test_chat_app_banner(self):
         src = member_js()
         self.assertIn('/MicroMessenger|QQ\\//i', src)
-        self.assertIn('请点右上角 ··· 选「在浏览器打开」', src)
+        self.assertIn('请点击右上角 ···，选择「在浏览器打开」', src)
         self.assertGreaterEqual(src.count('chatBanner()'), 2)      # sign-in page and dashboard
 
     def test_invite_wording(self):
         src = member_js()
-        self.assertIn('朋友一注册，你每月的额度就立刻少掉分给他的那部分', src)
-        self.assertIn('需要找管理员', src)
+        self.assertIn('朋友注册后，你每月的额度会立即减去分给对方的部分', src)
+        self.assertIn('要收回已注册用户的额度，请联系管理员', src)
 
     def test_iphone_apps_have_buttons_and_honest_prices(self):
         links = subscription.import_links('https://h:1/s/tok', 'n')
@@ -211,6 +213,41 @@ class TrafficRankSwitch(Server):
             js = f.read()
         self.assertEqual(js.count("client_traffic_rank: '"), 2)             # Chinese and English labels
         self.assertIn("saveSettings({client_traffic_rank: e.checked})", js)
+
+
+class SameWordsAsTheApp(unittest.TestCase):
+    """0.2.48: the member centre uses the client's word list (remove a device, node, sign in) and its date style."""
+
+    def test_words(self):
+        js = member_js()
+        zh = js[js.index('  zh: {'):js.index('\n  en: {')]
+        en = js[js.index('\n  en: {'):js.index('\n};')]
+        for old in ('踢', '线路', '的话', '别人', '连不上', "'MEMBER'"):
+            self.assertNotIn(old, zh, old)
+        self.assertIn("dv_revoke: '移除'", zh)
+        self.assertIn("dv_revoke: 'Remove'", en)
+        for old in ('Log in', 'Log out', 'centre', "dv_revoke: 'Sign out'", 'answer'):
+            self.assertNotIn(old, en, old)
+        for f in ('app.js', 'kit.js'):
+            with open(os.path.join(ROOT, 'vps2vpn', 'static', f), encoding='utf-8') as fh:
+                self.assertNotIn('踢', fh.read(), f)
+
+    @unittest.skipUnless(shutil.which('node'), 'needs node')
+    def test_dates(self):
+        js = member_js()
+        code = js[js.index('const MONTHS'):js.index('};', js.index('const dateStr')) + 2]
+        script = ('const t = k => k; let L;\n'
+                  'const localDay = ms => { const d = new Date(ms); return d.getFullYear() + "-" + '
+                  'String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };\n'
+                  + code + '\nconst y = new Date().getFullYear(), out = [];\n'
+                  'for (L of ["zh", "en"]) out.push(dateStr(y + "-11-26"), dateStr((y + 1) + "-01-05"), dateStr(0));\n'
+                  'process.stdout.write(JSON.stringify([y, out]));')
+        res = subprocess.run(['node', '-e', script], capture_output=True, text=True, encoding='utf-8', timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        y, out = json.loads(res.stdout)
+        self.assertEqual(out, ['11月26日', '%d年1月5日' % (y + 1), 'never',
+                               'Nov 26', 'Jan 5, %d' % (y + 1), 'never'])
+        self.assertIn('dateStr(me.expire_day || me.expire_at)', js)          # the server's own day is still shown
 
 
 if __name__ == '__main__':

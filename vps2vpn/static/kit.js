@@ -42,7 +42,7 @@ const fmt={
  rate(bps){return fmt.mbps(bps*8/1e6);},
  pct(x){return x==null?'—':(x>=.1||x===0?Math.round(x*100):(x*100).toFixed(1))+'%';},
  date(s){return s||'—';},
- time(t){return t?new Date(t*1000).toLocaleString(KT.locale,{hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';},
+ time(t){if(!t)return'—';const d=new Date(t*1000),y=d.getFullYear(),same=y===new Date().getFullYear(),hm=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');return KT===KT_ZH?(same?'':y+'年')+(d.getMonth()+1)+'月'+d.getDate()+'日 '+hm:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]+' '+d.getDate()+(same?'':', '+y)+', '+hm;},  // 11月26日 15:00 / Nov 26, 15:00; the year only when it is not this year
  ago(t){if(!t)return '—';const s=Math.max(0,Date.now()/1000-t);if(s<60)return Math.round(s)+KT.s_ago;if(s<3600)return Math.round(s/60)+KT.min_ago;if(s<86400)return Math.round(s/3600)+KT.h_ago;return Math.round(s/86400)+KT.d_ago;},
  daysUntil(iso){if(!iso)return null;const d=new Date(iso+'T23:59:59+08:00');return Math.ceil((d-Date.now())/864e5);},
 };
@@ -63,11 +63,11 @@ const lbl=a=>ERR_LBL[a]||a;
 const ERR_ZH=[
  [/^(.+) must be a number$/,(m,a)=>lbl(a)+'必须是数字'],[/^(.+) must be a whole number$/,(m,a)=>lbl(a)+'必须是整数'],
  [/^(.+) must be between (\S+) and (\S+)$/,(m,a,b,c)=>lbl(a)+'必须在 '+b+' 到 '+c+' 之间'],
- [/^note: at most/,'备注最多 100 个字'],[/^inviter not found/,'找不到邀请人'],[/^a paused or expired account cannot invite/,'已停用或已到期的账号不能邀请别人'],
- [/^unlimited accounts cannot share/,'不限量账号不能分额度；需要邀请码请找管理员'],
- [/^not enough quota: (\d+) x (\S+) GB is more than the (\S+) GB/,(m,a,b,c)=>'额度不够：'+a+' × '+b+' GB 超过了你还能分出的 '+c+' GB（自己至少保留 1 GB）'],
- [/^at most (\d+) unused codes/,(m,a)=>'最多同时有 '+a+' 个没用完的邀请码，先用掉或撤销一个'],
- [/^no such invite code/,'没有这个邀请码'],[/^this code is already used up or revoked/,'这个邀请码已经用完或撤销了'],
+ [/^note: at most/,'备注最多 100 个字'],[/^inviter not found/,'找不到邀请人'],[/^a paused or expired account cannot invite/,'已停用或已到期的账号不能邀请他人'],
+ [/^unlimited accounts cannot share/,'不限量账号不能分出额度；如需邀请码，请联系管理员'],
+ [/^not enough quota: (\d+) x (\S+) GB is more than the (\S+) GB/,(m,a,b,c)=>'额度不足：'+a+' × '+b+' GB 超过了你可分出的 '+c+' GB（自己至少保留 1 GB）'],
+ [/^at most (\d+) unused codes/,(m,a)=>'最多同时保留 '+a+' 个未用完的邀请码，请先撤销一个'],
+ [/^no such invite code/,'没有这个邀请码'],[/^this code is already used up or revoked/,'这个邀请码已用完或已撤销'],
  [/^name: 2-32/,'用户名 2–32 位，只能用字母、数字、汉字和 . _ -'],[/^that name is taken/,'这个名字已经有人用了，换一个吧'],[/^name already used/,'这个名字已经有人用了'],
  [/^name required/,'请填写名字'],[/^password: (\d+) to 128/,(m,a)=>'密码 '+a+'–128 位'],[/^password must be at least 8/,'密码至少 8 位'],
  [/^invite code is wrong, used up or expired/,'邀请码不对、已用完或已过期'],[/^the person who invited you can no longer invite/,'邀请你的人现在不能再邀请了，这个邀请码作废'],
@@ -91,7 +91,7 @@ const ERR_ZH=[
  [/^wrong 2FA code/,'验证码不对（看看手机时间准不准）'],[/^bad secret/,'密钥不对，请重新开启'],[/^device limit must be/,'设备上限必须是 0–100'],
  [/^a domain is set, so the server address is the domain/,'已经填了域名，服务器地址就是这个域名；想改用 IP，先把域名清空'],
  [/^the domain was cleared/,'域名已清空，请在「服务器地址」里填这台服务器的 IP'],
- [/^too long for a QR code/,'内容太长，生成不了二维码，请直接复制链接'],[/^this account has no traffic limit/,'你的账号不限流量，不用申请'],
+ [/^too long for a QR code/,'内容过长，无法生成二维码，请直接复制链接'],[/^this account has no traffic limit/,'你的账号不限流量，无需申请'],
  [/^managed by the main server/,'这个账号由主服务器管理，请到主服务器的面板上改'],
  [/^(speed limit|slow-down speed) must be 0-(\d+) Mbps/,(m,a,b)=>(a==='speed limit'?'限速':'降速后的速度')+'必须是 0–'+b+' Mbps'],
  [/^traffic rate must be/,'流量倍率必须是 0–100'],[/^update interval must be a whole number/,'更新间隔必须是整数小时'],
@@ -104,9 +104,9 @@ const ERR_ZH=[
  [/^at most (\d+) domains/,(m,a)=>'每个列表最多 '+a+' 个域名'],[/^unknown action/,'不支持的操作'],
  [/^state must be ok, maintenance or congested/,'状态只能是正常、维护中或拥堵'],
  [/^until: expected/,'恢复时间的格式不对'],[/^until must be in the future/,'恢复时间要在现在之后、一年以内'],[/^note must be text/,'说明要填文字'],
- [/^too many reports, wait a moment/,'发得太快了，请过两分钟再发'],[/^too many reports today/,'今天已经发了 5 条，请明天再发'],
- [/^feedback is turned off/,'管理员没有打开反馈功能'],[/^devices are turned off/,'管理员没有打开设备管理'],[/^no such device/,'没有这台设备'],
- [/^too many new links, wait an hour/,'一小时内换链接太多次了，请过一会儿再试'],[/^no such feedback/,'这条反馈已经不在了'],[/^answer: at most/,'回复最多 500 字'],[/^text: at most/,'最多 1000 个字'],
+ [/^too many reports, wait a moment/,'发送过于频繁，请 2 分钟后再试'],[/^too many reports today/,'今天已发送 5 条，请明天再试'],
+ [/^feedback is turned off/,'管理员未开启反馈功能'],[/^devices are turned off/,'管理员未开启设备管理'],[/^no such device/,'没有这台设备'],
+ [/^too many new links, wait an hour/,'1 小时内更换链接次数过多，请稍后再试'],[/^no such feedback/,'这条反馈已不存在'],[/^answer: at most/,'回复最多 500 字'],[/^text: at most/,'最多 1000 个字'],
  [/^internal error/,'服务器内部出错，请看日志'],[/^unknown endpoint/,'这个功能不可用（可能被管理员关掉了）'],[/^login required/,'请先登录']];
 function errText(m){if(typeof KT==='undefined'||KT!==KT_ZH||!m)return m;for(const [re,f] of ERR_ZH){const x=String(m).match(re);if(x)return typeof f==='string'?f:f(...x);}return m;}
 function toast(text,kind){if(kind==='err')text=errText(text);let box=$('toasts');if(!box){box=h('div',{id:'toasts','aria-live':'polite'});document.body.append(box);}const t=h('div',{class:'toast'+(kind==='err'?' err':''),role:'status'},text);const close=()=>{t.classList.add('out');setTimeout(()=>t.remove(),200);};t.onclick=close;box.append(t);setTimeout(close,kind==='err'?8000:4500);while(box.children.length>4)box.firstChild.remove();}

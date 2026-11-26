@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.48
+
+The member center speaks the same words as the vps2vpn app. Text and date display only; nothing else changes.
+会员中心的用词和 vps2vpn 客户端统一了。只改了文字和日期的显示方式，其他都没变。
+
+- A device is now "removed" (移除) rather than "kicked" (踢下线), the same word the app shows on that device. The admin panel's device list says the same.
+  设备的「踢下线」改叫「移除」，和那台设备上客户端显示的说法一样。管理面板的设备列表也一起改了。
+- Plainer, shorter wording throughout the member center and the error messages it shows: no slang, "node" instead of "line", "sign in" instead of "log in", American spelling.
+  会员中心和它显示的错误提示都改得更书面、更简短：不用口语，「线路」改成「节点」，英文 log in 改成 sign in，统一美式拼写。
+- Dates read as 11月26日 / Nov 26, with the year only when it is not this year. The expiry and reset days are still the panel's own days.
+  日期显示成「11月26日」或 "Nov 26"，不是今年时才带年份。到期日和重置日仍然按面板所在时区的日期。
+
 ## 0.2.47
 
 "Sign out all other devices" in the vps2vpn app can be retried safely.

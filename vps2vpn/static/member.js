@@ -4,79 +4,79 @@
    centre (/<member path>/) with a name and password, where invite codes also create new accounts. */
 const T = {
   zh: {
-    kicker: 'MEMBER', title: '我的 VPN', login: '登录', register: '用邀请码注册', name: '用户名', password: '密码',
-    password_new: '设置密码（至少 8 位）', password2: '再输一次', code: '邀请码', have_code: '有邀请码？注册新账号', have_account: '已有账号？去登录',
-    login_intro: '用管理员给你的用户名和密码登录。没有密码的话，打开管理员发你的订阅链接也能看到这一页。',
-    reg_intro: '输入朋友或管理员给你的邀请码，起个名字、设个密码，马上就能用。',
-    art_h: '你的专属线路，\n随时看用量。', art_p: '流量、到期、订阅导入、增加额度、邀请朋友，都在这里。',
+    kicker: '会员中心', title: '我的 VPN', login: '登录', register: '用邀请码注册', name: '用户名', password: '密码',
+    password_new: '设置密码（至少 8 位）', password2: '再次输入密码', code: '邀请码', have_code: '有邀请码？注册新账号', have_account: '已有账号？登录',
+    login_intro: '使用管理员提供的用户名和密码登录。没有密码时，打开管理员发给你的订阅链接也能进入此页。',
+    reg_intro: '输入朋友或管理员提供的邀请码，设置用户名和密码后即可使用。',
+    art_h: '你的专属网络，\n用量随时可查。', art_p: '流量、到期时间、导入订阅、申请加量、邀请朋友，都在这里。',
     art_1: '三种协议随时切换', art_2: '一键导入 Clash / 小火箭', art_3: '用量透明，按天可查',
-    logout: '退出', wrong: '用户名或密码错误', mismatch: '两次密码不一样',
+    logout: '退出登录', wrong: '用户名或密码错误', mismatch: '两次输入的密码不一致',
     used: '已用', quota: '总额度', left: '剩余', unlimited: '不限量', expires: '到期', never: '永久', reset: '下次重置', none: '不重置',
-    down: '下行', up_: '上行', status: '状态', ok: '正常', paused: '已停用', r_quota: '流量用完了', r_expired: '已到期', r_manual: '被管理员停用', r_remote: '被主服务器停用', r_devices: '同时在线设备超限',
-    shared: '分给邀请的人', invited_by: '邀请人', online: '在线', online_now: '正在使用', devices: '个设备', offline: '当前未连接',
-    import: '导入到 App', import_tip: '手机上直接点按钮；电脑上复制链接，在 App 里「从 URL 导入」。订阅会自动更新。', copy: '复制订阅链接',
-    sr_full: '小火箭（完整配置：节点+分流+DNS）', sr_nodes: '小火箭（只导入节点）', scan: '手机扫码导入',
-    apps: '装哪个 App', open_app: '在 vps2vpn 客户端中打开', get_app: '还没装 vps2vpn 客户端？点这里下载（免费）',
+    down: '下行', up_: '上行', status: '状态', ok: '正常', paused: '已停用', r_quota: '流量已用完', r_expired: '已到期', r_manual: '已被管理员停用', r_remote: '已被主服务器停用', r_devices: '同时在线设备过多',
+    shared: '分给受邀人', invited_by: '邀请人', online: '在线', online_now: '正在使用', devices: '个设备', offline: '当前未连接',
+    import: '导入到 App', import_tip: '手机上直接点击按钮；电脑上复制链接，在 App 中选择「从 URL 导入」。订阅会自动更新。', copy: '复制订阅链接',
+    sr_full: '小火箭（完整配置：节点 + 分流 + DNS）', sr_nodes: '小火箭（只导入节点）', scan: '手机扫码导入',
+    apps: '装哪个 App', open_app: '在 vps2vpn 客户端中打开', get_app: '还没有安装 vps2vpn 客户端？点击此处免费下载',
     apps_list: [['Windows', 'vps2vpn 客户端（免费，推荐），或 Clash Verge Rev、FlClash'], ['macOS', 'Clash Verge Rev 或 FlClash（免费）'], ['Android', 'FlClash 或 Hiddify（免费）'], ['iPhone / iPad', 'Shadowrocket 小火箭或 Stash（都要付费），免费的用 Karing']],
-    apps_tip: '导入后打开 App 里的「系统代理」或「VPN / TUN 模式」开关就行。',
-    history: '每日用量', history_sub: '近 30 天', more: '申请增加流量', more_tip: '流量不够用时，告诉管理员你需要多少、为什么。批准后立刻生效，只在本期有效，到下次重置日自动取消。', more_tip_nr: '流量不够用时，告诉管理员你需要多少、为什么。批准后立刻生效；这个账号不按月重置，加的流量会一直保留到管理员清零。',
-    add_gb: '需要增加多少 GB', reason: '说明（可选）', send: '提交申请', sent: '已提交，等管理员批准',
+    apps_tip: '导入后，在 App 中打开「系统代理」或「VPN / TUN 模式」开关即可。',
+    history: '每日用量', history_sub: '近 30 天', more: '申请增加流量', more_tip: '流量不够用时，向管理员说明需要多少以及原因。批准后立即生效，仅在本期有效，下次重置时自动取消。', more_tip_nr: '流量不够用时，向管理员说明需要多少以及原因。批准后立即生效；这个账号不按月重置，增加的流量会一直保留，直到管理员清零。',
+    add_gb: '需要增加多少 GB', reason: '说明（可选）', send: '提交申请', sent: '已提交，等待管理员批准',
     pending: '等待批准', approved: '已批准', rejected: '未批准', req_none: '还没有申请记录。',
-    invites: '邀请朋友', invites_tip: '从你自己的额度里分一部分给朋友。朋友一注册，你每月的额度就立刻少掉分给他的那部分，直到他的账号到期或被删除；他用多少都只从这部分里扣。邀请码还没人用时可以随时撤销；已经注册的人要收回额度，需要找管理员。你自己至少保留 1 GB。',
-    can_share: '还能分出', quota_each: '每人多少 GB', uses: '可用几次', valid: '邀请码有效几天', note: '备注（可选）', make: '生成邀请码',
-    no_share: '不限量账号不能分额度；需要邀请码请找管理员。', inv_none: '还没有生成过邀请码。', revoke: '撤销', revoked: '已撤销',
-    st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', st_void: '已失效：你的额度不够了', reserved: '已预留给邀请码', used_by: '已注册', send_link: '复制注册链接',
-    invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心（忘了订阅链接也不怕）。', pw_tip_link: '用你的专属链接打开这一页时，不用输入旧密码就能设新密码（链接本身就是钥匙）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
-    saved: '已保存', member_link: '会员中心地址', link_mode: '这是你的专属页面，链接就是钥匙，不要发给别人。', days: '天',
-    dv: '我的设备', dv_tip: '这里只列出装了 vps2vpn 客户端（1.0.29 起）的设备；用其他软件的设备不在列表里，但算在「同时在线」里。「踢下线」只对 vps2vpn 客户端有效：那台设备下次联网时会断开，并显示「已被移除」，直到你点「恢复」。要让所有设备都连不上，用下面的「更换订阅链接」。',
-    dv_none: '还没有设备登记。打开 vps2vpn 客户端连一次就会出现在这里。', dv_revoke: '踢下线', dv_unrevoke: '恢复', dv_revoked: '已踢下线', dv_this: '这台', dv_seen: '最后在线',
-    dv_online: '现在有 {n} 个地址在用这个账号', dv_limit: '（最多 {m} 台）', dv_revoke_q: '把「{d}」踢下线？它下次联网时会断开并删掉这个订阅。',
-    fb: '反馈问题', fb_tip: '连不上、很慢、某个网站打不开，都可以在这里告诉管理员。用 vps2vpn 客户端的话，在客户端里点「反馈」能自动附上诊断结果，更容易查。',
-    fb_ph: '比如：下午 3 点开始 YouTube 打不开', fb_send: '发送', fb_sent: '已发送，管理员回复后会显示在这里', fb_none: '还没有发过反馈。',
+    invites: '邀请朋友', invites_tip: '从你的额度中分出一部分给朋友。朋友注册后，你每月的额度会立即减去分给对方的部分，直到对方的账号到期或被删除；对方的用量只从这部分中扣除。未使用的邀请码可以随时撤销；要收回已注册用户的额度，请联系管理员。你自己至少保留 1 GB。',
+    can_share: '可分出', quota_each: '每人多少 GB', uses: '可用次数', valid: '邀请码有效天数', note: '备注（可选）', make: '生成邀请码',
+    no_share: '不限量账号不能分出额度；如需邀请码，请联系管理员。', inv_none: '还没有生成过邀请码。', revoke: '撤销', revoked: '已撤销',
+    st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', st_void: '已失效：你的额度不足', reserved: '已预留给邀请码', used_by: '已注册', send_link: '复制注册链接',
+    invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心，忘记订阅链接时也能登录。', pw_tip_link: '通过专属链接打开此页时，无需输入旧密码即可设置新密码（链接本身就是凭证）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
+    saved: '已保存', member_link: '会员中心网址', link_mode: '这是你的专属页面，链接即凭证，请勿发给他人。', days: '天',
+    dv: '我的设备', dv_tip: '这里只列出安装了 vps2vpn 客户端（1.0.29 及以上）的设备；使用其他软件的设备不在列表中，但计入「同时在线」。「移除」只对 vps2vpn 客户端有效：该设备下次联网时会断开并显示「已被移除」，直到你点击「恢复」。要让所有设备都无法连接，请使用下方的「更换订阅链接」。',
+    dv_none: '暂无设备。用 vps2vpn 客户端连接一次后，设备会显示在这里。', dv_revoke: '移除', dv_unrevoke: '恢复', dv_revoked: '已移除', dv_this: '本机', dv_seen: '最后在线',
+    dv_online: '当前有 {n} 个 IP 在使用这个账号', dv_limit: '（最多 {m} 个）', dv_revoke_q: '移除「{d}」？该设备下次联网时会断开，并删除这个订阅。',
+    fb: '反馈问题', fb_tip: '无法连接、速度慢、某个网站打不开，都可以在这里告诉管理员。使用 vps2vpn 客户端时，在客户端的「反馈问题」中发送，可以自动附上诊断结果，便于排查。',
+    fb_ph: '例如：下午 3 点起 YouTube 无法打开', fb_send: '发送', fb_sent: '已发送，管理员回复后会显示在这里', fb_none: '暂无反馈。',
     fb_open: '待处理', fb_done: '已处理', fb_reply: '管理员回复：', fb_new: '有新回复',
-    node_maint: '{g} 维护中', node_cong: '{g} 比较拥堵，建议先用别的线路', node_until: '（预计 {t} 恢复）',
-    notice: '管理员公告', paused_quota: '这一期的流量用完了，所以暂时停用。', q_ask: '可以在下面「申请增加流量」。', q_wait: '到 {date} 重置后会自动恢复。', q_admin: '这个账号不会自动重置，请联系管理员。',
-    extra: '本期临时加量', first_use: '首次使用后 {n} 天', asked: '（申请了 {n} GB）', inv_copied: '注册链接已复制，发给朋友打开就能注册', dev_limit: '（最多同时 {n} 台）',
-    paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限{lim}，已自动暂停 10 分钟。关掉多余的设备，稍后会自动恢复。', paused_other: '账号被暂停了，有问题请联系管理员。',
-    expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量快用完了：只剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或加流量后恢复。', slowed_nr: '流量已用完，已降速到 {mbps} Mbps。这个账号不按月重置，加流量后恢复：可以在下面申请，或联系管理员。', capped: '这个账号限速 {mbps} Mbps。',
-    security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不小心发给了别人？换一个新的，旧链接立刻失效。换完后每台设备都要重新导入一次。',
-    rotate_q: '更换后旧链接马上不能用了，所有设备都要重新导入。确定吗？', rotated: '已更换，请重新导入到 App',
-    rotate_q_link: '更换后，你现在打开的这个页面地址也会失效。还没设密码的话，最好先在上面设一个；或者换完后一定要保存好新链接。确定更换吗？',
-    new_link: '新的订阅链接', new_link_tip: '旧链接已经失效。请复制保存这个新链接，并在每台设备上重新导入。', copy_short: '复制', close: '关闭',
-    wx: '在微信 / QQ 里打不开 App。请点右上角 ··· 选「在浏览器打开」，或点「复制订阅链接」到 App 里导入。'
+    node_maint: '{g} 维护中', node_cong: '{g} 较拥堵，建议先使用其他节点', node_until: '（预计 {t} 恢复）',
+    notice: '管理员公告', paused_quota: '本期流量已用完，账号已暂停。', q_ask: '可以在下方「申请增加流量」。', q_wait: '{date}重置后会自动恢复。', q_admin: '这个账号不会自动重置，请联系管理员。',
+    extra: '本期临时加量', first_use: '首次使用后 {n} 天', asked: '（申请了 {n} GB）', inv_copied: '注册链接已复制，朋友打开即可注册', dev_limit: '（最多同时 {n} 台）',
+    paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限{lim}，已自动暂停 10 分钟。请断开多余的设备，稍后会自动恢复。', paused_other: '账号已暂停，如有疑问请联系管理员。',
+    expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量即将用完：仅剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或增加流量后恢复。', slowed_nr: '流量已用完，已降速到 {mbps} Mbps。这个账号不按月重置，增加流量后恢复：可以在下方申请，或联系管理员。', capped: '这个账号限速 {mbps} Mbps。',
+    security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不慎发给了他人？更换后旧链接立即失效，每台设备都需要重新导入。',
+    rotate_q: '更换后旧链接立即失效，所有设备都需要重新导入。确定更换吗？', rotated: '已更换，请重新导入到 App',
+    rotate_q_link: '更换后，当前页面的网址也会失效。如果还没有设置密码，建议先在上方设置；否则请务必保存好新链接。确定更换吗？',
+    new_link: '新的订阅链接', new_link_tip: '旧链接已失效。请复制并保存新链接，然后在每台设备上重新导入。', copy_short: '复制', close: '关闭',
+    wx: '在微信 / QQ 中无法打开 App。请点击右上角 ···，选择「在浏览器打开」；或点击「复制订阅链接」，再到 App 中导入。'
   },
   en: {
-    kicker: 'MEMBER', title: 'My VPN', login: 'Log in', register: 'Register with an invite code', name: 'Name', password: 'Password',
-    password_new: 'Choose a password (8+ characters)', password2: 'Repeat it', code: 'Invite code', have_code: 'Have an invite code? Create an account', have_account: 'Already have an account? Log in',
-    login_intro: 'Use the name and password you were given. No password? Opening your subscription link shows this page too.',
+    kicker: 'MEMBER', title: 'My VPN', login: 'Sign in', register: 'Register with an invite code', name: 'Name', password: 'Password',
+    password_new: 'Choose a password (8+ characters)', password2: 'Repeat the password', code: 'Invite code', have_code: 'Have an invite code? Create an account', have_account: 'Already have an account? Sign in',
+    login_intro: 'Use the name and password the admin gave you. No password? Opening your subscription link shows this page too.',
     reg_intro: 'Enter the invite code you were given, pick a name and a password, and you are ready.',
-    art_h: 'Your own line,\nyour usage at a glance.', art_p: 'Usage, expiry, one-tap import, asking for more and inviting friends, all here.',
-    art_1: 'Three protocols to switch between', art_2: 'One-tap import into Clash / Shadowrocket', art_3: 'Clear usage, day by day',
-    logout: 'Log out', wrong: 'Wrong name or password', mismatch: 'Passwords do not match',
+    art_h: 'Your own network,\nyour usage at a glance.', art_p: 'Usage, expiry, importing, asking for more and inviting friends, all here.',
+    art_1: 'Three protocols to switch between', art_2: 'Import into Clash / Shadowrocket in one step', art_3: 'Clear usage, day by day',
+    logout: 'Sign out', wrong: 'Wrong name or password', mismatch: 'Passwords do not match',
     used: 'Used', quota: 'Quota', left: 'Left', unlimited: 'unlimited', expires: 'Expires', never: 'never', reset: 'Next reset', none: 'never',
     down: 'down', up_: 'up', status: 'Status', ok: 'active', paused: 'paused', r_quota: 'quota used up', r_expired: 'expired', r_manual: 'paused by the admin', r_remote: 'paused by the main server', r_devices: 'too many devices',
     shared: 'Shared with invitees', invited_by: 'Invited by', online: 'Online', online_now: 'in use now', devices: 'device(s)', offline: 'not connected',
-    import: 'Import into an app', import_tip: 'On a phone tap a button; on a computer copy the link and use "Import from URL". It updates itself.', copy: 'Copy subscription link',
+    import: 'Import into an app', import_tip: 'On a phone, tap a button; on a computer, copy the link and choose "Import from URL" in the app. The subscription updates itself.', copy: 'Copy subscription link',
     sr_full: 'Shadowrocket (full config: nodes + routing + DNS)', sr_nodes: 'Shadowrocket (nodes only)', scan: 'Scan with your phone',
     apps: 'Which app', open_app: 'Open in the vps2vpn app', get_app: 'No vps2vpn app yet? Download it here (free)',
     apps_list: [['Windows', 'the vps2vpn app (free, recommended), or Clash Verge Rev / FlClash'], ['macOS', 'Clash Verge Rev or FlClash (free)'], ['Android', 'FlClash or Hiddify (free)'], ['iPhone / iPad', 'Shadowrocket or Stash (both paid), or Karing (free)']],
     apps_tip: 'After importing, switch on "System proxy" or "VPN / TUN mode" in the app.',
-    history: 'Daily usage', history_sub: 'last 30 days', more: 'Ask for more', more_tip: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved, for this period only (until the next reset).', more_tip_nr: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved. This account has no monthly reset: the extra stays until the admin resets the usage.',
+    history: 'Daily usage', history_sub: 'last 30 days', more: 'Ask for more data', more_tip: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved, for this period only (until the next reset).', more_tip_nr: 'Running low? Tell the admin how much you need and why; it applies as soon as it is approved. This account has no monthly reset: the extra stays until the admin resets the usage.',
     add_gb: 'Extra GB', reason: 'Why (optional)', send: 'Send request', sent: 'Sent; waiting for the admin',
     pending: 'waiting', approved: 'approved', rejected: 'declined', req_none: 'No requests yet.',
     invites: 'Invite friends', invites_tip: 'Share part of your quota. As soon as a friend registers, your monthly quota drops by their share until their account expires or is deleted; what they use only comes out of that share. You can revoke a code nobody has used yet; taking a share back from someone who already registered needs the admin. You always keep at least 1 GB.',
     can_share: 'You can share', quota_each: 'GB per person', uses: 'Uses', valid: 'Code valid (days)', note: 'Note (optional)', make: 'Create code',
     no_share: 'Unlimited accounts cannot share quota; ask the admin for invite codes.', inv_none: 'No invite codes yet.', revoke: 'Revoke', revoked: 'Revoked',
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', st_void: 'void: not enough quota left', reserved: 'Kept for invite codes', used_by: 'Registered', send_link: 'Copy sign-up link',
-    invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can log in to the member centre by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
-    saved: 'Saved', member_link: 'Member centre', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
-    dv: 'My devices', dv_tip: 'Only devices running the vps2vpn app (1.0.29 or later) are listed; devices using other apps are not, but they count as online. "Sign out" works on the vps2vpn app only: that device disconnects the next time it is online and shows as removed until you press "Restore". To stop every device, use "New subscription link" below.',
-    dv_none: 'No devices yet. Connect once with the vps2vpn app and it shows up here.', dv_revoke: 'Sign out', dv_unrevoke: 'Restore', dv_revoked: 'signed out', dv_this: 'this one', dv_seen: 'last seen',
-    dv_online: '{n} address(es) are using this account now', dv_limit: ' (limit {m})', dv_revoke_q: 'Sign out "{d}"? It disconnects and forgets this subscription the next time it is online.',
-    fb: 'Report a problem', fb_tip: 'Cannot connect, slow, a site will not open: tell the admin here. In the vps2vpn app, "Feedback" also sends its diagnosis, which makes it easier to find.',
-    fb_ph: 'For example: YouTube stopped working at 3 pm', fb_send: 'Send', fb_sent: 'Sent. The admin\'s answer will show here', fb_none: 'Nothing sent yet.',
-    fb_open: 'open', fb_done: 'done', fb_reply: 'Answer: ', fb_new: 'new answer',
-    node_maint: '{g}: down for maintenance', node_cong: '{g} is congested; another server may be faster', node_until: ' (back around {t})',
+    invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can sign in to the member center by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
+    saved: 'Saved', member_link: 'Member center', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
+    dv: 'My devices', dv_tip: 'Only devices running the vps2vpn app (1.0.29 or later) are listed; devices using other apps are not, but they count as online. "Remove" works on the vps2vpn app only: that device disconnects the next time it is online and shows as removed until you click "Restore". To cut off every device, use "New subscription link" below.',
+    dv_none: 'No devices yet. Connect once with the vps2vpn app and it shows up here.', dv_revoke: 'Remove', dv_unrevoke: 'Restore', dv_revoked: 'removed', dv_this: 'this device', dv_seen: 'last seen',
+    dv_online: '{n} IP address(es) are using this account now', dv_limit: ' (limit {m})', dv_revoke_q: 'Remove "{d}"? It disconnects and forgets this subscription the next time it is online.',
+    fb: 'Feedback', fb_tip: 'Cannot connect, slow, a site will not open: tell the admin here. In the vps2vpn app, "Feedback" also attaches its diagnosis, which makes the problem easier to find.',
+    fb_ph: 'For example: YouTube stopped working at 3 pm', fb_send: 'Send', fb_sent: 'Sent. The admin\'s reply will show here', fb_none: 'Nothing sent yet.',
+    fb_open: 'open', fb_done: 'done', fb_reply: 'Reply: ', fb_new: 'new reply',
+    node_maint: '{g}: down for maintenance', node_cong: '{g} is congested; another node may be faster', node_until: ' (expected back at {t})',
     notice: 'Notice from the admin', paused_quota: 'This period\u2019s quota is used up, so the account is paused. ', q_ask: 'You can ask for more below. ', q_wait: 'It resumes by itself after the reset on {date}.', q_admin: 'This account does not reset by itself; ask the admin.',
     extra: 'Top-up this period', first_use: '{n} days after first use', asked: ' (asked for {n} GB)', inv_copied: 'Sign-up link copied; your friend just opens it', dev_limit: ' (at most {n} at once)',
     paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once{lim}; the account is paused for 10 minutes. Close the extra ones and it resumes by itself.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
@@ -116,7 +116,16 @@ const panel = (title, sub, right, ...body) => h('div', {class: 'panel'},
   h('div', {class: 'panel-b'}, ...body));
 const chip = (kind, text) => h('span', {class: 'chip ' + kind}, text);
 const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, M.hello ? M.hello.node_name : 'vps2vpn'), h('small', null, 'MEMBER')));
-const dateStr = ts => ts ? new Date(ts * 1000).toLocaleDateString(KT.locale) : t('never');
+// a day as the member reads it: 11月26日 / Nov 26, and 2026年11月26日 / Nov 26, 2026 when it is not this year.
+// Takes the server's own 'YYYY-MM-DD' (expire_day, next_reset_day) or a timestamp.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const dateStr = v => {
+  if (!v) return t('never');
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof v === 'string' ? v : localDay(v * 1000));
+  if (!m) return String(v);
+  const y = +m[1], mo = +m[2], d = +m[3], same = y === new Date().getFullYear();
+  return L === 'zh' ? (same ? '' : y + '年') + mo + '月' + d + '日' : MONTHS[mo - 1] + ' ' + d + (same ? '' : ', ' + y);
+};
 // WeChat and QQ open links in their own browser, which cannot hand clash:// etc. to an app
 const inChatApp = () => /MicroMessenger|QQ\//i.test(navigator.userAgent || '');
 const onWindows = () => /Windows/i.test(navigator.userAgent || '') && !inChatApp();
@@ -190,10 +199,10 @@ async function renderHome() {
     h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats m-stats'},
       stat(t('used'), fmt.bytes(used)), stat(t('quota'), q != null ? fmt.bytes(q) : t('unlimited')),
       stat(t('left'), q != null ? fmt.bytes(Math.max(0, q - used - (me.reserved_gb || 0) * GB)) : t('unlimited')),
-      me.reserved_gb ? stat(t('reserved'), me.reserved_gb + ' GB') : null, stat(t('expires'), !me.expire_at && me.expire_after_days ? t('first_use').replace('{n}', me.expire_after_days) : (me.expire_day || dateStr(me.expire_at))),
+      me.reserved_gb ? stat(t('reserved'), me.reserved_gb + ' GB') : null, stat(t('expires'), !me.expire_at && me.expire_after_days ? t('first_use').replace('{n}', me.expire_after_days) : dateStr(me.expire_day || me.expire_at)),
       me.extra_gb ? stat(t('extra'), '+' + me.extra_gb + ' GB') : null,
       stat('↓ ' + t('down'), fmt.bytes(me.used_down)), stat('↑ ' + t('up_'), fmt.bytes(me.used_up)),
-      stat(t('reset'), me.next_reset ? (me.next_reset_day || dateStr(me.next_reset)) : t('none')),
+      stat(t('reset'), me.next_reset ? dateStr(me.next_reset_day || me.next_reset) : t('none')),
       me.shared_gb ? stat(t('shared'), me.shared_gb + ' GB') : me.invited_by ? stat(t('invited_by'), me.invited_by) : stat(t('status'), me.enabled ? t('ok') : t('paused'))))));
   const days = h('div', {class: 'chart h160'});
   const im = me.import;
@@ -241,13 +250,13 @@ function statusAlerts(me, used, q) {
   const out = [], fill = (s, o) => s.replace(/\{(\w+)\}/g, (_, k) => o[k]);
   const r = me.disabled_reason;
   const msg = r === 'quota' ? t('paused_quota') + (M.hello.requests && me.quota_gb ? t('q_ask') : '') +
-      (me.next_reset ? fill(t('q_wait'), {date: me.next_reset_day || dateStr(me.next_reset)}) : t('q_admin'))
+      (me.next_reset ? fill(t('q_wait'), {date: dateStr(me.next_reset_day || me.next_reset)}) : t('q_admin'))
     : r === 'devices' ? fill(t('paused_devices'), {lim: me.max_ips ? fill(t('dev_limit'), {n: me.max_ips}) : ''})
     : t(r === 'expired' ? 'paused_expired' : 'paused_other');
   if (!me.enabled) out.push(h('div', {class: 'alert ' + (r === 'devices' ? 'warn' : 'bad')}, icon('alert'), msg));
   else {
     const d = me.expire_at ? Math.ceil((me.expire_at * 1000 - Date.now()) / 864e5) : 0;
-    if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: me.expire_day || dateStr(me.expire_at)})));
+    if (me.expire_at && d <= 7) out.push(h('div', {class: 'alert warn'}, icon('clock'), fill(t('expiring'), {d: Math.max(0, d), date: dateStr(me.expire_day || me.expire_at)})));
     if (me.throttled) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t(me.reset_day ? 'slowed' : 'slowed_nr'), {mbps: me.limit_mbps})));
     else if (q != null && (q > 0 ? used / q : 1) >= .9) out.push(h('div', {class: 'alert warn'}, icon('alert'), fill(t('low'), {left: fmt.bytes(Math.max(0, q - used))})));
     if (me.speed_mbps && !me.throttled) out.push(h('div', {class: 'alert'}, icon('alert'), fill(t('capped'), {mbps: me.speed_mbps})));
@@ -255,7 +264,7 @@ function statusAlerts(me, used, q) {
     for (const n of me.nodes || []) {
       if (n.state !== 'maintenance' && n.state !== 'congested') continue;
       const text = fill(t(n.state === 'maintenance' ? 'node_maint' : 'node_cong'), {g: n.group}) + (n.note ? ' · ' + n.note : '') +
-        (n.until ? fill(t('node_until'), {t: new Date(n.until * 1000).toLocaleString([], {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'})}) : '');
+        (n.until ? fill(t('node_until'), {t: fmt.time(n.until)}) : '');
       out.push(h('div', {class: 'alert warn'}, icon('server'), text));
     }
   }
