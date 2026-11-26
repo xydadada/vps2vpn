@@ -160,12 +160,13 @@ def prune(now=None):
 
 # --- what the member sees -----------------------------------------------------------------------------------------
 def for_member(uid, mark_seen=True):
-    """Last 10, without logs. Reading them is what clears `feedback_unread`."""
-    rows = db.q('SELECT id, created_at, text, status, answer, answered_at FROM feedback WHERE user_id=? '
-                'ORDER BY id DESC LIMIT 10', (uid,))
-    if mark_seen and rows:
-        with db.transaction() as c:
-            c.execute('UPDATE feedback SET seen=1 WHERE user_id=? AND seen=0', (uid,))
+    """Up to 10, unread replies first, without logs. Only returned replies become read."""
+    with db.transaction() as c:
+        rows = db.q('SELECT id, created_at, text, status, answer, answered_at FROM feedback WHERE user_id=? '
+                    'ORDER BY seen, id DESC LIMIT 10', (uid,))
+        if mark_seen:
+            c.executemany('UPDATE feedback SET seen=1 WHERE user_id=? AND id=? AND seen=0',
+                          [(uid, r['id']) for r in rows])
     return [dict(r, text=r['text'][:200]) for r in rows]
 
 
