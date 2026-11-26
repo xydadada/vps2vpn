@@ -5,6 +5,7 @@ first use, two-step sign-in, sign-in history, custom routing, Telegram commands,
 """
 import json
 import os
+import sqlite3
 import threading
 import time
 import unittest
@@ -537,6 +538,52 @@ class AdminWeb(tu.Base):
                                     {'ids': [uid, bad_id], 'action': 'add_gb', 'value': 99})
             self.assertEqual(status, 400, bad_id)
         self.assertEqual(db.user(uid)['quota_gb'], 13)
+
+    def test_bulk_database_failure_rolls_back_the_whole_batch(self):
+        self.login()
+        first = db.add_user('bulk-atomic-first', 10)
+        second = db.add_user('bulk-atomic-second', 10)
+        original = db.update_user
+
+        def fail_second(uid, **fields):
+            if uid == second:
+                raise sqlite3.OperationalError('injected write failure')
+            return original(uid, **fields)
+
+        payload = {'ids': [first, second], 'action': 'add_gb', 'value': 5}
+        with mock.patch.object(db, 'update_user', side_effect=fail_second), \
+                mock.patch.object(web.jobs, 'enforce') as enforce, \
+                mock.patch.object(web, 'apply_async') as apply:
+            status, body, _ = self.req('POST', '/adm/api/users-bulk', payload)
+            self.assertEqual(status, 500, body)
+            enforce.assert_not_called()
+            apply.assert_not_called()
+        self.assertEqual([db.user(i)['quota_gb'] for i in (first, second)], [10, 10])
+        status, body, _ = self.req('POST', '/adm/api/users-bulk', payload)
+        self.assertEqual(status, 200, body)
+        self.assertEqual([db.user(i)['quota_gb'] for i in (first, second)], [15, 15])
+
+    def test_failed_bulk_reset_keeps_usage_and_alert_receipts(self):
+        self.login()
+        first = db.add_user('reset-atomic-first', 10)
+        second = db.add_user('reset-atomic-second', 10)
+        for uid in (first, second):
+            db.update_user(uid, used_up=100, used_down=200, extra_gb=1)
+        original = db.update_user
+
+        def fail_second(uid, **fields):
+            if uid == second:
+                raise sqlite3.OperationalError('injected write failure')
+            return original(uid, **fields)
+
+        with mock.patch.object(db, 'update_user', side_effect=fail_second), \
+                mock.patch.object(web.jobs, 'forget_quota_alerts') as forget:
+            status, body, _ = self.req('POST', '/adm/api/users-bulk',
+                                       {'ids': [first, second], 'action': 'reset'})
+            self.assertEqual(status, 500, body)
+            forget.assert_not_called()
+        self.assertEqual([(db.user(i)['used_up'], db.user(i)['used_down'], db.user(i)['extra_gb'])
+                          for i in (first, second)], [(100, 200, 1), (100, 200, 1)])
 
     def test_bulk_value_too_large_for_float_is_rejected_not_500(self):
         self.login()
