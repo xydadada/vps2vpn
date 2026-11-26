@@ -133,7 +133,7 @@
 离线测试（Windows 上要先指定 bash）：
 
 ```
-PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest tests.test_unit tests.test_features tests.test_admin tests.test_deploy tests.test_ops tests.test_telegram_pairing tests.test_cluster_sync_http tests.test_member_page tests.test_legend_import tests.test_audit8 tests.test_audit9 tests.test_audit9_deployers tests.test_audit10 tests.test_audit11 tests.test_logic_review tests.test_phase2 tests.test_beginner_ui
+PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" python -m unittest discover -s tests -t . -v
 ```
 
 发版步骤：
