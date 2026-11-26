@@ -941,6 +941,104 @@ class AuthHardening(tu.Base):
         self.cookie = stolen
         self.assertEqual(self.req('GET', '/mem/api/me')[0], 401)
 
+    def test_pending_member_password_change_cannot_overwrite_new_credentials(self):
+        uid = self._member('password-race', 'oldmemberpassword')
+        self.assertEqual(self.req('POST', '/mem/api/login',
+                                  {'name': 'password-race', 'password': 'oldmemberpassword'})[0], 200)
+        entered, resume = threading.Event(), threading.Event()
+        original_hash = secure.hash_password
+        result = []
+
+        def paused_hash(password):
+            if password == 'pendingpassword':
+                entered.set()
+                if not resume.wait(10):
+                    raise RuntimeError('member password race timed out')
+            return original_hash(password)
+
+        worker = threading.Thread(target=lambda: result.append(self.req(
+            'POST', '/mem/api/password', {'old': 'oldmemberpassword', 'new': 'pendingpassword'})), daemon=True)
+        with mock.patch.object(secure, 'hash_password', side_effect=paused_hash):
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                st, body, _ = self.req('POST', '/mem/api/password',
+                                      {'old': 'oldmemberpassword', 'new': 'newmemberpassword'})
+                self.assertEqual(st, 200, body)
+                fresh_cookie = self.cookie
+            finally:
+                resume.set()
+                worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result[0][0], 409, result[0][1])
+        self.assertTrue(secure.check_password('newmemberpassword', db.user(uid)['login_hash']))
+        self.assertEqual(self.cookie, fresh_cookie)
+        self.assertEqual(db.member_session(fresh_cookie.split('=', 1)[1]), uid)
+
+    def test_pending_link_password_change_cannot_outlive_rotation_or_deletion(self):
+        for remove in (False, True):
+            with self.subTest(remove=remove):
+                uid = self._member('link-race-%s' % remove, 'oldmemberpassword')
+                link = '/s/%s/api/password' % db.user(uid)['sub_token']
+                entered, resume = threading.Event(), threading.Event()
+                result = []
+                original_hash = secure.hash_password
+
+                def paused_hash(password):
+                    entered.set()
+                    if not resume.wait(10):
+                        raise RuntimeError('link password race timed out')
+                    return original_hash(password)
+
+                worker = threading.Thread(target=lambda: result.append(self.req(
+                    'POST', link, {'new': 'pendingpassword'})), daemon=True)
+                with mock.patch.object(secure, 'hash_password', side_effect=paused_hash):
+                    worker.start()
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        (db.delete_user if remove else db.rotate_user)(uid)
+                        current = db.user(uid)
+                    finally:
+                        resume.set()
+                        worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(result[0][0], 409, result[0][1])
+                self.assertEqual(db.user(uid), current)
+
+    def test_revoked_member_session_cannot_finish_credential_changes(self):
+        for endpoint in ('password', 'rotate', 'devices/kick-others'):
+            with self.subTest(endpoint=endpoint):
+                uid = self._member('session-race-' + endpoint, 'oldmemberpassword')
+                db.set_settings(client_devices=True)
+                self.cookie = 'v2vm=' + db.new_member_session(uid)
+                original_body = web.Handler.body_json
+                entered, resume = threading.Event(), threading.Event()
+                result = []
+
+                def paused_body(handler, *args, **kwargs):
+                    value = original_body(handler, *args, **kwargs)
+                    entered.set()
+                    if not resume.wait(10):
+                        raise RuntimeError('session race timed out')
+                    return value
+
+                worker = threading.Thread(target=lambda: result.append(self.req(
+                    'POST', '/mem/api/' + endpoint,
+                    {'old': 'oldmemberpassword', 'new': 'pendingpassword'})), daemon=True)
+                with mock.patch.object(web.Handler, 'body_json', paused_body):
+                    worker.start()
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        db.end_member_session(None, uid)
+                        current = db.user(uid)
+                    finally:
+                        resume.set()
+                        worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(result[0][0], 409, result[0][1])
+                self.assertEqual(db.user(uid), current)
+                self.assertIsNone(db.member_session(self.cookie.split('=', 1)[1]))
+
     def test_2fa_changes_end_every_other_session(self):
         self.login()
         other = db.new_session()
