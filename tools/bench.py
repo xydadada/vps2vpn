@@ -141,16 +141,17 @@ def main():
         proxies = fetch_proxies(a.subscription, insecure=a.insecure, ca_file=a.ca_file)
     bench.measurement_urls(a.origin)  # Validate before starting a core or sending measurement traffic.
     work = tempfile.mkdtemp(prefix='v2v-bench-')
-    ports = {p['name']: free_port() for p in proxies}
-    conf = {'mode': 'rule', 'log-level': 'warning', 'ipv6': True, 'allow-lan': False, 'proxies': proxies,
-            'listeners': [{'name': 'in%d' % i, 'type': 'mixed', 'listen': '127.0.0.1', 'port': ports[p['name']],
-                           'proxy': p['name']} for i, p in enumerate(proxies)],
-            'rules': ['MATCH,DIRECT']}
-    with open(os.path.join(work, 'config.yaml'), 'w', encoding='utf-8') as f:
-        json.dump(conf, f)
-    proc = subprocess.Popen([a.mihomo, '-d', work], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = None
     rows = []
     try:
+        ports = {p['name']: free_port() for p in proxies}
+        conf = {'mode': 'rule', 'log-level': 'warning', 'ipv6': True, 'allow-lan': False, 'proxies': proxies,
+                'listeners': [{'name': 'in%d' % i, 'type': 'mixed', 'listen': '127.0.0.1', 'port': ports[p['name']],
+                               'proxy': p['name']} for i, p in enumerate(proxies)],
+                'rules': ['MATCH,DIRECT']}
+        with open(os.path.join(work, 'config.yaml'), 'w', encoding='utf-8') as f:
+            json.dump(conf, f)
+        proc = subprocess.Popen([a.mihomo, '-d', work], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if not all(wait_port(p) for p in ports.values()):
             sys.exit('mihomo did not start; run it by hand with -d %s to see why' % work)
         if not a.no_direct:
@@ -160,13 +161,16 @@ def main():
             print(p['name'])
             rows.append((p['name'], bench.run('http://127.0.0.1:%d' % ports[p['name']], a.quick, origin=a.origin)))
     finally:
-        proc.terminate()
         try:
-            proc.wait(5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        shutil.rmtree(work, ignore_errors=True)
+            if proc is not None:
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
     print()
     print(bench.table(rows))
     print('\nping = median of fresh HTTPS requests through the proxy; down/up in Mbit/s.')
