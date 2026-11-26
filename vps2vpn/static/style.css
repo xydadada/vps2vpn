@@ -430,6 +430,10 @@ textarea.mono{font:12.5px/1.7 var(--mono)}
 .tl-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap}
 .tl-row>.muted{flex:1;min-width:140px}
 .tl-acts{display:flex;gap:6px;align-items:center;margin-left:auto}
+.dv-row{flex-wrap:nowrap}.dv-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.dv-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dv-meta{line-height:1.6}.dv-row .tl-acts{flex:none}
+.nw{white-space:nowrap}
+.sr-tip{font-size:12px;margin:8px 0 0}
 .code-chip{font:700 13px var(--mono);letter-spacing:.06em;background:var(--panel-2);border:1px dashed var(--line-2);border-radius:8px;padding:3px 8px}
 .form-grid.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .spark{display:block;width:100%;height:28px}
@@ -443,7 +447,7 @@ textarea.mono{font:12.5px/1.7 var(--mono)}
   .m-import{grid-template-columns:minmax(0,1fr)}
   .site-grid{grid-template-columns:1fr}
   .form-grid.g3{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .m-hello h1{font-size:23px}
+  .m-hello h1{font-size:23px;margin-right:4px}.m-hello{gap:6px}.m-hello .chip{padding:3px 8px;font-size:11.5px}
 }
 @media(max-width:520px){
   .usage-hero{grid-template-columns:1fr;justify-items:center}

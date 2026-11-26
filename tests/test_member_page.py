@@ -250,5 +250,42 @@ class SameWordsAsTheApp(unittest.TestCase):
         self.assertIn('dateStr(me.expire_day || me.expire_at)', js)          # the server's own day is still shown
 
 
+class DeviceRowsAndDetails(unittest.TestCase):
+    """0.2.49: one device row in both pages, dates that never split, soft removal described as it works."""
+
+    @staticmethod
+    def read(name):
+        with open(os.path.join(ROOT, 'vps2vpn', 'static', name), encoding='utf-8') as f:
+            return f.read()
+
+    def test_one_device_row(self):
+        kit, css = self.read('kit.js'), self.read('style.css')
+        self.assertIn('function deviceRow(', kit)
+        self.assertIn("[x.last_seen&&seenLabel+' '+fmt.time(x.last_seen),x.last_seen&&fmt.ago(x.last_seen)]", kit)  # date, age on hover
+        self.assertIn("macos:'macOS'", kit)
+        for name in ('member.js', 'app.js'):
+            js = self.read(name)
+            self.assertIn("deviceRow(x, t('dv_seen'),", js, name)
+            self.assertNotIn("t('dv_seen') + ' ' +", js, name)                  # no hand-made rows left
+        self.assertIn('.nw{white-space:nowrap}', css)
+        self.assertIn('.dv-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}', css)
+
+    def test_member_words(self):
+        js = member_js()
+        for old in ('(es)', 'forgets this subscription', '删除这个订阅', '已被移除', "sr_full: '小火箭（",
+                    "stat(t('status')"):
+            self.assertNotIn(old, js, old)
+        self.assertIn("'1 IP address is using this account now'", js)
+        self.assertIn('info.hidden = !r.online_ips;', js)
+        self.assertIn("L === 'zh' ? '会员中心' : 'MEMBER'", js)
+
+    def test_admin_words(self):
+        js = self.read('app.js')
+        for old in (' centre', 'Centre', "'Log in'", "'Log out'", '他的', '发给他。', '他可以', '1.0.29 起', '「换订阅链接」',
+                    "rotate: '更换链接'"):
+            self.assertNotIn(old, js, old)
+        self.assertIn('「更换订阅链接」', js)
+
+
 if __name__ == '__main__':
     unittest.main()

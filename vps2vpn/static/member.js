@@ -15,7 +15,7 @@ const T = {
     down: '下行', up_: '上行', status: '状态', ok: '正常', paused: '已停用', r_quota: '流量已用完', r_expired: '已到期', r_manual: '已被管理员停用', r_remote: '已被主服务器停用', r_devices: '同时在线设备过多',
     shared: '分给受邀人', invited_by: '邀请人', online: '在线', online_now: '正在使用', devices: '个设备', offline: '当前未连接',
     import: '导入到 App', import_tip: '手机上直接点击按钮；电脑上复制链接，在 App 中选择「从 URL 导入」。订阅会自动更新。', copy: '复制订阅链接',
-    sr_full: '小火箭（完整配置：节点 + 分流 + DNS）', sr_nodes: '小火箭（只导入节点）', scan: '手机扫码导入',
+    sr_full: '小火箭', sr_full_tip: '「小火箭」导入完整配置：节点 + 分流 + DNS。', sr_nodes: '小火箭（只导入节点）', scan: '手机扫码导入',
     apps: '装哪个 App', open_app: '在 vps2vpn 客户端中打开', get_app: '还没有安装 vps2vpn 客户端？点击此处免费下载',
     apps_list: [['Windows', 'vps2vpn 客户端（免费，推荐），或 Clash Verge Rev、FlClash'], ['macOS', 'Clash Verge Rev 或 FlClash（免费）'], ['Android', 'FlClash 或 Hiddify（免费）'], ['iPhone / iPad', 'Shadowrocket 小火箭或 Stash（都要付费），免费的用 Karing']],
     apps_tip: '导入后，在 App 中打开「系统代理」或「VPN / TUN 模式」开关即可。',
@@ -28,9 +28,9 @@ const T = {
     st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', st_void: '已失效：你的额度不足', reserved: '已预留给邀请码', used_by: '已注册', send_link: '复制注册链接',
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心，忘记订阅链接时也能登录。', pw_tip_link: '通过专属链接打开此页时，无需输入旧密码即可设置新密码（链接本身就是凭证）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心网址', link_mode: '这是你的专属页面，链接即凭证，请勿发给他人。', days: '天',
-    dv: '我的设备', dv_tip: '这里只列出安装了 vps2vpn 客户端（1.0.29 及以上）的设备；使用其他软件的设备不在列表中，但计入「同时在线」。「移除」只对 vps2vpn 客户端有效：该设备下次联网时会断开并显示「已被移除」，直到你点击「恢复」。要让所有设备都无法连接，请使用下方的「更换订阅链接」。',
+    dv: '我的设备', dv_tip: '这里列出用 vps2vpn 客户端（1.0.29 及以上）连接过的设备；其他软件的设备不在列表中，但计入「同时在线」。「移除」只对 vps2vpn 客户端有效；要让所有设备都无法连接，请使用下方的「更换订阅链接」。',
     dv_none: '暂无设备。用 vps2vpn 客户端连接一次后，设备会显示在这里。', dv_revoke: '移除', dv_unrevoke: '恢复', dv_revoked: '已移除', dv_this: '本机', dv_seen: '最后在线',
-    dv_online: '当前有 {n} 个 IP 在使用这个账号', dv_limit: '（最多 {m} 个）', dv_revoke_q: '移除「{d}」？该设备下次联网时会断开，并删除这个订阅。',
+    dv_online: '当前有 {n} 个网络地址在使用这个账号', dv_online_1: '当前有 1 个网络地址在使用这个账号', dv_limit: '（最多 {m} 个）', dv_revoke_q: '移除「{d}」？该设备下次联网时会断开，并提示已被你移除。之后可以随时点击「恢复」让它重新连接。',
     fb: '反馈问题', fb_tip: '无法连接、速度慢、某个网站打不开，都可以在这里告诉管理员。使用 vps2vpn 客户端时，在客户端的「反馈问题」中发送，可以自动附上诊断结果，便于排查。',
     fb_ph: '例如：下午 3 点起 YouTube 无法打开', fb_send: '发送', fb_sent: '已发送，管理员回复后会显示在这里', fb_none: '暂无反馈。',
     fb_open: '待处理', fb_done: '已处理', fb_reply: '管理员回复：', fb_new: '有新回复',
@@ -57,7 +57,7 @@ const T = {
     down: 'down', up_: 'up', status: 'Status', ok: 'active', paused: 'paused', r_quota: 'quota used up', r_expired: 'expired', r_manual: 'paused by the admin', r_remote: 'paused by the main server', r_devices: 'too many devices',
     shared: 'Shared with invitees', invited_by: 'Invited by', online: 'Online', online_now: 'in use now', devices: 'device(s)', offline: 'not connected',
     import: 'Import into an app', import_tip: 'On a phone, tap a button; on a computer, copy the link and choose "Import from URL" in the app. The subscription updates itself.', copy: 'Copy subscription link',
-    sr_full: 'Shadowrocket (full config: nodes + routing + DNS)', sr_nodes: 'Shadowrocket (nodes only)', scan: 'Scan with your phone',
+    sr_full: 'Shadowrocket', sr_full_tip: '"Shadowrocket" imports the full config: nodes + routing + DNS.', sr_nodes: 'Shadowrocket (nodes only)', scan: 'Scan with your phone',
     apps: 'Which app', open_app: 'Open in the vps2vpn app', get_app: 'No vps2vpn app yet? Download it here (free)',
     apps_list: [['Windows', 'the vps2vpn app (free, recommended), or Clash Verge Rev / FlClash'], ['macOS', 'Clash Verge Rev or FlClash (free)'], ['Android', 'FlClash or Hiddify (free)'], ['iPhone / iPad', 'Shadowrocket or Stash (both paid), or Karing (free)']],
     apps_tip: 'After importing, switch on "System proxy" or "VPN / TUN mode" in the app.',
@@ -70,9 +70,9 @@ const T = {
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', st_void: 'void: not enough quota left', reserved: 'Kept for invite codes', used_by: 'Registered', send_link: 'Copy sign-up link',
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can sign in to the member center by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member center', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
-    dv: 'My devices', dv_tip: 'Only devices running the vps2vpn app (1.0.29 or later) are listed; devices using other apps are not, but they count as online. "Remove" works on the vps2vpn app only: that device disconnects the next time it is online and shows as removed until you click "Restore". To cut off every device, use "New subscription link" below.',
+    dv: 'My devices', dv_tip: 'Devices that connected with the vps2vpn app (1.0.29 or later) are listed here; devices using other apps are not, but they count as online. "Remove" works on the vps2vpn app only; to cut off every device, use "New subscription link" below.',
     dv_none: 'No devices yet. Connect once with the vps2vpn app and it shows up here.', dv_revoke: 'Remove', dv_unrevoke: 'Restore', dv_revoked: 'removed', dv_this: 'this device', dv_seen: 'last seen',
-    dv_online: '{n} IP address(es) are using this account now', dv_limit: ' (limit {m})', dv_revoke_q: 'Remove "{d}"? It disconnects and forgets this subscription the next time it is online.',
+    dv_online: '{n} IP addresses are using this account now', dv_online_1: '1 IP address is using this account now', dv_limit: ' (limit {m})', dv_revoke_q: 'Remove "{d}"? It disconnects the next time it\'s online and shows that you removed it. You can restore it at any time.',
     fb: 'Feedback', fb_tip: 'Cannot connect, slow, a site will not open: tell the admin here. In the vps2vpn app, "Feedback" also attaches its diagnosis, which makes the problem easier to find.',
     fb_ph: 'For example: YouTube stopped working at 3 pm', fb_send: 'Send', fb_sent: 'Sent. The admin\'s reply will show here', fb_none: 'Nothing sent yet.',
     fb_open: 'open', fb_done: 'done', fb_reply: 'Reply: ', fb_new: 'new reply',
@@ -115,7 +115,7 @@ const panel = (title, sub, right, ...body) => h('div', {class: 'panel'},
   h('div', {class: 'panel-h'}, h('h3', null, title), sub ? h('span', {class: 'sub'}, sub) : null, right ? h('div', {class: 'right'}, right) : null),
   h('div', {class: 'panel-b'}, ...body));
 const chip = (kind, text) => h('span', {class: 'chip ' + kind}, text);
-const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, M.hello ? M.hello.node_name : 'vps2vpn'), h('small', null, 'MEMBER')));
+const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, M.hello ? M.hello.node_name : 'vps2vpn'), h('small', null, L === 'zh' ? '会员中心' : 'MEMBER')));
 // a day as the member reads it: 11月26日 / Nov 26, and 2026年11月26日 / Nov 26, 2026 when it is not this year.
 // Takes the server's own 'YYYY-MM-DD' (expire_day, next_reset_day) or a timestamp.
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -203,7 +203,7 @@ async function renderHome() {
       me.extra_gb ? stat(t('extra'), '+' + me.extra_gb + ' GB') : null,
       stat('↓ ' + t('down'), fmt.bytes(me.used_down)), stat('↑ ' + t('up_'), fmt.bytes(me.used_up)),
       stat(t('reset'), me.next_reset ? dateStr(me.next_reset_day || me.next_reset) : t('none')),
-      me.shared_gb ? stat(t('shared'), me.shared_gb + ' GB') : me.invited_by ? stat(t('invited_by'), me.invited_by) : stat(t('status'), me.enabled ? t('ok') : t('paused'))))));
+      me.shared_gb ? stat(t('shared'), me.shared_gb + ' GB') : me.invited_by ? stat(t('invited_by'), me.invited_by) : null))));
   const days = h('div', {class: 'chart h160'});
   const im = me.import;
   const importP = panel(t('import'), null, null, h('div', {class: 'm-import'},
@@ -216,10 +216,11 @@ async function renderHome() {
       h('div', {class: 'act-grid', style: 'margin:10px 0'}, h('button', {class: onWindows() && im.vps2vpn ? 'btn' : 'btn primary', onclick: () => copyText(me.sub_url, t('copy'))}, icon('copy'), t('copy')),
         h('a', {class: 'btn', href: im.clash}, 'Clash / FlClash')),
       h('div', {class: 'import-grid'},
-        h('a', {class: 'btn', href: im.shadowrocket_conf}, t('sr_full')), h('a', {class: 'btn', href: im.shadowrocket}, t('sr_nodes')),
+        h('a', {class: 'btn', href: im.shadowrocket_conf, title: t('sr_full_tip')}, t('sr_full')), h('a', {class: 'btn', href: im.shadowrocket}, t('sr_nodes')),
         h('a', {class: 'btn', href: im.hiddify}, 'Hiddify'), h('a', {class: 'btn', href: im.singbox}, 'sing-box'),
         h('a', {class: 'btn', href: im.stash}, 'Stash'), h('a', {class: 'btn', href: im.karing}, 'Karing'),
-        h('a', {class: 'btn', href: im.v2rayng}, 'v2rayNG'))),
+        h('a', {class: 'btn', href: im.v2rayng}, 'v2rayNG')),
+      h('p', {class: 'muted sr-tip'}, t('sr_full_tip'))),
     h('div', {class: 'm-qr'}, h('img', {class: 'qr', alt: t('scan'), src: 'api/qr'}), h('small', {class: 'muted'}, t('scan')))));
   const apps = panel(t('apps'), null, null, h('ul', {class: 'm-apps'}, t('apps_list').map(([a, b]) => h('li', null, h('b', null, a), h('span', null, b)))),
     h('p', {class: 'muted m-tip'}, t('apps_tip')));
@@ -287,17 +288,17 @@ function devicesPanel() {
   const list = h('div', {class: 'tl'}), info = h('p', {class: 'muted m-tip'});
   const fill = async () => {
     let r; try { r = await api('devices'); } catch (e) { return; }
-    info.textContent = t('dv_online').replace('{n}', r.online_ips) + (r.max_ips ? t('dv_limit').replace('{m}', r.max_ips) : '');
+    // nothing to say while no address is connected (the list below still shows the app's own devices)
+    info.hidden = !r.online_ips;
+    info.textContent = r.online_ips ? t(r.online_ips === 1 ? 'dv_online_1' : 'dv_online').replace('{n}', r.online_ips) + (r.max_ips ? t('dv_limit').replace('{m}', r.max_ips) : '') : '';
     list.replaceChildren(...(r.devices.length ? r.devices.map(x => {
       const b = h('button', {class: 'btn sm' + (x.revoked ? '' : ' danger')}, t(x.revoked ? 'dv_unrevoke' : 'dv_revoke'));
       b.onclick = async () => {
-        if (!x.revoked && !await confirmBox(t('dv_revoke'), t('dv_revoke_q').replace('{d}', x.name || x.platform), {danger: true, confirm: t('dv_revoke')})) return;
+        if (!x.revoked && !await confirmBox(t('dv_revoke'), t('dv_revoke_q').replace('{d}', x.name || PLATFORM_NAMES[x.platform] || x.platform), {danger: true, confirm: t('dv_revoke')})) return;
         b.disabled = true;
         try { await api(`devices/${x.device_id}/${x.revoked ? 'unrevoke' : 'revoke'}`, {}); toast(t('saved')); fill(); } catch (e) { err(e); b.disabled = false; }
       };
-      return h('div', {class: 'tl-row'}, h('b', {style: 'overflow-wrap:anywhere'}, x.name || x.platform),
-        h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, [x.platform, x.version, t('dv_seen') + ' ' + fmt.time(x.last_seen), x.ip].filter(Boolean).join(' · ')),
-        x.this_device ? chip('info', t('dv_this')) : null, x.revoked ? chip('bad', t('dv_revoked')) : null, b);
+      return deviceRow(x, t('dv_seen'), [x.this_device ? chip('info', t('dv_this')) : null, x.revoked ? chip('bad', t('dv_revoked')) : null, b]);
     }) : [h('div', {class: 'muted m-tip'}, t('dv_none'))]));
   };
   fill();

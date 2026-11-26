@@ -22,8 +22,8 @@ const T = {
     used: '已用', unlimited: '不限', never: '永久', status: '状态', expires: '到期', last_seen: '最近使用', sub_fetched: '最近拉取订阅', sub_never: '还没有 App 拉取过', sub_app: '拉取订阅的 App',
     enabled: '正常', r_quota: '流量用完', r_expired: '已到期', r_manual: '手动停用', r_remote: '主服务器停用', search: '搜索名字或备注',
     share: '订阅', share_tip: '把链接或二维码发给使用者：手机扫码，或在 App 里「从 URL 导入」。',
-    copy: '复制订阅链接', open_page: '打开导入页面', open_app: '在 vps2vpn 客户端中打开', rotate: '更换链接', reset: '清零流量',
-    confirm_del: '删除后他的链接立即失效，不能恢复。', confirm_rotate: '旧链接会立刻失效，需要把新链接重新发给他。',
+    copy: '复制订阅链接', open_page: '打开导入页面', open_app: '在 vps2vpn 客户端中打开', rotate: '更换订阅链接', reset: '清零流量',
+    confirm_del: '删除后该用户的链接立即失效，不能恢复。', confirm_rotate: '旧链接会立刻失效，需要把新链接重新发给该用户。',
     confirm_reset: '把本月已用流量清零？', enable: '启用', disable: '停用', edit: '编辑', usage: '用量', actions: '操作',
     s_basic: '基本', s_proto: '协议（可同时开，App 里随时切换）', s_route: '分流', s_cert: '证书',
     node_name: '节点名字（显示在 App 里）', support_url: '客服 / 帮助链接（App 里显示，http(s):// 或 tg://，留空不显示）', sub_update_hours: '订阅自动更新间隔（小时，1–168；换服务器或改设置后 App 多久能拿到）', tune: '自动网络调优（BBR + 按内存调整缓冲区）',
@@ -58,7 +58,7 @@ const T = {
     copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
     tab_home: '总览', tab_users: '用户', tab_members: '会员', tab_servers: '服务器', tab_monitor: '监控', tab_settings: '设置', tab_system: '体检',
     online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', extra_now: '本期临时加量（下次重置或手动清零时取消）', extra_gone: '本期临时加量也会一起取消。', invited_by: '邀请人', eff_quota: '实际可用额度', plan: '套餐', history: '每日用量', history_sub: '近 30 天',
-    member_login: '会员中心登录', member_login_tip: '设置密码后，他可以用名字 + 密码登录会员中心（看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
+    member_login: '会员中心登录', member_login_tip: '设置密码后，该用户可以用用户名和密码登录会员中心（查看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
     login_on: '已设置密码', login_off: '未设置密码', set_pw: '设置 / 重置密码', clear_pw: '取消密码登录', pw_cleared: '已取消', pw_ph: '新密码（至少 8 位）', pw_first: '先在左边输入新密码（至少 8 位），再点「设置 / 重置密码」',
     requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '留空 = 按申请的数量批准。只加到本期：下次重置日（或手动清零流量时）自动取消；没设重置日的账号会一直保留到手动清零。想长期提高，请在用户编辑里改「流量上限」。', answer: '回复（可选）', asked: '（申请了 {n} GB）',
     pending: '待处理', approved: '已批准', rejected: '已拒绝',
@@ -80,11 +80,11 @@ const T = {
     st_state: '状态', st_ok: '正常', st_maint: '维护中', st_cong: '拥堵', st_note: '说明（可不填，最多 100 字）', st_until: '到这个时间自动恢复正常（可不填）',
     st_this: '（本机）',
     client_devices: '让客户端登记设备（会员能看到自己的设备、移除其中某一台；仅 vps2vpn 客户端支持）',
-    dv: '设备', dv_tip: '这里只列出 vps2vpn 客户端（1.0.29 起）登记的设备；用其他软件的设备不在列表里，但算在「同时在线设备」里。「移除」只对 vps2vpn 客户端有效；要让所有软件都连不上，用下面的「换订阅链接」。',
+    dv: '设备', dv_tip: '这里列出用 vps2vpn 客户端（1.0.29 及以上）连接过的设备；其他软件的设备不在列表中，但计入「同时在线」。「移除」只对 vps2vpn 客户端有效；要让所有设备都无法连接，请使用下方的「更换订阅链接」。',
     dv_none: '还没有设备登记。', dv_revoke: '移除', dv_unrevoke: '恢复', dv_revoked: '已移除', dv_seen: '最后在线',
     client_feedback: '允许会员发反馈（vps2vpn 客户端带诊断和日志；会员中心网页只能写文字）',
     fb: '用户反馈', fb_tip: '会员在 vps2vpn 客户端里点「反馈」，或在会员中心网页写几句话，就会出现在这里。日志和 IP 地址在发出前和存进来前都打过码。保留 30 天，不进备份。',
-    fb_none: '还没有反馈。', fb_open: '待处理', fb_done: '已处理', fb_view: '详情', fb_hide: '收起', fb_answer: '回复并标为已处理', fb_answer_ph: '回复会员（会显示在他的客户端和会员页里，最多 500 字）',
+    fb_none: '还没有反馈。', fb_open: '待处理', fb_done: '已处理', fb_view: '详情', fb_hide: '收起', fb_answer: '回复并标为已处理', fb_answer_ph: '回复会员（会显示在该用户的客户端和会员页里，最多 500 字）',
     fb_mark: '标为已处理', fb_reopen: '改回待处理', fb_del: '删除', fb_del_q: '删除这条反馈？', fb_diag: '诊断结果', fb_log: '日志', fb_copy: '复制日志', fb_replied: '已回复：',
     client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`, client_unsigned: n => `缺少签名文件：${n}。App 只装带签名的安装包，请把 GitHub 发布页上同名的 .sig 文件一起放进来。`,
     renew: '服务器到期提醒', renew_at: '这台 VPS 哪天到期（续费日）', renew_note: '在哪里续费（例如 AWS Lightsail）',
@@ -105,7 +105,7 @@ const T = {
     e_timeout: '超时', e_reset: '连接被重置', e_dns: '域名解析失败', e_tls: 'TLS 握手失败', e_other: '打不开', events: '最近记录', no_events: '还没有记录。', coverage: '覆盖', abuse_none: '当前没有在线连接。', ok_quiet: '正常',
     f_all: '全部', f_online: '在线', f_active: '正常', f_paused: '已停用', f_soon: '7 天内到期', f_low: '快用完',
     s_id: '按添加顺序', s_name: '按名字', s_used: '按用量', s_exp: '按到期日', s_seen: '按最近使用',
-    selected: '已选', sel_all: '全选', clear_sel: '取消选择', b_reset: '清零流量', b_extend: '延期', b_addgb: '永久提高上限', b_rotate: '换链接',
+    selected: '已选', sel_all: '全选', clear_sel: '取消选择', b_reset: '清零流量', b_extend: '延期', b_addgb: '永久提高上限', b_rotate: '更换订阅链接',
     extend_days: '延长多少天（没设到期日的人不受影响）', add_gb_q: '每人的流量上限永久提高多少 GB（每月都有效；不限量的人不受影响）', bulk_done: '已处理', still_n: '其中 {n} 个已到期或流量用完，启用后马上又暂停了：请先延期或加流量。', still_expired: '已到期，启用后马上又暂停了：请先把到期日往后改。', still_quota: '流量已用完，启用后马上又暂停了：请先清零流量或调高上限。',
     confirm_bulk_del: '删除后这些人的链接立即失效，不能恢复。', confirm_bulk_rotate: '这些人的旧链接会立刻失效，需要把新链接重新发给他们。',
     batch_add: '批量添加', export_csv: '导出表格', batch_prefix: '名字前缀（生成 前缀-01、前缀-02…）', batch_count: '数量（1–200）', batch_made: '已创建',
@@ -133,7 +133,7 @@ const T = {
     next: 'Next', back: 'Back', build: 'Build my VPN', building: 'Building, about 10 seconds…',
     advanced: 'Advanced (safe to skip)', lang: 'Language / 语言',
     time_zone: 'Time zone for monthly resets', tz_server: "The server's own clock",
-    login: 'Log in', login_intro: 'Use the admin account you created during setup. 8 wrong tries lock sign-in for 10 minutes.', logout: 'Log out', wrong: 'Wrong username or password',
+    login: 'Sign in', login_intro: 'Use the admin account you created during setup. 8 wrong tries lock sign-in for 10 minutes.', logout: 'Sign out', wrong: 'Wrong username or password',
     nav_main: 'Operate', nav_infra: 'Server', nav_home: 'Overview', nav_users: 'Users', nav_settings: 'Protocols & settings', nav_system: 'Health & upkeep',
     k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
     live: 'Live throughput', down: 'down', up_: 'up', online: 'Online', users_n: 'users', active_n: 'active', paused_n: 'paused',
@@ -145,7 +145,7 @@ const T = {
     used: 'Used', unlimited: 'unlimited', never: 'never', status: 'Status', expires: 'Expires', last_seen: 'Last seen', sub_fetched: 'Subscription last fetched', sub_never: 'Not fetched by an app yet', sub_app: 'App that fetched it',
     enabled: 'active', r_quota: 'quota used', r_expired: 'expired', r_manual: 'paused', r_remote: 'paused by main server', search: 'Search name or note',
     share: 'Subscription', share_tip: 'Send this link or QR code to the user. Scan it, or use "Import from URL" in the app.',
-    copy: 'Copy link', open_page: 'Open import page', open_app: 'Open in the vps2vpn app', rotate: 'New link', reset: 'Reset usage',
+    copy: 'Copy link', open_page: 'Open import page', open_app: 'Open in the vps2vpn app', rotate: 'New subscription link', reset: 'Reset usage',
     confirm_del: 'Their link stops working immediately. This cannot be undone.', confirm_rotate: 'The old link stops working immediately; send them the new one.',
     confirm_reset: 'Reset this month\'s usage to zero?', enable: 'Enable', disable: 'Pause', edit: 'Edit', usage: 'Usage', actions: 'Actions',
     s_basic: 'Basics', s_proto: 'Protocols (turn on several and switch in the app)', s_route: 'Routing', s_cert: 'Certificate',
@@ -181,15 +181,15 @@ const T = {
     copy_btn: 'Copy', nav_members: 'Members & invites', nav_servers: 'Servers', nav_monitor: 'Monitor & abuse', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
     tab_home: 'Home', tab_users: 'Users', tab_members: 'Members', tab_servers: 'Servers', tab_monitor: 'Monitor', tab_settings: 'Settings', tab_system: 'Health',
     online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset or manual reset)', extra_gone: 'The top-up for this period ends too.', invited_by: 'Invited by', eff_quota: 'Effective quota', plan: 'plan', history: 'Daily usage', history_sub: 'last 30 days',
-    member_login: 'Member centre login', member_login_tip: 'With a password they can log in to the member centre by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
+    member_login: 'Member center sign-in', member_login_tip: 'With a password this user can sign in to the member center by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
     login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password login', pw_cleared: 'Removed', pw_ph: 'New password (8+ characters)', pw_first: 'Type the new password first (8+ characters), then press "Set / reset password"',
     requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'Leave it empty to approve what was asked. For the current period only: it ends at the next reset day or a manual traffic reset (accounts without a reset day keep it until a manual reset). To raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)', asked: ' (asked for {n} GB)',
     pending: 'pending', approved: 'approved', rejected: 'declined',
-    invites: 'Invite codes', inv_tip: 'Admin codes: any quota and lifetime, nobody is charged. Members can also make codes from their own quota in the member centre.',
+    invites: 'Invite codes', inv_tip: 'Admin codes: any quota and lifetime, nobody is charged. Members can also make codes from their own quota in the member center.',
     inv_make: 'Create code', inv_quota: 'Quota per account (GB, 0 = unlimited)', inv_life: 'Account lifetime (days, 0 = forever)', inv_uses: 'Uses', inv_valid: 'Code valid for (days)', inv_reset: 'Monthly reset day (0 = never)',
     inv_none: 'No invite codes yet.', inv_by: 'By', inv_admin: 'admin', revoke: 'Revoke', copy_code: 'Copy code', copy_link: 'Copy sign-up link',
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', used_by: 'registered',
-    member_centre: 'Member centre', member_url: 'Member centre address (send it to members or with an invite code)', member_enabled: 'Member centre on', member_invites: 'Members may invite friends from their own quota', member_requests: 'Members may ask for more quota', member_notice: 'Notice for members (shown at the top of every member page; empty = none)', save_notice: 'Save notice',
+    member_centre: 'Member center', member_url: 'Member center address (send it to members or with an invite code)', member_enabled: 'Member center on', member_invites: 'Members may invite friends from their own quota', member_requests: 'Members may ask for more quota', member_notice: 'Notice for members (shown at the top of every member page; empty = none)', save_notice: 'Save notice',
     servers: 'Joined servers', servers_tip: 'Only one server? You can ignore this page. With a second one (say Singapore + US): copy the other server\'s join code from its panel, paste it below and press Add server. Every subscription then lists both servers, traffic counts against the same quota, and users are managed here only.',
     join_code: 'Join code of this server', join_tip: 'Only for the other way round, when another server should manage this one: paste this code into that server\'s Servers page. It is a key to this server: keep it private.', reset_key: 'New join code',
     reset_key_tip: 'The old code stops working at once; remove and re-add this server on the main server.', add_server: 'Add server', paste_code: 'Paste the join code of the node', server_name: 'Display name (e.g. "Tokyo")',
@@ -203,7 +203,7 @@ const T = {
     st_state: 'Status', st_ok: 'Normal', st_maint: 'Maintenance', st_cong: 'Congested', st_note: 'Note (optional, up to 100 characters)', st_until: 'Back to normal at (optional)',
     st_this: ' (this server)',
     client_devices: 'Let the app register devices (members see theirs and can remove one; the vps2vpn app only)',
-    dv: 'Devices', dv_tip: 'Only devices running the vps2vpn app (1.0.29 or later) are listed; devices using other apps are not, but they count towards "devices online". "Remove" works on the vps2vpn app only; to stop every app, use "New subscription link" below.',
+    dv: 'Devices', dv_tip: 'Devices that connected with the vps2vpn app (1.0.29 or later) are listed here; devices using other apps are not, but they count as online. "Remove" works on the vps2vpn app only; to cut off every device, use "New subscription link" below.',
     dv_none: 'No devices registered yet.', dv_revoke: 'Remove', dv_unrevoke: 'Restore', dv_revoked: 'removed', dv_seen: 'last seen',
     client_feedback: 'Members may send feedback (the vps2vpn app adds its diagnosis and log; the member page sends text only)',
     fb: 'Feedback', fb_tip: 'What members send with "Feedback" in the vps2vpn app, or write on the member page. Logs and IP addresses are redacted before sending and again before they are stored. Kept 30 days, not in backups.',
@@ -228,7 +228,7 @@ const T = {
     e_timeout: 'timed out', e_reset: 'connection reset', e_dns: 'DNS failed', e_tls: 'TLS failed', e_other: 'failed', events: 'Recent events', no_events: 'Nothing recorded yet.', coverage: 'Coverage', abuse_none: 'No open connections right now.', ok_quiet: 'normal',
     f_all: 'All', f_online: 'Online', f_active: 'Active', f_paused: 'Paused', f_soon: 'Expiring in 7 days', f_low: 'Almost used up',
     s_id: 'Order added', s_name: 'Name', s_used: 'Usage', s_exp: 'Expiry', s_seen: 'Last seen',
-    selected: 'Selected', sel_all: 'Select all', clear_sel: 'Clear', b_reset: 'Reset usage', b_extend: 'Extend', b_addgb: 'Raise quota', b_rotate: 'New links',
+    selected: 'Selected', sel_all: 'Select all', clear_sel: 'Clear', b_reset: 'Reset usage', b_extend: 'Extend', b_addgb: 'Raise quota', b_rotate: 'New subscription links',
     extend_days: 'Days to add (accounts without an expiry are unchanged)', add_gb_q: 'GB to add to each plan for good (every month; unlimited accounts are unchanged)', bulk_done: 'Done:', still_n: '{n} of them are expired or out of quota and were paused again at once: extend or add quota first.', still_expired: 'Expired, so it was paused again at once: move the expiry date first.', still_quota: 'Out of quota, so it was paused again at once: reset its traffic or raise the quota first.',
     confirm_bulk_del: 'Their links stop working immediately. This cannot be undone.', confirm_bulk_rotate: 'Their old links stop working at once; send them the new ones.',
     batch_add: 'Add many', export_csv: 'Export CSV', batch_prefix: 'Name prefix (makes prefix-01, prefix-02 …)', batch_count: 'How many (1–200)', batch_made: 'Created',
@@ -923,9 +923,7 @@ async function openUser(id, first) {
     devBox.replaceChildren(h('div', {class: 'dr-sec'}, h('h4', null, t('dv'), h('span', {class: 'right muted', style: 'font-weight:500'}, String(r.devices.length))),
       h('p', {class: 'muted', style: 'font-size:12.5px;margin:0 0 10px;line-height:1.7'}, t('dv_tip')),
       h('div', {class: 'tl'}, ...(r.devices.length ? r.devices.map(x => { const b = h('button', {class: 'btn sm' + (x.revoked ? '' : ' danger')}, t(x.revoked ? 'dv_unrevoke' : 'dv_revoke')); b.onclick = () => flip(x, b);
-        return h('div', {class: 'tl-row'}, h('b', {style: 'overflow-wrap:anywhere'}, x.name || x.platform),
-          h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, [x.platform, x.version, t('dv_seen') + ' ' + fmt.ago(x.last_seen), x.ip].filter(Boolean).join(' · ')),
-          h('span', {class: 'tl-acts'}, x.revoked ? chip('bad', t('dv_revoked')) : null, b)); }) : [h('div', {class: 'empty', style: 'padding:12px'}, t('dv_none'))]))));
+        return deviceRow(x, t('dv_seen'), [x.revoked ? chip('bad', t('dv_revoked')) : null, b]); }) : [h('div', {class: 'empty', style: 'padding:12px'}, t('dv_none'))]))));
   }).catch(() => {});
   if (!u.remote_id) drawDevices();
   api('users/' + u.id + '/history?days=30').then(r => {
@@ -1008,7 +1006,7 @@ function editUser(u) {
 }
 
 
-/* ---------------- members: requests, invite codes, member centre ---------------- */
+/* ---------------- members: requests, invite codes, member center ---------------- */
 async function drawMembers() {
   const s = S.data.settings, view = $('view'), seq = S.viewSeq;
   view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
@@ -1367,7 +1365,7 @@ async function runDoctor(btn, box) {
   } catch (e) { box.replaceChildren(h('div', {class: 'empty'}, e.message)); }
   btn.disabled = false;
 }
-const AI_KIND = {hosting: ['机房 IP（数据中心）', 'Data-centre IP'], residential: ['家庭宽带 IP', 'Home broadband IP'], mobile: ['手机网络 IP', 'Mobile IP']};
+const AI_KIND = {hosting: ['机房 IP（数据中心）', 'Data-center IP'], residential: ['家庭宽带 IP', 'Home broadband IP'], mobile: ['手机网络 IP', 'Mobile IP']};
 const AI_SITES = [['claude', 'Claude'], ['claude_api', 'Claude API'], ['chatgpt', 'ChatGPT'], ['gemini', 'Gemini']];
 function aiPanel() {
   const seq = S.viewSeq, box = h('div', {class: 'skeleton', style: 'height:120px'}), btn = h('button', {class: 'btn sm'}, icon('pulse'), t('ai_run'));

@@ -170,6 +170,16 @@ class LiveChart{
    const pulse=(Math.sin(t/300)+1)/2;ctx.fillStyle=alpha(col,.18+.12*pulse);ctx.beginPath();ctx.arc(hx,hy,6+3*pulse,0,7);ctx.fill();ctx.fillStyle=col;ctx.beginPath();ctx.arc(hx,hy,3,0,7);ctx.fill();}
   if(this.tip){if(this.hover!=null&&vis.length){const tt=left+(this.hover-pl)/(w-pl-pr)*(right-left);let best=null;for(const p of vis)if(!best||Math.abs(p.t-tt)<Math.abs(best.t-tt))best=p;if(best&&best.t>=left&&best.t<=right){const x=X(best.t);ctx.strokeStyle=alpha(P.text,.35);ctx.beginPath();ctx.moveTo(x+.5,pt);ctx.lineTo(x+.5,h-pb);ctx.stroke();this.tip.textContent=new Date((best.t-(Clock.offset||0))*1000).toLocaleTimeString(KT.locale,{hour12:false})+(KT===KT_ZH?'　':'  ')+'↓ '+fmt.mbps(best.down||0)+'  ↑ '+fmt.mbps(best.up||0)+' Mbps';placeTip(this.tip,x,Math.max(40,Y(best.down||0)),w);}else this.tip.classList.add('hide');}}}}
 
+/* One device row, the same in the member center and the admin panel: the name on the first line (cut with an
+   ellipsis, the full name on hover), the details on the second, status and buttons on the right. Each detail
+   stays on one line ("11月26日 08:06" never splits); the relative time is the hover text of the date. */
+const PLATFORM_NAMES={windows:'Windows',macos:'macOS',android:'Android',ios:'iOS',linux:'Linux'};
+function deviceRow(x,seenLabel,acts){const pf=PLATFORM_NAMES[x.platform]||x.platform,name=x.name||pf;
+ const parts=[[pf],[x.version],[x.last_seen&&seenLabel+' '+fmt.time(x.last_seen),x.last_seen&&fmt.ago(x.last_seen)],[x.ip]].filter(p=>p[0]);
+ // the " ·" stays with the item before it, so a wrapped line never starts with a dot
+ return h('div',{class:'tl-row dv-row'},h('div',{class:'dv-main'},h('b',{class:'dv-name',title:name},name),
+  h('span',{class:'muted dv-meta'},...parts.flatMap(([s,tip],i)=>[h('span',{class:'nw',title:tip||null},s+(i<parts.length-1?' ·':'')),' ']))),
+  h('span',{class:'tl-acts'},...acts));}
 /* history entries from the API -> chart points in Mbps */
 const toPoints=hist=>(hist||[]).map(x=>({t:x.at,down:x.download_bps*8/1e6,up:x.upload_bps*8/1e6}));
 
@@ -188,7 +198,7 @@ class DayBars{
   let hi=-1;if(this.hover!=null)hi=Math.max(0,Math.min(n-1,Math.floor((this.hover-pl)/slot)));
   rows.forEach((r,i)=>{const x=pl+slot*i+(slot-bw)/2,H=h-pt-pb,dh=H*r.download/max*k,uh=H*r.upload/max*k,y0=h-pb;const dim=hi>=0&&hi!==i;
    ctx.globalAlpha=dim?.4:1;ctx.fillStyle=P.down;rr(ctx,x,y0-dh,bw,dh,uh>1?0:3);ctx.fillStyle=P.up;rr(ctx,x,y0-dh-uh,bw,uh,3);ctx.globalAlpha=1;});
-  ctx.fillStyle=P.muted;ctx.font='10.5px '+Palette.mono;ctx.textBaseline='top';const every=Math.ceil(n/(w/52));rows.forEach((r,i)=>{if(i%every&&i!==n-1)return;ctx.textAlign='center';ctx.fillText(r.day.slice(5).replace('-','/'),pl+slot*(i+.5),h-pb+5);});ctx.textAlign='left';
+  ctx.fillStyle=P.muted;ctx.font='10.5px '+Palette.mono;ctx.textBaseline='top';const every=Math.ceil(n/(w/52));rows.forEach((r,i)=>{if(i!==n-1&&(i%every||n-1-i<every))return;ctx.textAlign='center';const lb=r.day.slice(5).replace('-','/'),tw=ctx.measureText(lb).width/2;ctx.fillText(lb,Math.min(w-tw,Math.max(tw,pl+slot*(i+.5))),h-pb+5);});ctx.textAlign='left';
   if(hi>=0){const r=rows[hi];this.tip.textContent=r.day+(KT===KT_ZH?'　':' · ')+KT.total+' '+fmt.bytes(r.upload+r.download)+'\n↓ '+fmt.bytes(r.download)+'  ↑ '+fmt.bytes(r.upload);placeTip(this.tip,pl+slot*(hi+.5),Math.max(44,(h-pb-(h-pt-pb)*(r.upload+r.download)/max)),w);}}}
 function rr(ctx,x,y,w,h,r){if(h<=0)return;r=Math.min(r,h,w/2);ctx.beginPath();ctx.moveTo(x,y+h);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h);ctx.closePath();ctx.fill();}
 
