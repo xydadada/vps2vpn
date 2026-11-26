@@ -48,8 +48,13 @@ def work_dir():
     """Lazily create the temporary work directory on first use (never at import time)."""
     global WORK
     if not WORK or not os.path.isdir(WORK):
-        WORK = tempfile.mkdtemp(prefix='vps2vpn-deploy-')
-        restrict(WORK)
+        candidate = tempfile.mkdtemp(prefix='vps2vpn-deploy-')
+        try:
+            restrict(candidate)
+        except BaseException:
+            shutil.rmtree(candidate, ignore_errors=True)
+            raise
+        WORK = candidate
     return WORK
 
 
@@ -975,7 +980,7 @@ def restrict(path):
         return
     user = os.environ.get('USERNAME', '')
     grant = '%s:(OI)(CI)F' % user if os.path.isdir(path) else '%s:F' % user
-    subprocess.run(['icacls', path, '/inheritance:r', '/grant:r', grant], capture_output=True)
+    subprocess.run(['icacls', path, '/inheritance:r', '/grant:r', grant], capture_output=True, check=True)
 
 
 restrict_key_file = restrict      # old name
