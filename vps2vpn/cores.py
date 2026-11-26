@@ -466,7 +466,8 @@ def apply(s=None, force=False):
                 if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
                     errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
         # after the cores: they now mark exactly the accounts these classes are for
-        shaper.apply(limits(active_users()))
+        if not shaper.apply(limits(active_users())):
+            errors.append('speed limits could not be applied')
         hop = system.port_hopping(s)
         if hop and hop.startswith('failed'):
             # Subscriptions stop listing the hop range; the watchdog tries again every 5 minutes.
