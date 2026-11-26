@@ -269,7 +269,7 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 ### 证书
 
 - 默认自动向 Let's Encrypt 申请免费证书，**没有域名也行**（纯 IP 证书，有效期约 6 天，自动续期）。条件是云防火墙放行了 **TCP 80**。
-- 申请不下来就用自签名证书，代理照样加密能用；但浏览器会提示不安全，**订阅链接会变成 http://**（体检里会说明）。
+- 申请不下来就用自签名证书，代理连接仍然加密；但浏览器会提示不安全，**通用订阅链接会变成 http://，链接和账号凭据可能被读取或篡改**（体检里会说明）。建议放行 TCP 80 并重试申请受信任证书。
 - 放行 80 后立即重试：面板「协议与设置」→「立即申请证书」，或服务器上 `vps2vpn cert`。有域名的话填进「域名」。
 
 ### 流量怎么算
@@ -511,7 +511,7 @@ Health & upkeep → Telegram alerts: create a bot with @BotFather, paste the tok
 ### Troubleshooting
 
 - *Cannot connect*: run the health check (panel or `vps2vpn doctor`), check every port in the cloud firewall (TCP and UDP separately), try the other protocol in the app, use "Use another port" for a blocked port (then open it in the cloud firewall and refresh subscriptions), or set a Hysteria 2 obfuscation password when UDP is blocked.
-- *Certificate*: Let's Encrypt works without a domain (IP certificates, ~6 days, renewed automatically) once TCP 80 is open; retry with `vps2vpn cert`. With the self-signed fallback the browser warns and subscription links use plain HTTP.
+- *Certificate*: Let's Encrypt works without a domain (IP certificates, ~6 days, renewed automatically) once TCP 80 is open; retry with `vps2vpn cert`. With the self-signed fallback the browser warns and generic subscription links use plain HTTP, exposing the links and account credentials to interception or modification. Open TCP 80 and retry obtaining a trusted certificate.
 - *Traffic*: upload + download per user, counted by the proxy cores every 20 s; joined servers report into the same quota. The server's monthly figure is the network card total and is closer to the provider's bill.
 - *AI check*: tests claude.ai, the Claude API, ChatGPT and Gemini from the server (panel, Telegram `/ai`, daily). A hint, not a promise about account bans.
 - *Forgot the admin password*: `vps2vpn reset-password` (as root; `--username` also renames; signs out every session; leaves 2FA on).
