@@ -704,18 +704,23 @@ def unique_name(name, s, skip=None):
 
 
 _NAT64 = ipaddress.ip_network('64:ff9b::/96')
+_NONPUBLIC_V6 = tuple(ipaddress.ip_network(prefix) for prefix in (
+    '64:ff9b:1::/48', '100::/64', '100:0:0:1::/64', '3fff::/20', '5f00::/16',
+))  # IANA non-global allocations are not all known to older supported Python versions.
 
 
 def _public_ip(ip):
     """Globally routable, and not a private IPv4 address carried in IPv6 (mapped, NAT64, 6to4, Teredo), which
     `is_global` alone lets through for NAT64 and 6to4."""
-    if not ip.is_global:
+    if not ip.is_global or ip.is_multicast:
         return False
     if ip.version == 6:
+        if any(ip in network for network in _NONPUBLIC_V6):
+            return False
         inner = ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
         if inner is None and ip in _NAT64:
             inner = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
-        if inner is not None and not inner.is_global:
+        if inner is not None and not _public_ip(inner):
             return False
     return True
 
