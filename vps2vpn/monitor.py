@@ -183,6 +183,7 @@ def run_once(force_speed=False):
         for fam, tag in ((socket.AF_INET, '4'), (socket.AF_INET6, '6')):
             if tag == '6' and not v6:
                 continue
+            results[tid + '/' + tag] = {'ok': False, 'error': 'Timeout: probe deadline exceeded'}
             th = threading.Thread(target=go, args=(tid, host, path, fam, tid + '/' + tag), daemon=True)
             th.start()
             threads.append(th)
