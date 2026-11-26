@@ -814,7 +814,7 @@ function Fill-Result($p, $st) {
   }
   $bad = @($st.Ports | Where-Object { -not $_.ok })
   if ($bad.Count) {
-    $how = if ($rec['cloud_firewall']) { "这台在 $($rec['cloud']) 上。$($rec['cloud_firewall'])" } else { '请到云服务商的网页控制台，找「防火墙 / 安全组」，添加一条规则：协议选「全部/所有」，来源 0.0.0.0/0。' }
+    $how = if ($rec['cloud_firewall']) { "这台在 $($rec['cloud']) 上。$($rec['cloud_firewall'])" } else { '请到云服务商控制台的「防火墙 / 安全组」，仅为这台实例放行列出的 TCP/UDP 端口，来源限定到需要连接的网络。' }
     Add-Label ('有端口被云服务商的防火墙挡住了。' + $how) $y 88 $red $p | Out-Null; $y += 92
     $p.Controls.Add((New-Btn '我已放行，再检查一次' 20 $y 220 {
       $this.Enabled = $false; $this.Text = '正在检查…'; [Windows.Forms.Application]::DoEvents()

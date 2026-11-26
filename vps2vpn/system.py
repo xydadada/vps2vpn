@@ -463,20 +463,18 @@ def dump(obj):
 # Cloud firewalls live in the provider's web console, outside the server, so the installer cannot open them.
 # Name the provider and the exact place, which beats a bare list of port numbers.
 CLOUD_HINTS = {
-    'lightsail': ('AWS Lightsail', 'Lightsail console > your instance > Networking > IPv4 firewall > Add rule > '
-                  'Application "All protocols" > Create. 控制台 > 点实例 > 联网 > IPv4 防火墙 > 添加规则 > '
-                  '应用程序选「所有协议」> 创建。'),
+    'lightsail': ('AWS Lightsail', 'Lightsail console > your instance > Networking > Firewall: add TCP/UDP rules '
+                  'for the listed ports. 控制台 > 点实例 > 联网 > 防火墙：按下列端口添加 TCP/UDP 规则。'),
     'ec2': ('AWS EC2', 'EC2 console > Instances > your instance > Security > the security group > Edit inbound rules > '
-            'Add rule "All traffic", source 0.0.0.0/0 > Save. 实例 > 安全 > 安全组 > 编辑入站规则 > 添加「所有流量」'
-            '来源 0.0.0.0/0 > 保存。'),
-    'oracle': ('Oracle Cloud', 'Instance > Subnet > Security List > Add Ingress Rules: source 0.0.0.0/0, IP protocol "All". '
-               '实例 > 子网 > 安全列表 > 添加入站规则：来源 0.0.0.0/0，协议选「所有协议」。'),
-    'gcp': ('Google Cloud', 'VPC network > Firewall > Create firewall rule: targets "All instances", source 0.0.0.0/0, '
-            '"Allow all". VPC 网络 > 防火墙 > 创建规则：所有实例，来源 0.0.0.0/0，全部允许。'),
-    'azure': ('Azure', 'Virtual machine > Networking > Add inbound port rule: Any port, Any protocol, Allow. '
-              '虚拟机 > 网络 > 添加入站端口规则：任意端口、任意协议、允许。'),
-    'aliyun': ('Alibaba Cloud', '实例 > 安全组 > 配置规则 > 入方向 > 手动添加：协议「全部」，来源 0.0.0.0/0（轻量服务器：防火墙 > 添加规则）。'),
-    'tencent': ('Tencent Cloud', '实例 > 安全组 > 修改规则 > 入站规则 > 添加：来源 0.0.0.0/0，协议端口 ALL（轻量服务器：防火墙 > 添加规则 > 全部）。'),
+            'Add TCP/UDP rules for the listed ports. 实例 > 安全 > 安全组 > 编辑入站规则：按下列端口添加 TCP/UDP 规则。'),
+    'oracle': ('Oracle Cloud', 'Add TCP/UDP ingress rules for the listed ports to the instance network security group. '
+               '在该实例的网络安全组中，按下列端口添加 TCP/UDP 入站规则。'),
+    'gcp': ('Google Cloud', 'VPC network > Firewall: target this instance with a network tag; allow only the listed '
+            'TCP/UDP ports. VPC 网络 > 防火墙：用网络标记限定这台实例，只放行下列 TCP/UDP 端口。'),
+    'azure': ('Azure', 'Virtual machine > Networking > Add inbound port rule: allow the listed TCP/UDP ports. '
+              '虚拟机 > 网络 > 添加入站端口规则：放行下列 TCP/UDP 端口。'),
+    'aliyun': ('Alibaba Cloud', '实例 > 安全组 > 配置规则 > 入方向：按下列端口添加 TCP/UDP 规则（轻量服务器：防火墙 > 添加规则）。'),
+    'tencent': ('Tencent Cloud', '实例 > 安全组 > 修改规则 > 入站规则：按下列端口添加 TCP/UDP 规则（轻量服务器：防火墙 > 添加规则）。'),
 }
 
 
