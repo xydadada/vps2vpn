@@ -823,9 +823,10 @@ def events(kind=None, limit=100):
 
 # --- backup -------------------------------------------------------------------
 def export_all():
-    return {'format': 'vps2vpn-backup-1', 'settings': settings(), 'users': users(),
-            'invites': [dict(r) for r in q('SELECT * FROM invites')],
-            'requests': [dict(r) for r in q('SELECT * FROM requests')]}
+    with transaction():
+        return {'format': 'vps2vpn-backup-1', 'settings': settings(), 'users': users(),
+                'invites': [dict(r) for r in q('SELECT * FROM invites')],
+                'requests': [dict(r) for r in q('SELECT * FROM requests')]}
 
 
 IMPORT_DEFAULTS = {'enabled': 1, 'note': '', 'disabled_reason': '', 'last_reset': '', 'login_hash': '', 'sub_ua': '',
