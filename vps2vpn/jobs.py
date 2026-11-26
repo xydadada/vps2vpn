@@ -859,19 +859,17 @@ class Scheduler:
                 log('traffic collection failed: %s' % e)
             # Expiry and quotas are enforced even when this reading failed.
             changed = enforce()
-        if self.due('traffic', 60):
-            if paths.LIVE and device_limits(s):
-                changed = True
-            health = system.health()
-            server_month(s, health)
-            HISTORY.sample(health)
         if changed:
-            cluster.sync_soon()
-        if changed or (self.apply_owed and time.monotonic() >= self.apply_at):
+            self.apply_owed, self.apply_at = True, 0.0
+        traffic_due = self.due('traffic', 60)
+        if traffic_due and paths.LIVE and device_limits(s):
+            self.apply_owed, self.apply_at = True, 0.0
+        if self.apply_owed and time.monotonic() >= self.apply_at:
             # The database already says who may connect; until the cores have loaded it, an account that was
             # just stopped (quota, expiry) still gets in. A failed apply is tried again with backoff
             # (1, 2, 4 ... 15 min), not only at the next unrelated change, which may never come.
             try:
+                cluster.sync_soon()
                 cores.apply()
                 self.apply_owed, self.apply_wait = False, 0
             except Exception as e:
@@ -879,6 +877,13 @@ class Scheduler:
                 self.apply_wait = min(self.apply_wait * 2 or 60, 900)
                 self.apply_at = time.monotonic() + self.apply_wait
                 log('apply failed, retrying in %d s: %s' % (self.apply_wait, e))
+        # Monthly accounting and chart history can fail independently of the
+        # access policy. Apply committed changes first; keep failed applies
+        # pending even if one of these later chores aborts this tick.
+        if traffic_due:
+            health = system.health()
+            server_month(s, health)
+            HISTORY.sample(health)
         if s['abuse_guard'] and self.due('abuse', 60) and paths.LIVE:
             abuse.check(s, log)
         if s['monitor_enabled'] and paths.LIVE and self.due('monitor', 300):
