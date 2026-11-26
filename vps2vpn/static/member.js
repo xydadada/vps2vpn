@@ -4,6 +4,7 @@
    centre (/<member path>/) with a name and password, where invite codes also create new accounts. */
 const T = {
   zh: {
+    theme: '外观', theme_auto: '跟随系统', theme_light: '浅色', theme_dark: '深色',
     kicker: '会员中心', title: '我的 VPN', login: '登录', register: '用邀请码注册', name: '用户名', password: '密码',
     password_new: '设置密码（至少 8 位）', password2: '再次输入密码', code: '邀请码', have_code: '有邀请码？注册新账号', have_account: '已有账号？登录',
     login_intro: '使用管理员提供的用户名和密码登录。没有密码时，打开管理员发给你的订阅链接也能进入此页。',
@@ -46,6 +47,7 @@ const T = {
     wx: '在微信 / QQ 中无法打开 App。请点击右上角 ···，选择「在浏览器打开」；或点击「复制订阅链接」，再到 App 中导入。'
   },
   en: {
+    theme: 'Appearance', theme_auto: 'System', theme_light: 'Light', theme_dark: 'Dark',
     kicker: 'MEMBER', title: 'My VPN', login: 'Sign in', register: 'Register with an invite code', name: 'Name', password: 'Password',
     password_new: 'Choose a password (8+ characters)', password2: 'Repeat the password', code: 'Invite code', have_code: 'Have an invite code? Create an account', have_account: 'Already have an account? Sign in',
     login_intro: 'Use the name and password the admin gave you. No password? Opening your subscription link shows this page too.',
@@ -186,7 +188,7 @@ async function renderHome() {
     return b;
   })() : null;
   const top = h('header', {class: 'm-top'}, brand(), h('div', {class: 'm-acts'},
-    h('div', {class: 'seg', role: 'group'}, ['auto', 'light', 'dark'].map(v => h('button', {'data-theme-btn': v}, icon(v === 'auto' ? 'auto' : v === 'light' ? 'sun' : 'moon')))),
+    h('div', {class: 'seg', role: 'group', 'aria-label': t('theme')}, ['auto', 'light', 'dark'].map(v => h('button', {'data-theme-btn': v, 'aria-label': t('theme_' + v), title: t('theme_' + v)}, icon(v === 'auto' ? 'auto' : v === 'light' ? 'sun' : 'moon')))),
     logoutBtn));
   const ringBox = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, q != null ? fmt.pct(frac) : '∞'), h('small', null, t('used'))));
   const stat = (k, v) => h('div', null, h('small', null, k), h('b', null, v));
