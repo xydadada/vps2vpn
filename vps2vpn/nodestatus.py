@@ -26,14 +26,11 @@ def _note(text):
 
 def until_of(text):
     """'YYYY-MM-DDTHH:MM' (or with a space) in the owner's time zone -> seconds since the epoch."""
-    m = re.fullmatch(r'\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?\s*', str(text))
+    m = re.fullmatch(r'\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?\s*', str(text))
     if not m:
         raise ValueError('until: expected YYYY-MM-DD HH:MM')
-    y, mo, d, hh, mm = (int(x) for x in m.groups())
-    dt.date(y, mo, d)                                   # ValueError for 2026-02-30
-    if hh > 23 or mm > 59:
-        raise ValueError('until: expected YYYY-MM-DD HH:MM')
-    return clock.midnight(y, mo, d) + hh * 3600 + mm * 60
+    y, mo, d, hh, mm, ss = (int(x or 0) for x in m.groups())
+    return int(dt.datetime(y, mo, d, hh, mm, ss, tzinfo=clock.zone()).timestamp())
 
 
 def clean(d, now=None):
