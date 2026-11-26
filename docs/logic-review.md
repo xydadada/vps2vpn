@@ -24,7 +24,7 @@
 | C-2 | 订阅 | Stash（`?format=clash`） | 规则集是 `.mrs`，类型只有 domain 和 ipcidr | Stash 文档写明支持 MRS（仅 domain / ipcidr）、Hysteria 2 端口跳跃、VLESS vision | — | 不是问题（来源 stash.wiki） |
 | C-3 | 订阅 | 小火箭 | 按 User-Agent 给分享链接；「完整配置」按钮给 `.conf`（节点、分流、DNS）。带混淆的 Hysteria 2 节点和端口跳跃写不进 `.conf`，会跳过 | 同左 | 低 | 不是问题（小火箭格式表达不了，代码里有注释） |
 | C-4 | 订阅 | v2rayN、NekoBox、Happ 这类不认识的 App | 认得出的给分享链接；认不出、请求里又没带 `text/html` 的，也给分享链接 | 同左 | — | 不是问题 |
-| C-5 | 订阅 | sing-box 官方 App、Hiddify、Karing | 给 sing-box 1.12 格式。Hiddify 的内核基于 sing-box 1.13 改版，大概率能读；Karing 用的 sing-box 版本查不到 | 两个 App 都要真机导入一次确认 | 中 | 要修：找台手机导入一次（只能真机测） |
+| C-5 | 订阅 | sing-box 官方 App、Hiddify、Karing | 给 sing-box 1.12 格式。Hiddify 的内核基于 sing-box 1.13 改版，大概率能读；Karing 用的 sing-box 版本查不到 | 两个 App 都能导入、能连（2026-11-25 Test Lab，见第 5 节） | — | 已确认 |
 | C-6 | 订阅 | 面板是自签名证书 | 第三方软件拉 HTTPS 订阅会报证书错，所以自签名时订阅和规则文件走 HTTP；有受信任证书后，HTTP 一律 308 跳到 HTTPS | 同左 | — | 不是问题 |
 | C-7 | 订阅 | 自签名证书下的 Hysteria 2 / TUIC | Clash 配置带证书指纹，sing-box 带证书原文，小火箭带 hpkp。只用分享链接的 App：Hysteria 2 带 `pinSHA256`，TUIC 不输出（链接里写不了证书） | 同左 | 低 | 不是问题（v2rayN 这类 App 在自签名时只看不到 TUIC） |
 | C-8 | 账号状态 | 账号停用、到期、用完 | 第三方软件看到一个写着原因的占位节点，用量头照发；支持 `Announce` 的 App（Hiddify、Happ 等）还会显示一句话 | 同左 | — | 不是问题 |
@@ -89,7 +89,7 @@
 
 ## 5. 以后的版本要做的
 
-- C-5：用真机分别导入一次 Hiddify 和 Karing（sing-box 格式），确认能连。
+- ~~C-5：用真机分别导入一次 Hiddify 和 Karing（sing-box 格式），确认能连。~~ 2026-11-25 在 Firebase Test Lab 测过，两个 App 都能导入、能连（客户端仓库 `testlab-thirdparty` 分支的 `android-thirdparty.yaml`，没合并）：Hiddify v5.9.15 在真机 Galaxy A16 5G（Android 15）上通过，订阅信息（已用量、到期天数）也读出来了，连的是 VLESS + REALITY；Karing v1.2.26.2934 在 ARM 虚拟机 （Android 14）上通过，自动选了 Hysteria 2（真机当天的配额用完了，Karing 在真机上只走到导入成功）。两个 App 都是连上后 https 探测返回 204、出口 IP 变成服务器的。经 Hiddify 的 http（不是 https）探测返回失败，没深究。
 - 入口服务器（链式中转）：设计写在 `docs/phase2-api.md` 第 6 节，不急着做。第 6 节 R-3 有一次实际搭建的数据，可以照着做。
 - 第 6 节里处理一栏写「要做」的条目（R-1、R-2、R-3、R-4、R-5、R-7、R-8、R-9、R-13）。用户说这次**先只写文档、不改代码**。
 
