@@ -426,10 +426,6 @@ class LegendRefuses(unittest.TestCase):
         self.assertEqual(read(p), b'{"users": []}')
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class LegendLines(unittest.TestCase):
     """--lines: the old proxy's Reality key, short id, handshake site and ports carry over, so a client that
     never refreshes its subscription still reaches the new server over Reality."""
@@ -493,3 +489,7 @@ class LegendLines(unittest.TestCase):
                 self.assertEqual((code, merged), (2, None), text)
         code, text, merged = self.run_tool({'nothing': 1})
         self.assertEqual((code, merged), (2, None))
+
+
+if __name__ == '__main__':
+    unittest.main()

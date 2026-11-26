@@ -122,10 +122,6 @@ class MemberPageZeroQuota(unittest.TestCase):
         self.assertNotRegex(js, r'\bq \? ')                                     # no "0 means unlimited" test left
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 from tests import test_member_page as tm          # noqa: E402  (sets VPS2VPN_ROOT / dev mode first)
 from vps2vpn import cluster, db, notify, qr, web  # noqa: E402
 import json                                       # noqa: E402
@@ -259,3 +255,7 @@ class ShaperOffText(unittest.TestCase):
         self.assertNotIn('still slow down instead of stopping, but at full speed', js)
         self.assertIn('流量用完后在这台上会停用，不会降速', js)
         self.assertIn('stops on this server instead', js)
+
+
+if __name__ == '__main__':
+    unittest.main()

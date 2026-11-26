@@ -125,10 +125,6 @@ class NodeSyncHttpErrors(tu.Base):
         self.assertEqual(len([n for n in entries if n['group'] == 'Healthy']), 3)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class OwnerWalkthrough(tu.Base):
     """What the owner runs into when moving, pausing or removing servers (0.2.19)."""
 
@@ -186,3 +182,7 @@ class DomainAndAddress(tu.Base):
         self.assertEqual((out['domain'], out['public_host']), ('', '203.0.113.9'))
         new = web.validate_settings({'domain': 'new.example.org', 'public_host': 'vpn.example.org'}, s)
         self.assertEqual(new['public_host'], 'new.example.org')
+
+
+if __name__ == '__main__':
+    unittest.main()

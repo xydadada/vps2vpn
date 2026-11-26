@@ -2541,10 +2541,6 @@ class AirportFeaturesAudit6(tu.Base):
             self.assertTrue(shaper.apply({5: float('nan'), 6: float('inf'), 7: True}))   # nothing valid to hold
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class AuditFollowUps(tu.Base):
     """Findings from the 2026-11-20 review rounds that the earlier fixes did not cover yet."""
 
@@ -3359,3 +3355,7 @@ class ClientSync(unittest.TestCase):
             f.write('sig\n')
         self._release('1.1.0', {'vps2vpn-1.1.0-windows-amd64-setup.exe': b'newer'})
         self.assertIsNone(self._sync())
+
+
+if __name__ == '__main__':
+    unittest.main()
