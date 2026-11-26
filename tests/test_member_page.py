@@ -261,7 +261,8 @@ class DeviceRowsAndDetails(unittest.TestCase):
     def test_one_device_row(self):
         kit, css = self.read('kit.js'), self.read('style.css')
         self.assertIn('function deviceRow(', kit)
-        self.assertIn("[x.last_seen&&seenLabel+' '+fmt.time(x.last_seen),x.last_seen&&fmt.ago(x.last_seen)]", kit)  # date, age on hover
+        self.assertIn("title:fmt.ago(x.last_seen)},seenLabel+' '+fmt.time(x.last_seen))", kit)   # date, age on hover
+        self.assertIn("[x.name?pf:'',x.version,x.ip]", kit)        # platform · version · IP; no repeat for a nameless one
         self.assertIn("macos:'macOS'", kit)
         for name in ('member.js', 'app.js'):
             js = self.read(name)
@@ -285,6 +286,15 @@ class DeviceRowsAndDetails(unittest.TestCase):
                     "rotate: '更换链接'"):
             self.assertNotIn(old, js, old)
         self.assertIn('「更换订阅链接」', js)
+        zh = js[js.index('  zh: {'):js.index('\n  en: {')]
+        en = js[js.index('\n  en: {'):js.index('\n};', js.index('\n  en: {'))]
+        # the whole admin page: written language, 点击, 更换, 节点 in sentences, "X中…" for states
+        for old in ('线路', '连不上', '搞定', '不懂就别动', '点「', '点按钮', '再点连接', '换一个', '同时在线设备上限',
+                    '正在', '会员页'):
+            self.assertNotIn(old, zh, old)
+        for old in (' tap ', 'one-tap', 'Press ', 'password login', 'member page', 'a line of another'):
+            self.assertNotIn(old, en, old)
+        self.assertNotIn('不支持的线路', self.read('kit.js'))
 
 
 if __name__ == '__main__':

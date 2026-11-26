@@ -2,17 +2,18 @@
 
 ## 0.2.49
 
-Small fixes to the member center and the admin panel's device list after a page-by-page screenshot review. The overall layout and colors are unchanged.
-按逐页截图审阅的结果，修了会员中心和管理面板设备区的细节。整体布局和配色不变。
+Small fixes to the member center and the admin panel after a page-by-page screenshot review. The overall layout and colors are unchanged.
+按逐页截图审阅的结果，修了会员中心和管理面板的细节。整体布局和配色不变。
 
-- Device rows look the same everywhere: the name on the first line (cut short with "…", the full name on hover), the details on the second, status and buttons on the right. Dates and times never split across lines, and the admin panel now shows the same dates as the member center (the "3 d ago" form is the hover text). Platforms are written Windows, macOS, Android, iOS, Linux.
-  设备行在会员中心和管理面板统一成一种排法：第一行是名字（太长时用省略号，悬停显示全名），第二行是信息，状态和按钮在右侧。日期和时间不会被拆到两行；管理面板也改为显示具体日期，「3 天前」改为悬停提示。平台名统一写成 Windows、macOS、Android、iOS、Linux。
-- Removing a device is described as it works: the device disconnects the next time it is online and shows that it was removed, and "Restore" lets it connect again. The device-count line only appears when an address is connected, without "(es)".
-  「移除」的说明改成和实际行为一致：该设备下次联网时断开并提示已被移除，点击「恢复」后可以重新连接。「当前有 N 个网络地址在使用这个账号」只在有连接时显示，英文按单复数写。
+- Device rows look the same everywhere: the name on top (cut short with "…", the full name on hover), then always two lines - platform · version · IP, and "last seen" with the date - with status and buttons on the right. A device without a name is called by its platform, so the platform is not repeated below it. Dates and times never split across lines, and the admin panel now shows the same dates as the member center (the "3 d ago" form is the hover text). Platforms are written Windows, macOS, Android, iOS, Linux.
+  设备行在会员中心和管理面板统一成一种排法：最上面是名字（太长时用省略号，悬停显示全名），下面固定两行——「平台 · 版本 · IP」和「最后在线 + 日期」，状态和按钮在右侧。没有名字的设备用平台名作名字，信息行不再重复平台。日期和时间不会被拆到两行；管理面板也改为显示具体日期，「3 天前」改为悬停提示。平台名统一写成 Windows、macOS、Android、iOS、Linux。
+- Removing a device is described as it works: the device disconnects the next time it is online and shows that it was removed, and "Restore" lets it connect again. The confirmation asks "Remove this device?" and names the device in quotes. The device-count line only appears when an address is connected, without "(es)".
+  「移除」的说明改成和实际行为一致：该设备下次联网时断开并提示已被移除，点击「恢复」后可以重新连接。确认框标题改为「移除这台设备？」，正文写出设备名。「当前有 N 个网络地址在使用这个账号」只在有连接时显示，英文按单复数写。
 - The Shadowrocket button fits on one line (the full-config note moves below the buttons), the usage chart never crowds its last date, the Chinese page header says 会员中心 instead of MEMBER, and the duplicate "status" figure is gone.
   小火箭按钮不再折行（「完整配置」的说明移到按钮下方），用量图最后一个日期不再和前一个挤在一起，中文页头的「MEMBER」改为「会员中心」，首屏重复的「状态」一格删掉了。
-- Admin panel wording follows the same word list: 更换订阅链接, 1.0.29 及以上, 该用户 instead of 他, and member center / sign in in English.
-  管理面板的用词按同一份用词表统一：「更换订阅链接」「1.0.29 及以上」，「他」改为「该用户」，英文统一为 member center / sign in。
+- The whole admin panel follows the same word list as the member center: written rather than spoken language, "click", "sign in", "member center", "node" instead of "line" in sentences, and "New subscription link".
+  管理面板整页按会员中心的用词表统一：书面语、「点击」「更换」、Sign in / member center；句子里的「线路」改为「节点」，「同时在线设备上限」改为「同时在线上限」，「更换订阅链接」「1.0.29 及以上」，「他」改为「该用户」。
+
 
 ## 0.2.48
 

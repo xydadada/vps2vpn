@@ -623,9 +623,9 @@ def _release_leaving(log=print):
                 _leave_next.pop(rec['id'], None)
                 log('removed server %s never answered in %d days; no longer trying' % (rec['name'], LEAVE_DAYS))
                 alerts.append(('server %s was removed %d days ago and never answered: the accounts it got from here '
-                               'may still work there. On its own panel press "New join code". / 子服务器 %s 移除 %d 天了'
-                               '一直连不上，没能通知它删掉账号：从这里同步过去的账号在那边可能还能用。请到那台的面板「多服务器」页'
-                               '点「换一个加入码」。' % (rec['name'], LEAVE_DAYS, rec['name'], LEAVE_DAYS),
+                               'may still work there. On its own panel click "New join code". / 子服务器 %s 已移除 %d 天，'
+                               '一直无法连接，没能通知它删除账号：从这里同步过去的账号在那边可能仍然可用。请到那台服务器面板的'
+                               '「多服务器」页点击「更换加入码」。' % (rec['name'], LEAVE_DAYS, rec['name'], LEAVE_DAYS),
                                'leave-' + rec['id']))
             else:
                 target['error'] = str(err)[:200]

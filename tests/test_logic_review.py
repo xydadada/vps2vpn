@@ -64,7 +64,7 @@ class RemoveTellsTheServer(tu.Base):
         self.assertEqual(db.settings()['servers'], [])
         self.assertEqual([x['id'] for x in db.settings()['servers_leaving']], [SID])     # L-09: it is told later
         self.assertIn("r.released === false", _static('app.js'))
-        self.assertIn('换一个加入码', _static('app.js'))
+        self.assertIn('更换加入码', _static('app.js'))
 
 
 def _quiet(_):
@@ -130,7 +130,7 @@ class LeavingServer(tu.Base):
             self._round(side_effect=cluster.SyncError('timed out'))
         self.assertEqual(db.settings()['servers_leaving'], [])
         self.assertEqual(len(sent), 1)
-        self.assertIn('换一个加入码', sent[0])
+        self.assertIn('更换加入码', sent[0])
 
     def test_stop_waiting(self):
         self.assertTrue(cluster.forget_leaving(SID))
@@ -294,7 +294,7 @@ class OnlyTheVps2vpnApp(unittest.TestCase):
         self.assertIn('仅 vps2vpn 客户端支持', rank[0])
         self.assertIn('vps2vpn app only', rank[1])
         self.assertIn('vps2vpn 客户端报告', js)                           # line trouble comes from our app only
-        self.assertIn('用其他软件的人不会报告', js)
+        self.assertIn('使用其他软件的用户不会报告', js)
         self.assertIn('收不到这个更新', js)                               # the installers folder is ours only
         self.assertNotIn('12 小时内会自动更新', js)                       # the interval is a setting
 

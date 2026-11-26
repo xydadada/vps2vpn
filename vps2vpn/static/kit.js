@@ -72,15 +72,15 @@ const ERR_ZH=[
  [/^name required/,'请填写名字'],[/^password: (\d+) to 128/,(m,a)=>'密码 '+a+'–128 位'],[/^password must be at least 8/,'密码至少 8 位'],
  [/^invite code is wrong, used up or expired/,'邀请码不对、已用完或已过期'],[/^the person who invited you can no longer invite/,'邀请你的人现在不能再邀请了，这个邀请码作废'],
  [/^the inviter's quota has run short/,'邀请人的额度不够了，这个邀请码作废'],[/^no such account/,'账号不存在'],[/^no such user/,'没有这个使用者'],
- [/^no such server/,'没有这台服务器'],[/^unknown line/,'不支持的线路'],[/^already set up/,'已经完成初始化了'],[/^bad setup link/,'设置链接无效或已过期'],
+ [/^no such server/,'没有这台服务器'],[/^unknown line/,'不支持的协议'],[/^already set up/,'已经完成初始化'],[/^bad setup link/,'设置链接无效或已过期'],
  [/^date must look like/,'日期格式不对，请填类似 2026-12-31'],[/^version must look like/,'版本号格式不对，请填类似 1.2.3'],
  [/^download link must start with/,'下载链接必须以 http:// 或 https:// 开头'],[/^masquerade must be/,'伪装地址必须是公开的 https:// 链接'],
- [/^cannot reach api\.telegram\.org/,'连不上 api.telegram.org，请检查服务器网络'],
+ [/^cannot reach api\.telegram\.org/,'无法连接 api.telegram.org，请检查服务器网络'],
  [/^you already have a request waiting/,'你已经有一个申请在等批准了，请等管理员处理'],[/^no pending request/,'这条申请已经处理过了'],
  [/^the account no longer exists/,'这个账号已经不存在'],[/^current password is wrong/,'当前密码不对'],
  [/^wrong (user)?name or password/,'用户名或密码错误'],[/^too many attempts/,'尝试太多次了，请 10 分钟后再试'],
  [/^not a vps2vpn join code/,'这不是 vps2vpn 的加入码'],[/^the join code is damaged/,'加入码不完整，请重新复制'],
- [/^that server is already added/,'这台服务器已经加过了'],[/^cannot reach that server: (.*)$/,(m,a)=>'连不上那台服务器：'+a],
+ [/^that server is already added/,'这台服务器已经添加过了'],[/^cannot reach that server: (.*)$/,(m,a)=>'无法连接那台服务器：'+a],
  [/^this server already belongs to main server "(.*)"/,(m,a)=>'那台服务器已经归主服务器「'+a+'」管理；要换主服务器，先在那台的面板上点「换新加入码」'],
  [/^certificate (changed|does not match)/,'那台服务器的证书变了，请删掉后用新的加入码重新添加'],
  [/^invalid number/,'数字不对'],[/^invalid port|^port must be/,'端口必须是 1–65535'],[/^reset day must be 1-31/,'重置日必须是 1–31（0 = 不重置）'],[/^server reset day must be/,'服务器流量重置日必须是 1–31（小月没有这一天时按月底算）'],[/^unknown time zone/,'时区不认识（例如 UTC+8）'],
@@ -170,15 +170,16 @@ class LiveChart{
    const pulse=(Math.sin(t/300)+1)/2;ctx.fillStyle=alpha(col,.18+.12*pulse);ctx.beginPath();ctx.arc(hx,hy,6+3*pulse,0,7);ctx.fill();ctx.fillStyle=col;ctx.beginPath();ctx.arc(hx,hy,3,0,7);ctx.fill();}
   if(this.tip){if(this.hover!=null&&vis.length){const tt=left+(this.hover-pl)/(w-pl-pr)*(right-left);let best=null;for(const p of vis)if(!best||Math.abs(p.t-tt)<Math.abs(best.t-tt))best=p;if(best&&best.t>=left&&best.t<=right){const x=X(best.t);ctx.strokeStyle=alpha(P.text,.35);ctx.beginPath();ctx.moveTo(x+.5,pt);ctx.lineTo(x+.5,h-pb);ctx.stroke();this.tip.textContent=new Date((best.t-(Clock.offset||0))*1000).toLocaleTimeString(KT.locale,{hour12:false})+(KT===KT_ZH?'　':'  ')+'↓ '+fmt.mbps(best.down||0)+'  ↑ '+fmt.mbps(best.up||0)+' Mbps';placeTip(this.tip,x,Math.max(40,Y(best.down||0)),w);}else this.tip.classList.add('hide');}}}}
 
-/* One device row, the same in the member center and the admin panel: the name on the first line (cut with an
-   ellipsis, the full name on hover), the details on the second, status and buttons on the right. Each detail
-   stays on one line ("11月26日 08:06" never splits); the relative time is the hover text of the date. */
+/* One device row, the same in the member center and the admin panel: the name (cut with an ellipsis, the full
+   name on hover), then two fixed lines - platform · version · IP, and "last seen" with the date (never split; the
+   relative time is its hover text) - with status and buttons on the right. A device without a name is called by
+   its platform, so the platform is not repeated below it. */
 const PLATFORM_NAMES={windows:'Windows',macos:'macOS',android:'Android',ios:'iOS',linux:'Linux'};
 function deviceRow(x,seenLabel,acts){const pf=PLATFORM_NAMES[x.platform]||x.platform,name=x.name||pf;
- const parts=[[pf],[x.version],[x.last_seen&&seenLabel+' '+fmt.time(x.last_seen),x.last_seen&&fmt.ago(x.last_seen)],[x.ip]].filter(p=>p[0]);
- // the " ·" stays with the item before it, so a wrapped line never starts with a dot
+ const info=[x.name?pf:'',x.version,x.ip].filter(Boolean).join(' · ');
  return h('div',{class:'tl-row dv-row'},h('div',{class:'dv-main'},h('b',{class:'dv-name',title:name},name),
-  h('span',{class:'muted dv-meta'},...parts.flatMap(([s,tip],i)=>[h('span',{class:'nw',title:tip||null},s+(i<parts.length-1?' ·':'')),' ']))),
+  info?h('span',{class:'muted dv-meta'},info):null,
+  x.last_seen?h('span',{class:'muted dv-meta nw',title:fmt.ago(x.last_seen)},seenLabel+' '+fmt.time(x.last_seen)):null),
   h('span',{class:'tl-acts'},...acts));}
 /* history entries from the API -> chart points in Mbps */
 const toPoints=hist=>(hist||[]).map(x=>({t:x.at,down:x.download_bps*8/1e6,up:x.upload_bps*8/1e6}));

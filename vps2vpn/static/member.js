@@ -30,7 +30,7 @@ const T = {
     saved: '已保存', member_link: '会员中心网址', link_mode: '这是你的专属页面，链接即凭证，请勿发给他人。', days: '天',
     dv: '我的设备', dv_tip: '这里列出用 vps2vpn 客户端（1.0.29 及以上）连接过的设备；其他软件的设备不在列表中，但计入「同时在线」。「移除」只对 vps2vpn 客户端有效；要让所有设备都无法连接，请使用下方的「更换订阅链接」。',
     dv_none: '暂无设备。用 vps2vpn 客户端连接一次后，设备会显示在这里。', dv_revoke: '移除', dv_unrevoke: '恢复', dv_revoked: '已移除', dv_this: '本机', dv_seen: '最后在线',
-    dv_online: '当前有 {n} 个网络地址在使用这个账号', dv_online_1: '当前有 1 个网络地址在使用这个账号', dv_limit: '（最多 {m} 个）', dv_revoke_q: '移除「{d}」？该设备下次联网时会断开，并提示已被你移除。之后可以随时点击「恢复」让它重新连接。',
+    dv_online: '当前有 {n} 个网络地址在使用这个账号', dv_online_1: '当前有 1 个网络地址在使用这个账号', dv_limit: '（最多 {m} 个）', dv_revoke_t: '移除这台设备？', dv_revoke_q: '移除「{d}」？该设备下次联网时会断开，并提示已被你移除。之后可以随时点击「恢复」让它重新连接。',
     fb: '反馈问题', fb_tip: '无法连接、速度慢、某个网站打不开，都可以在这里告诉管理员。使用 vps2vpn 客户端时，在客户端的「反馈问题」中发送，可以自动附上诊断结果，便于排查。',
     fb_ph: '例如：下午 3 点起 YouTube 无法打开', fb_send: '发送', fb_sent: '已发送，管理员回复后会显示在这里', fb_none: '暂无反馈。',
     fb_open: '待处理', fb_done: '已处理', fb_reply: '管理员回复：', fb_new: '有新回复',
@@ -72,7 +72,7 @@ const T = {
     saved: 'Saved', member_link: 'Member center', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
     dv: 'My devices', dv_tip: 'Devices that connected with the vps2vpn app (1.0.29 or later) are listed here; devices using other apps are not, but they count as online. "Remove" works on the vps2vpn app only; to cut off every device, use "New subscription link" below.',
     dv_none: 'No devices yet. Connect once with the vps2vpn app and it shows up here.', dv_revoke: 'Remove', dv_unrevoke: 'Restore', dv_revoked: 'removed', dv_this: 'this device', dv_seen: 'last seen',
-    dv_online: '{n} IP addresses are using this account now', dv_online_1: '1 IP address is using this account now', dv_limit: ' (limit {m})', dv_revoke_q: 'Remove "{d}"? It disconnects the next time it\'s online and shows that you removed it. You can restore it at any time.',
+    dv_online: '{n} IP addresses are using this account now', dv_online_1: '1 IP address is using this account now', dv_limit: ' (limit {m})', dv_revoke_t: 'Remove this device?', dv_revoke_q: 'Remove “{d}”? It disconnects the next time it\'s online and shows that you removed it. You can restore it at any time.',
     fb: 'Feedback', fb_tip: 'Cannot connect, slow, a site will not open: tell the admin here. In the vps2vpn app, "Feedback" also attaches its diagnosis, which makes the problem easier to find.',
     fb_ph: 'For example: YouTube stopped working at 3 pm', fb_send: 'Send', fb_sent: 'Sent. The admin\'s reply will show here', fb_none: 'Nothing sent yet.',
     fb_open: 'open', fb_done: 'done', fb_reply: 'Reply: ', fb_new: 'new reply',
@@ -294,7 +294,7 @@ function devicesPanel() {
     list.replaceChildren(...(r.devices.length ? r.devices.map(x => {
       const b = h('button', {class: 'btn sm' + (x.revoked ? '' : ' danger')}, t(x.revoked ? 'dv_unrevoke' : 'dv_revoke'));
       b.onclick = async () => {
-        if (!x.revoked && !await confirmBox(t('dv_revoke'), t('dv_revoke_q').replace('{d}', x.name || PLATFORM_NAMES[x.platform] || x.platform), {danger: true, confirm: t('dv_revoke')})) return;
+        if (!x.revoked && !await confirmBox(t('dv_revoke_t'), t('dv_revoke_q').replace('{d}', x.name || PLATFORM_NAMES[x.platform] || x.platform), {danger: true, confirm: t('dv_revoke')})) return;
         b.disabled = true;
         try { await api(`devices/${x.device_id}/${x.revoked ? 'unrevoke' : 'revoke'}`, {}); toast(t('saved')); fill(); } catch (e) { err(e); b.disabled = false; }
       };
