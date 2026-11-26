@@ -400,7 +400,8 @@ def convert_rules(rules, targets=TARGETS):
     if not isinstance(rules, list):
         raise Problem('template.json 里没有 rules 列表')
     lists = {k: [] for k in ORDER}
-    where = {}                                    # domain -> list it went to
+    where = {}                                    # domain -> lists it went to
+    exact, suffix = set(), set()
     rep = {'total': len(rules), 'by_type': {}, 'keyword': 0, 'ip': 0, 'other': 0, 'unknown_target': {},
            'ai': 0, 'exact': 0, 'dead': 0, 'bad': 0, 'shadowed': []}
     for r in rules:
@@ -424,23 +425,25 @@ def convert_rules(rules, targets=TARGETS):
         if not d:
             rep['bad'] += 1
             continue
-        if any(a in where for a in _ancestors(d)):
+        if any(a in suffix for a in _ancestors(d)) or (kind == 'DOMAIN' and d in exact):
             rep['dead'] += 1                      # an earlier rule already decides this name
             continue
+        (exact if kind == 'DOMAIN' else suffix).add(d)
         if to == 'ai' or (to == 'proxy' and any(a in AI_SUFFIX for a in _ancestors(d))):
             rep['ai'] += 1                        # vps2vpn's AI group routes these itself
-            where[d] = 'ai'
             continue
         if kind == 'DOMAIN':
             rep['exact'] += 1                     # vps2vpn lists are suffixes: this now covers subdomains too
-        where[d] = to
-        lists[to].append(d)
+        if to not in where.setdefault(d, set()):
+            lists[to].append(d)
+            where[d].add(to)
     for to in ORDER:
         earlier = ORDER[:ORDER.index(to)]
         for d in lists[to]:
-            for a in _ancestors(d)[1:]:
-                if where.get(a) in earlier:
-                    rep['shadowed'].append((d, to, a, where[a]))
+            for a in _ancestors(d):
+                shadow = next((target for target in earlier if target in where.get(a, ())), None)
+                if shadow:
+                    rep['shadowed'].append((d, to, a, shadow))
                     break
     return lists, rep
 
