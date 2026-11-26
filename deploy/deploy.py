@@ -74,7 +74,8 @@ def record_path(host):
 def load_record(host):
     try:
         with open(record_path(host), encoding='utf-8') as f:
-            return json.load(f)
+            record = json.load(f)
+        return record if isinstance(record, dict) else {}
     except (OSError, ValueError):
         return {}
 
@@ -85,7 +86,7 @@ def load_records():
         try:
             with open(p, encoding='utf-8') as f:
                 d = json.load(f)
-            if d.get('host'):
+            if isinstance(d, dict) and isinstance(d.get('host'), str) and d['host']:
                 out.append(d)
         except (OSError, ValueError):
             pass
