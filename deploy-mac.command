@@ -231,7 +231,7 @@ done < <(read_json "$MERGED" '.checks.filter(function(c){return c[0]=="tcp"}).ma
 [ "$CHECKED" = 1 ] || BAD=1
 if [ "$BAD" = 1 ]; then
   echo "  有端口被云服务商的防火墙挡住了。$(read_json "$MERGED" .cloud_firewall)"
-  echo "  请到云服务商控制台的「防火墙 / 安全组」放行：协议选「全部」，来源 0.0.0.0/0。"
+  echo "  请到云服务商控制台的「防火墙 / 安全组」，仅为这台实例放行上面列出的 TCP/UDP 端口，来源填 0.0.0.0/0（手机等设备会从各种网络连接）。"
   echo "  ⚠️ 还差这一步：放行之前 VPN 连不上。放行后在 VPN 软件里导入下面的订阅链接即可，不用重新部署。"
 else
   echo "  全部通了 ✓"

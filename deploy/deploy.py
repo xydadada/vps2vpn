@@ -691,7 +691,7 @@ function render(s){const r=s.rec||{},box=q('#res');box.hidden=false;box.replaceC
  box.append(el('h3',{text:(r.main?'':'② ')+'防火墙检查（从你这台电脑测试）'}));
  const bad=(s.ports||[]).filter(c=>!c.ok);
  (s.ports||[]).forEach(c=>box.append(el('div',{class:'chk'},el('span',{text:c.name+'  '+c.proto.toUpperCase()+' '+c.port}),el('span',{class:c.ok?'ok':'bad',text:c.ok?'✓ 通了':'✗ 不通'}))));
- if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商的网页控制台，找“防火墙 / 安全组”，添加一条规则：协议选“全部/所有”，来源 0.0.0.0/0。'}),
+ if(bad.length){box.append(el('div',{class:'note'},el('b',{text:'有端口被云服务商的防火墙挡住了。'}),el('div',{text:r.cloud_firewall?('这台在 '+r.cloud+' 上。'+r.cloud_firewall):'请到云服务商控制台的“防火墙 / 安全组”，仅为这台实例放行下列 TCP/UDP 端口，来源填 0.0.0.0/0（手机等设备会从各种网络连接）。'}),
   el('div',{class:'mute',text:'需要放行：'+bad.map(c=>c.proto.toUpperCase()+' '+c.port).join('、')})));
   const rb=el('button',{class:'btn primary',text:'我已放行，再检查一次'});rb.onclick=async()=>{rb.disabled=true;rb.textContent='正在检查…';
    try{const res=await fetch('/recheck?t='+T+'&id='+encodeURIComponent(jobId),{method:'POST'});if(!res.ok)throw new Error('HTTP '+res.status);const x=await res.json();render(x)}
