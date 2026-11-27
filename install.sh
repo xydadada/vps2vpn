@@ -272,7 +272,18 @@ sys.exit(0 if ok == "ok" else "snapshot check failed: " + ok)' "$db" "$dir/vps2v
 set -euo pipefail
 [ "\$(id -u)" = 0 ] || { echo "please run as root: sudo bash \$0" >&2; exit 1; }
 S=\$(cd "\$(dirname "\$0")" && pwd)
-systemctl stop vps2vpn 2>/dev/null || true
+if ! systemctl stop vps2vpn; then
+  echo "cannot stop the panel; restore cancelled without changing files / 面板未能停止，恢复已取消，文件未改动" >&2
+  exit 1
+fi
+STATE=\$(systemctl show --property=ActiveState --value vps2vpn) || {
+  echo "cannot verify the panel stopped; restore cancelled / 无法确认面板已停止，恢复已取消" >&2
+  exit 1
+}
+case "\$STATE" in
+  inactive|failed) ;;
+  *) echo "panel is not stopped; restore cancelled / 面板仍未停止，恢复已取消" >&2; exit 1 ;;
+esac
 if [ -f "\$S/vps2vpn.db" ]; then
   install -m 0600 "\$S/vps2vpn.db" "$VAR/vps2vpn.db.restore"
   rm -f "$VAR/vps2vpn.db-wal" "$VAR/vps2vpn.db-shm"     # never replay the newer journal onto the old database

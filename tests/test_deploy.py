@@ -363,7 +363,8 @@ class Installer(unittest.TestCase):
                 'python3': '#!/bin/sh\nexec "%s" "$@"\n' % _posix(sys.executable),
                 'id': '#!/bin/sh\necho 0\n',
                 'chown': '#!/bin/sh\nexit 0\n',
-                'systemctl': '#!/bin/sh\necho "$*" >> "$FIX/systemctl.log"\n'}
+                'systemctl': '#!/bin/sh\necho "$*" >> "$FIX/systemctl.log"\n'
+                             'if [ "$1" = show ]; then echo inactive; fi\n'}
         for name, body in stub.items():
             with open(os.path.join(self.stubs, name), 'w', encoding='utf-8', newline='\n') as f:
                 f.write(body)
@@ -540,7 +541,49 @@ class Installer(unittest.TestCase):
         with open(os.path.join(app, '__init__.py')) as f:
             self.assertEqual(f.read(), "VERSION = '1.0.0'\n")
         with open(os.path.join(self.fix, 'systemctl.log')) as f:
-            self.assertEqual(f.read().split(), ['stop', 'vps2vpn', 'start', 'vps2vpn'])
+            self.assertEqual(f.read().split(), ['stop', 'vps2vpn', 'show', '--property=ActiveState',
+                                               '--value', 'vps2vpn', 'start', 'vps2vpn'])
+
+    def test_restore_refuses_to_replace_an_open_database_when_stop_fails(self):
+        app = os.path.join(self.root, 'lib', 'app', 'vps2vpn')
+        var = os.path.join(self.root, 'var')
+        os.makedirs(app)
+        os.makedirs(var)
+        code = os.path.join(app, '__init__.py')
+        with open(code, 'w') as f:
+            f.write("VERSION = '1.0.0'\n")
+        dbf = os.path.join(var, 'vps2vpn.db')
+        live = sqlite3.connect(dbf, isolation_level=None)
+        try:
+            live.execute('PRAGMA journal_mode=WAL')
+            live.execute('PRAGMA wal_autocheckpoint=0')
+            live.execute('CREATE TABLE t (v INTEGER)')
+            live.execute('INSERT INTO t VALUES (1)')
+            rc, out = self.sh('snapshot_before_upgrade')
+            self.assertEqual(rc, 0, out)
+            live.execute('UPDATE t SET v=2')
+            with open(code, 'w') as f:
+                f.write("VERSION = '2.0.0'\n")
+            snapshots = os.path.join(var, 'upgrade-snapshots')
+            snapshot = os.listdir(snapshots)[0]
+            for scenario, stub in (
+                    ('stop rejected', 'exit 1\n'),
+                    ('still active', 'if [ "$1" = show ]; then echo active; fi\n'),
+                    ('cannot read state', 'if [ "$1" = show ]; then exit 1; fi\n')):
+                with self.subTest(scenario=scenario):
+                    self.stub('systemctl', stub)
+                    before = {}
+                    for path in (code, dbf, dbf + '-wal', dbf + '-shm'):
+                        with open(path, 'rb') as f:
+                            before[path] = f.read()
+                    rc, out = self.sh('bash "$SNAPS/%s/restore.sh"' % snapshot)
+                    self.assertNotEqual(rc, 0, out)
+                    for path, expected in before.items():
+                        with open(path, 'rb') as f:
+                            self.assertEqual(f.read(), expected, path)
+                    self.assertEqual(live.execute('SELECT v FROM t').fetchall(), [(2,)])
+        finally:
+            live.close()
 
     def stub(self, name, body):
         path = os.path.join(self.stubs, name)
