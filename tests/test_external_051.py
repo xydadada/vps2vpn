@@ -207,5 +207,30 @@ class GivenAway(unittest.TestCase):
         self.assertEqual(members._given_away(1, members.invitee_index(rows), 0, set()), 10.0)
 
 
+class FailedRestartIsOwed(tu.Base):
+    """#141: the new config is on disk, the restart failed, the old process still runs. The next try must restart
+    again instead of seeing "same file, service active" and calling it done."""
+
+    def test_retry_restarts_until_it_works(self):
+        import subprocess
+        from vps2vpn import cores, paths, shaper, system
+        tu.db.set_settings(reality_enabled=True, hy2_enabled=False, tuic_enabled=False)
+        calls = []
+
+        def systemctl(*args):
+            calls.append(args)
+            failed = args[0] == 'restart' and len([c for c in calls if c[0] == 'restart']) == 1
+            return subprocess.CompletedProcess(args, 1 if failed else 0, '', 'job rejected' if failed else '')
+        cores._restart_owed.clear()
+        with mock.patch.object(cores, 'write_configs', side_effect=[[paths.XRAY_CONFIG], [], []]),                 mock.patch.object(cores, '_xray_live_update', return_value=False),                 mock.patch.object(cores, '_save_before_restart'),                 mock.patch.object(system, 'unit_active', return_value=True),                 mock.patch.object(system, 'systemctl', side_effect=systemctl),                 mock.patch.object(system, 'port_hopping', return_value=None),                 mock.patch.object(shaper, 'apply', return_value=True):
+            with self.assertRaisesRegex(RuntimeError, 'did not start'):
+                cores.apply()
+            cores.apply()                                   # same file, service "active": restarts anyway
+            cores.apply()                                   # and once that worked, nothing is owed any more
+        restarts = [c for c in calls if c[0] == 'restart']
+        self.assertEqual(len(restarts), 2, calls)
+        self.assertEqual(cores._restart_owed, set())
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -435,6 +435,9 @@ def _save_before_restart(s, units):
         print('traffic collection before restart failed: %s' % e, flush=True)
 
 
+_restart_owed = set()     # units whose last restart failed; see apply
+
+
 def apply(s=None, force=False):
     """Write configs and restart only what changed. Safe to call any time."""
     with _apply_lock:
@@ -454,6 +457,9 @@ def apply(s=None, force=False):
             restart.append(HY2_UNIT)
         if force or paths.TUIC_CONFIG in changed:
             restart.append(TUIC_UNIT)
+        # A restart that failed while the old process kept running: the file on disk is already the new one, so
+        # the next call sees "no change, service active" and would call it done. Owe it until it works (#141).
+        restart += [u for u in sorted(_restart_owed) if u not in restart and units.get(u)]
         # also when the config did not change but the service is down (protocol switched back on, crash)
         start = [u for u, on in units.items() if on and (u in restart or system.unit_active(u) is False)]
         _save_before_restart(s, start + [u for u, on in units.items() if not on])
@@ -464,7 +470,10 @@ def apply(s=None, force=False):
                 system.systemctl('enable', unit)
                 r = system.systemctl('restart', unit)
                 if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
+                    _restart_owed.add(unit)
                     errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
+                else:
+                    _restart_owed.discard(unit)
         # after the cores: they now mark exactly the accounts these classes are for
         # A host that cannot shape at all (no tc / IFB, a container) is reported by the health check
         # ("limits_unsupported"); retrying would never help there, so only a failure that can pass counts.
