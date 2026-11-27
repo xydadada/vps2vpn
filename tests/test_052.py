@@ -2,11 +2,14 @@
 python -m unittest tests.test_052 -v
 
 - #126 a settings save whose certificate cannot be written keeps the old address (no half-saved state)
+- #157 the Windows and Mac deployers stop a remote install that runs past its deadline
 - #120 an upgrade whose `systemctl enable` / `restart` fails (or whose `journalctl` fails) puts the previous
   version back instead of stopping half way
 """
+import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +19,9 @@ from unittest import mock
 from tests import test_unit as tu
 from tests.test_deploy import INSTALL_SH, TEST_BASH, _posix
 from vps2vpn import certs, db, paths, secure, system
+
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class _Web(tu.Web):
@@ -130,6 +136,85 @@ class FailedActivationRollsBack(unittest.TestCase):
         out, live = self.run_install('exit 0\n')
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertEqual(live, 'new')
+
+
+MAC_HARNESS = r'''%s
+STALL="$TMPD/stalled"
+start=$SECONDS
+out=$(printf 'hello\n' | run_with_deadline 2 sh -c 'cat; exec sleep 30' | cat)
+rc=$?
+echo "slow|$out|$([ -f "$STALL" ] && echo stalled)|$((SECONDS - start))"
+rm -f "$STALL"
+start=$SECONDS
+out=$(printf 'hi\n' | run_with_deadline 30 sh -c 'cat' | cat)
+echo "fast|$out|$([ -f "$STALL" ] && echo stalled)|$((SECONDS - start))"
+'''
+
+PS_DEADLINE_HARNESS = r'''param([string]$Ps1)
+$ErrorActionPreference = 'Stop'
+$errs = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Ps1, [ref]$null, [ref]$errs)
+if ($errs.Count) { throw "deploy.ps1 does not parse: $($errs[0].Message)" }
+foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+  if ($f.Name -in @('Test-Stalled', 'Get-StalledMsg')) { . ([scriptblock]::Create($f.Extent.Text)) }
+}
+function New-Job([int]$ago) {
+  $p = Start-Process -FilePath ping.exe -ArgumentList '-n 60 127.0.0.1' -WindowStyle Hidden -PassThru
+  @{ Proc = $p; Started = [DateTime]::UtcNow.AddSeconds(-$ago) }
+}
+$old = New-Job 100
+$late = Test-Stalled $old 50
+$null = $old.Proc.WaitForExit(10000)
+$new = New-Job 0
+$early = Test-Stalled $new 50
+$alive = -not $new.Proc.HasExited
+$new.Proc.Kill()
+$msg = Get-StalledMsg 1800
+[Console]::Out.WriteLine("$late|$($old.Proc.HasExited)|$early|$alive|" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($msg)))
+'''
+
+
+class DeployersHaveAnInstallDeadline(unittest.TestCase):
+    """#157: the Python deployer got its deadline in 0.2.51; the Windows and Mac ones now stop too."""
+
+    @unittest.skipUnless(TEST_BASH, 'needs bash (on Windows set V2V_TEST_BASH to Git bash)')
+    def test_mac_deployer(self):
+        with open(os.path.join(ROOT, 'deploy-mac.command'), encoding='utf-8') as f:
+            body = f.read()
+        fn = re.search(r'(?ms)^run_with_deadline\(\) \{.*?^\}$', body).group(0)
+        self.assertIn('run_with_deadline "$DEADLINE" ssh', body)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        p = subprocess.run([TEST_BASH, '-c', MAC_HARNESS % fn], env=dict(os.environ, TMPD=_posix(tmp)),
+                           capture_output=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        slow, fast = p.stdout.decode('utf-8').splitlines()
+        name, out, stalled, secs = slow.split('|')
+        self.assertEqual((out, stalled), ('hello', 'stalled'))       # stdin reached the command, then it was stopped
+        self.assertLess(int(secs), 15)
+        name, out, stalled, secs = fast.split('|')
+        self.assertEqual((out, stalled), ('hi', ''))
+        self.assertLess(int(secs), 4)                              # the watcher does not hold the pipe open
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('powershell'), 'needs Windows PowerShell')
+    def test_windows_deployer(self):
+        with open(os.path.join(ROOT, 'deploy', 'deploy.ps1'), encoding='utf-8-sig') as f:
+            body = f.read()
+        self.assertIn("if ($script:stage -eq 'install' -and (Test-Stalled $j $InstallDeadline))", body)
+        self.assertIn('if (Test-Stalled $j $InstallDeadline) { Remove-Secrets; throw', body)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        harness = os.path.join(tmp, 'harness.ps1')
+        with open(harness, 'w', encoding='utf-8-sig') as f:
+            f.write(PS_DEADLINE_HARNESS)
+        p = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', harness,
+                            '-Ps1', os.path.join(ROOT, 'deploy', 'deploy.ps1')], capture_output=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        late, killed, early, alive, msg = p.stdout.decode('ascii').strip().splitlines()[-1].split('|')
+        self.assertEqual((late, killed, early, alive), ('True', 'True', 'False', 'True'))
+        msg = base64.b64decode(msg).decode('utf-8')
+        self.assertIn('30 分钟', msg)
+        self.assertIn('vps2vpn info', msg)
 
 
 if __name__ == '__main__':

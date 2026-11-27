@@ -22,6 +22,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
+# the whole remote install (upload, packages, cores); it normally takes 1-3 minutes, a slow VPS ten (#157)
+$InstallDeadline = 30 * 60
+if ("$env:V2V_INSTALL_DEADLINE" -match '^\d{1,6}$' -and [int]$env:V2V_INSTALL_DEADLINE -gt 0) { $InstallDeadline = [int]$env:V2V_INSTALL_DEADLINE }
 function Restrict-Path([string]$p) {
   # only this Windows account may read it (ssh refuses keys others can read; logins stay private)
   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -283,7 +286,20 @@ function Start-Ssh([string[]]$sshArgs, [string]$remote, [string]$stdinFile) {
   $p = Start-Process -FilePath $SshExe -ArgumentList $argLine -RedirectStandardInput $stdinFile `
     -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden -PassThru
   $null = $p.Handle      # keep the handle, or ExitCode reads as empty once the process has finished
-  return @{ Proc = $p; Out = $out; Err = $err; Pos = 0; ErrPos = 0; Text = ''; Pending = '' }
+  return @{ Proc = $p; Out = $out; Err = $err; Pos = 0; ErrPos = 0; Text = ''; Pending = ''; Started = [DateTime]::UtcNow }
+}
+
+function Test-Stalled($job, [int]$limit) {
+  # SSH keepalives only notice a dead link. A server that still answers while the installer hangs (a stuck
+  # package manager) would keep the install running forever, so it has a deadline (#157): stop the local ssh.
+  if ($job.Proc.HasExited) { return $false }
+  if (([DateTime]::UtcNow - $job.Started).TotalSeconds -lt $limit) { return $false }
+  try { $job.Proc.Kill() } catch {}
+  return $true
+}
+
+function Get-StalledMsg([int]$limit) {
+  "安装超过 $([int][Math]::Ceiling($limit / 60)) 分钟还没有结束，已断开本机的连接。服务器上的安装可能还在进行：请等几分钟，再登录服务器运行  vps2vpn info  查看结果；不要马上重新部署。"
 }
 
 function Read-New($job) {
@@ -629,6 +645,7 @@ if ($Headless) {
     Write-Output $j.Text.Trim()
     $j = Start-Ssh $a (& $InstallCmd) (New-Payload)
     while (-not $j.Proc.HasExited) {
+      if (Test-Stalled $j $InstallDeadline) { Remove-Secrets; throw (Get-StalledMsg $InstallDeadline) }
       Start-Sleep -Milliseconds 300; $x = Read-New $j; $j.Text += $x
       $show = Get-ShowLines $j $x $false; if ($show) { Write-Host -NoNewline $show }
     }
@@ -883,6 +900,7 @@ $timer.Add_Tick({
     $j.Text += $t
     if ($script:stage -eq 'install') { $show = Get-ShowLines $j $t $false; if ($show) { Say $show } }
   }
+  if ($script:stage -eq 'install' -and (Test-Stalled $j $InstallDeadline)) { Finish $false (Get-StalledMsg $InstallDeadline); return }
   if (-not $j.Proc.HasExited) { return }
   $t = Read-New $j; $j.Text += $t
   if ($script:stage -eq 'probe') {

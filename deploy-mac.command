@@ -13,6 +13,20 @@ if command -v python3 >/dev/null 2>&1 && { [ "$(uname)" != Darwin ] || xcode-sel
 fi
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+# Runs a command (stdin kept) and stops it after $1 seconds, leaving the file "$STALL" when it did (#157).
+# SSH keepalives only notice a dead link: a server that still answers while its installer hangs (a stuck
+# package manager) would otherwise keep the deploy waiting forever.
+run_with_deadline() {
+  local limit=$1 cp n=0; shift
+  "$@" <&0 &
+  cp=$!
+  ( while kill -0 "$cp" 2>/dev/null; do
+      sleep 1; n=$((n + 1))
+      if [ "$n" -ge "$limit" ]; then : > "$STALL"; kill "$cp" 2>/dev/null; break; fi
+    done ) >/dev/null 2>&1 &
+  wait "$cp"
+}
 safe_url() {
   local u="$1" re="$2"
   [ -n "$u" ] || return 1
@@ -158,9 +172,19 @@ say "打包并上传，然后在服务器上安装（1-3 分钟）/ uploading an
 tar -czf "$WORK/v.tgz" --exclude=__pycache__ --exclude='*.pyc' install.sh vps2vpn || exit 1
 base64 < "$WORK/v.tgz" | tr -d '\n' > "$WORK/v.b64"; echo >> "$WORK/v.b64"
 REMOTE='set -e; T=$(mktemp -d); trap '\''rm -rf "$T"'\'' EXIT; base64 -d > "$T/v.tgz"; tar -xzf "$T/v.tgz" -C "$T"; '"$RUNAS"'V2V_AUTO=1 V2V_SRC="$T/v.tgz" bash "$T/install.sh" install'
+# the whole remote install normally takes 1-3 minutes, a slow VPS ten
+DEADLINE=${V2V_INSTALL_DEADLINE:-1800}
+case "$DEADLINE" in ''|*[!0-9]*|0) DEADLINE=1800 ;; esac
+STALL="$WORK/stalled"
 # the result line holds the new admin password: keep it out of the window
-ssh "${OPTS[@]}" -- "$LUSER@$HOST" "$REMOTE" < "$WORK/v.b64" | tee "$WORK/log" | grep -v '^V2V_RESULT:'
+run_with_deadline "$DEADLINE" ssh "${OPTS[@]}" -- "$LUSER@$HOST" "$REMOTE" < "$WORK/v.b64" | tee "$WORK/log" | grep -v '^V2V_RESULT:'
 rc=${PIPESTATUS[0]}
+if [ -f "$STALL" ]; then
+  rm -f "$WORK/log"
+  say "安装超过 $(( (DEADLINE + 59) / 60 )) 分钟还没有结束，已断开本机的连接。服务器上的安装可能还在进行：请等几分钟，再登录服务器运行  vps2vpn info  查看结果；不要马上重新部署。"
+  echo "The install took longer than $(( (DEADLINE + 59) / 60 )) minutes, so this computer disconnected. It may still be running on the server: wait a few minutes, then log in and run  vps2vpn info ; do not deploy again right away."
+  exit 1
+fi
 B64=$(grep '^V2V_RESULT:' "$WORK/log" | tail -1 | cut -d: -f2 | tr -d '\r\n ')
 # cloud images (AWS and others) answer root logins with: Please login as the user "ubuntu" rather than ...
 WANT=$(grep -o 'login as the user "[a-z_][a-z0-9_.-]*"' "$WORK/log" | head -1 | cut -d'"' -f2)
