@@ -289,6 +289,20 @@ class ControlledHTTP(unittest.TestCase):
 
 
 class ComparisonCLI(unittest.TestCase):
+    def test_core_readiness_timeout_does_not_depend_on_wall_clock(self):
+        elapsed = [0.0]
+
+        def advance(seconds):
+            elapsed[0] += seconds
+
+        with mock.patch.object(bench_tool.time, 'time', side_effect=AssertionError('wall clock must not set deadlines')), \
+                mock.patch.object(bench_tool.time, 'monotonic', side_effect=lambda: 100 + elapsed[0]), \
+                mock.patch.object(bench_tool.time, 'sleep', side_effect=advance), \
+                mock.patch.object(bench_tool.socket, 'create_connection', side_effect=OSError('not ready')) as connect:
+            self.assertFalse(bench_tool.wait_port(18080, timeout=0.5))
+        self.assertEqual(connect.call_count, 3)
+        self.assertAlmostEqual(elapsed[0], 0.6)
+
     def test_missing_origin_or_unused_options_fail_before_core_launch(self):
         for arguments in (['--compare'], ['--rounds', '3'], ['--compare', '--origin', 'https://REDACTED@example.com']):
             output = io.StringIO()

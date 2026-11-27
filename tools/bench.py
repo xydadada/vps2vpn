@@ -107,8 +107,8 @@ def fetch_proxies(url, insecure=False, ca_file=None):
 
 
 def wait_port(port, timeout=15):
-    end = time.time() + timeout
-    while time.time() < end:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
         try:
             socket.create_connection(('127.0.0.1', port), timeout=1).close()
             return True
