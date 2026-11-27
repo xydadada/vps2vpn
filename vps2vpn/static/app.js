@@ -1289,6 +1289,9 @@ function drawSettings() {
   const cb = k => bind(k, h('input', {type: 'checkbox', checked: !!s[k]}));
   const inp = (k, type) => bind(k, h('input', {type: type || 'text', value: s[k] == null ? '' : s[k]}));
   const sel = (k, opts) => { const e = bind(k, h('select', null, opts.map(([v, n]) => h('option', {value: v}, n)))); e.value = s[k]; return e; };
+  const timeZones = [['', t('tz_server')], ['UTC+8', 'UTC+8 · 北京 / 新加坡 / 台北'], ['UTC+9', 'UTC+9 · 东京 / 首尔'],
+    ['UTC+7', 'UTC+7 · 曼谷'], ['UTC', 'UTC'], ['UTC-5', 'UTC-5'], ['UTC-8', 'UTC-8']];
+  if (s.time_zone && !timeZones.some(([value]) => value === s.time_zone)) timeZones.push([s.time_zone, s.time_zone]);
   const pickRes = h('div', {class: 'muted', style: 'font-size:12px'});
   const target = inp('reality_target');
   const pick = h('button', {class: 'btn sm', type: 'button'}, icon('bolt'), t('test_targets'));
@@ -1323,9 +1326,7 @@ function drawSettings() {
     h('div', {class: 'grid g-2'},
       panel(t('s_basic'), null, null, h('div', {class: 'stack'},
         field(t('lang'), sel('language', [['zh', '中文'], ['en', 'English']])),
-        field(t('time_zone'), sel('time_zone', [['', t('tz_server')], ['UTC+8', 'UTC+8 · 北京 / 新加坡 / 台北'], ['UTC+9', 'UTC+9 · 东京 / 首尔'],
-          ['UTC+7', 'UTC+7 · 曼谷'], ['UTC', 'UTC'], ['UTC-5', 'UTC-5'], ['UTC-8', 'UTC-8']].concat(
-          s.time_zone && !/^(UTC([+-](5|7|8|9))?)$/.test(s.time_zone) ? [[s.time_zone, s.time_zone]] : []))), field(t('node_name'), inp('node_name')), field(t('server_addr'), inp('public_host')),
+        field(t('time_zone'), sel('time_zone', timeZones)), field(t('node_name'), inp('node_name')), field(t('server_addr'), inp('public_host')),
         field(t('support_url'), inp('support_url', 'url')), field(t('sub_update_hours'), inp('sub_update_hours', 'number')),
         check(t('tune'), cb('tune_network')), s.public_ipv6 ? check(t('ipv6_nodes') + ' · ' + s.public_ipv6, cb('ipv6_nodes')) : null,
         check(t('ip_limit_pause'), cb('ip_limit_pause')))),
