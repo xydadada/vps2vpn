@@ -2,9 +2,9 @@
 section 3). This server's own is the setting `node_status`; a joined server's is `status` in its `servers` entry.
 Both look like {"state": "maintenance", "note": "...", "until": 1795012200}; until 0 = until changed by hand.
 
-Sent to our app in api/me (`nodes`) when the owner turns on `client_node_status`. The subscription files never
-change because of it (third-party apps keep their node list); a server in maintenance is named in the
-subscription's Announce header and on the member page."""
+Sent to our app in api/me (`nodes`) when the owner turns on `client_node_status`. Subscriptions exclude a server
+in maintenance from automatic groups while retaining manual choices and node names. Its maintenance note also
+appears in the subscription's Announce header and on the member page."""
 import datetime as dt
 import re
 import time
