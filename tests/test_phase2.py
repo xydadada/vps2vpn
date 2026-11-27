@@ -756,10 +756,6 @@ class ConfigVersion(tu.Base):
         self.assertIn("'config_version': subscription.config_version(s, u, base)", src)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class AsTheMemberSeesIt(OverHttps):
     """0.2.46 review of the phase 2 API from the member's side: a paused or expired account, a new link (every
     old address stops at once), and the limits a normal app meets."""
@@ -982,3 +978,6 @@ class KickRetryOverHttps(OverHttps):
         self.assertEqual(len({d['sub_url'] for _, d in results}), 1)
         self.assertEqual(len(devices._kicks[self.uid]), 1)
 
+
+if __name__ == '__main__':
+    unittest.main()
