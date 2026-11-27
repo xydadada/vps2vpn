@@ -1725,6 +1725,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return 'v2vm=%s; Path=/%s/; Max-Age=%d; HttpOnly; Secure; SameSite=Strict' % (
             tok, db.settings()['member_path'], max_age)
 
+    def _member_auth_current(self, u, by_link):
+        """Recheck the request's authority inside the credential-changing database transaction."""
+        current = db.user(u['id'])
+        return (current is not None
+                and all(current[k] == u[k] for k in ('name', 'login_hash', 'sub_token', 'uuid'))
+                and (by_link or db.member_session(self.cookie('v2vm')) == u['id']))
+
     def member_area(self, method, sub, s, u, base):
         """Shared by the link page (/s/<token>/, `u` from the token) and the member centre (`u` from the login)."""
         by_link = base.startswith('/s/')
@@ -1822,19 +1829,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.json({'error': 'current password is wrong'}, 403)
                 else:
                     self._release_attempt()
-            fresh = {}
-
-            def set_pw():
-                db.update_user(u['id'], login_hash=secure.hash_password(members.check_password(d.get('new'))))
-                # Every session ends, this one included: a stolen copy of this very cookie must stop working.
-                # The member who changed it from the member centre goes on with a new session.
-                db.end_member_session(None, u['id'])
-                if not by_link:
-                    fresh['Set-Cookie'] = self.member_cookie(db.new_member_session(u['id']))
             try:
-                set_pw()
+                new_hash = secure.hash_password(members.check_password(d.get('new')))
             except members.Refused as e:
                 return self.json({'error': str(e)}, 400)
+            fresh = {}
+            with db.transaction():
+                stale = not self._member_auth_current(u, by_link)
+                if not stale:
+                    db.update_user(u['id'], login_hash=new_hash)
+                    db.end_member_session(None, u['id'])
+                    if not by_link:
+                        fresh['Set-Cookie'] = self.member_cookie(db.new_member_session(u['id']))
+            if stale:
+                return self.json({'error': 'account credentials changed; retry'}, 409)
             return self.json({'ok': True}, headers=fresh or None)
         if api == 'request' and s['member_requests']:
             def ask():
@@ -1853,14 +1861,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.refused(make)
         if api == 'rotate':
             # New link and credentials (the old link stops working at once), e.g. after it leaked.
-            db.rotate_user(u['id'])
-            devices.forget_others(u['id'], self.headers.get('X-V2V-Device', '').strip().lower())
+            with db.transaction():
+                stale = not self._member_auth_current(u, by_link)
+                if not stale:
+                    db.rotate_user(u['id'])
+                    devices.forget_others(u['id'], self.headers.get('X-V2V-Device', '').strip().lower())
+                    nu = db.user(u['id'])
+                    headers = None if by_link else {'Set-Cookie': self.member_cookie(db.new_member_session(u['id']))}
+            if stale:
+                return self.json({'error': 'account credentials changed; retry'}, 409)
             apply_async()
-            nu = db.user(u['id'])
             jobs.log('%s changed their own subscription link' % nu['name'])
-            # Rotation ends every member session (a leaked link may have opened one). The member who
-            # rotated from the member centre keeps going with a fresh session instead of being logged out.
-            headers = None if by_link else {'Set-Cookie': self.member_cookie(db.new_member_session(u['id']))}
             return self.json({'ok': True, 'sub_url': '%s/s/%s' % (self.base_url(s), nu['sub_token']),
                               'base': '/s/%s/' % nu['sub_token'] if by_link else ''}, headers=headers)
         if api == 'report':
@@ -1981,22 +1992,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.json({'error': str(e), 'code': 'bad_request'}, 400)
             old = u['sub_token']
             with devices.kick_lock:
-                if db.user(u['id'])['sub_token'] != old:
-                    # another kick ended this link while this one waited: a retry of it, or nothing
-                    return self.kick_retry(s, old, rid) if by_link else self.not_found()
-                wait = devices.kick_allowed(u['id'])
+                with db.transaction():
+                    stale = not self._member_auth_current(u, by_link)
+                    wait = 0 if stale else devices.kick_allowed(u['id'])
+                    if not stale and not wait:
+                        keep = this or str(d.get('device_id') or '').strip().lower()
+                        db.rotate_user(u['id'])
+                        nu = db.user(u['id'])
+                        devices.forget_others(u['id'], keep)
+                        headers = None if by_link else {'Set-Cookie': self.member_cookie(db.new_member_session(u['id']))}
+                if stale:
+                    return self.kick_retry(s, old, rid) if by_link else self.json(
+                        {'error': 'account credentials changed; retry'}, 409)
                 if wait:
                     return self.json({'error': 'too many new links, wait an hour', 'code': 'rate_limited'}, 429,
                                      headers={'Retry-After': str(wait)})
-                keep = this or str(d.get('device_id') or '').strip().lower()
-                db.rotate_user(u['id'])
-                nu = db.user(u['id'])
                 if by_link:
                     devices.remember_kick(old, rid, u['id'], nu['sub_token'])
-            devices.forget_others(u['id'], keep)
             apply_async()
             jobs.log('%s changed their own subscription link (kick other devices)' % nu['name'])
-            headers = None if by_link else {'Set-Cookie': self.member_cookie(db.new_member_session(u['id']))}
             return self.json({'ok': True, 'sub_url': '%s/s/%s' % (self.base_url(s), nu['sub_token']),
                               'base': '/s/%s/' % nu['sub_token'] if by_link else ''}, headers=headers)
         m = re.fullmatch(r'devices/([0-9a-f-]{36})/(revoke|unrevoke)', api)
