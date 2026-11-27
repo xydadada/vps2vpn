@@ -137,6 +137,18 @@ class FailedActivationRollsBack(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertEqual(live, 'new')
 
+    def test_rejected_restart_with_an_active_old_process_rolls_back(self):
+        out, live = self.run_install('case "$1" in restart) exit 1 ;; esac\nexit 0\n')
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn('previous version was restored', out.stdout + out.stderr)
+        self.assertEqual(live, 'old')
+
+    def test_failed_enable_with_an_active_process_rolls_back(self):
+        out, live = self.run_install('case "$1" in enable) exit 1 ;; esac\nexit 0\n')
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn('previous version was restored', out.stdout + out.stderr)
+        self.assertEqual(live, 'old')
+
 
 MAC_HARNESS = r'''%s
 STALL="$TMPD/stalled"
