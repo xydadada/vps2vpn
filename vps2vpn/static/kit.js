@@ -128,6 +128,7 @@ const ERR_ZH=[
  [/^server address must be a public IP or domain/,'服务器地址必须是公网 IP 或域名'],
  [/^remote UUID conflicts with a local account/,'子服务器上有账号和主服务器的账号冲突'],
  [/^(node sync requires a complete user list|node sync has too many users|invalid main-server identity|malformed node sync user|duplicate or invalid remote|invalid remote )/,'主服务器发来的数据格式不对，可能两边版本不一致：请把两台都升级到最新版'],
+ [/^certificate for the new address could not be written/,'新地址的证书写入失败，设置没有保存，请看日志'],
  [/^internal error/,'服务器内部出错，请看日志'],[/^unknown endpoint/,'这个功能不可用（可能被管理员关掉了）'],[/^login required/,'请先登录']];
 function errText(m){if(typeof KT==='undefined'||KT!==KT_ZH||!m)return m;for(const [re,f] of ERR_ZH){const x=String(m).match(re);if(x)return typeof f==='string'?f:f(...x);}return m;}
 // a long server message: two lines with an ellipsis; a click (or Enter) shows all of it and, when it was

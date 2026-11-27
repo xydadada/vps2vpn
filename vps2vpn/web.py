@@ -1364,10 +1364,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         changes = validate_settings(self.body_json(), s)
         if isinstance(changes, str):
             return self.json({'error': changes}, 400)
+        before = {k: s.get(k) for k in changes}
         db.set_settings(**changes)
         s2 = db.settings()
         if 'public_host' in changes or 'domain' in changes:
-            certs.ensure_self_signed(s2['domain'] or s2['public_host'] or 'vps2vpn.local')
+            try:
+                certs.ensure_self_signed(s2['domain'] or s2['public_host'] or 'vps2vpn.local')
+            except Exception as e:
+                # #126: the new address must not stay saved without its certificate. Put the old values back
+                # and make sure the certificate matches them again (a half-written pair is replaced).
+                db.set_settings(**before)
+                try:
+                    certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
+                except Exception:
+                    pass
+                jobs.log('settings not saved: certificate for the new address failed: %s' % e)
+                return self.json({'error': 'certificate for the new address could not be written: %s' % e}, 500)
         if 'tune_network' in changes:
             system.tune_network(s2['tune_network'])
         system.open_firewall(s2)
