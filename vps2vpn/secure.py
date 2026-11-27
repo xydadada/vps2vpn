@@ -2,11 +2,77 @@
 import base64
 import hashlib
 import hmac
+import json
+import math
 import os
 import secrets
 import uuid
 
 PBKDF2_ROUNDS = 240_000
+JSON_MAX_DEPTH = 64          # the deepest real body (cluster sync, settings) is under 10 levels
+JSON_MAX_INT_DIGITS = 4300   # Python 3.11's own limit; 3.8 would convert a 4 MB number in quadratic time
+
+
+class BadJson(ValueError):
+    """`kind` is 'unicode' for a lone surrogate (valid JSON, not text), else 'json'."""
+    def __init__(self, why, kind='json'):
+        super().__init__(why)
+        self.kind = kind
+
+
+def _json_object(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:     # {"a": 1, "a": 2}: two readers of one request could disagree on what it says
+            raise BadJson('duplicate key')
+        out[k] = v
+    return out
+
+
+def _json_float(text):
+    v = float(text)
+    if not math.isfinite(v):        # 1e999 becomes inf without ever reaching parse_constant
+        raise BadJson('number out of range')
+    return v
+
+
+def _json_int(text):
+    if len(text.lstrip('-')) > JSON_MAX_INT_DIGITS:
+        raise BadJson('number out of range')
+    return int(text)
+
+
+def _json_constant(name):
+    raise BadJson('NaN and Infinity are not JSON')
+
+
+def loads_json(data, max_depth=JSON_MAX_DEPTH):
+    """json.loads for data from the network: no duplicate keys, NaN / Infinity / overflowing numbers, nesting past
+    `max_depth` (very deep input would otherwise end in RecursionError, not ValueError), or lone surrogates.
+    Every refusal is a BadJson, which is a ValueError, so existing `except ValueError` handlers keep working."""
+    try:
+        obj = json.loads(data, object_pairs_hook=_json_object, parse_float=_json_float, parse_int=_json_int,
+                         parse_constant=_json_constant)
+    except RecursionError:
+        raise BadJson('nested too deeply')
+    except BadJson:
+        raise
+    except (ValueError, TypeError) as e:
+        raise BadJson(str(e))
+    stack = [(obj, 0)]                       # a loop, not recursion, for the same reason
+    while stack:
+        v, depth = stack.pop()
+        if isinstance(v, str):
+            if any(0xd800 <= ord(c) <= 0xdfff for c in v):
+                raise BadJson('invalid unicode', 'unicode')
+        elif isinstance(v, (dict, list)):
+            if depth >= max_depth:
+                raise BadJson('nested too deeply')
+            if isinstance(v, dict):
+                stack.extend((k, depth + 1) for k in v)
+                v = v.values()
+            stack.extend((x, depth + 1) for x in v)
+    return obj
 MAX_PBKDF2_ROUNDS = 5_000_000
 
 

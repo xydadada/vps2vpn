@@ -1,5 +1,9 @@
 name: test
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:     # release.yml runs the whole suite on the tagged commit before it publishes anything
 permissions:
   contents: read
 

@@ -51,16 +51,6 @@ class _BadRequest(ValueError):
     """Malformed HTTP request framing, JSON body, or query parameter (answered with 400)."""
 
 
-def _has_surrogate(v):
-    if isinstance(v, str):
-        return any(0xd800 <= ord(c) <= 0xdfff for c in v)
-    if isinstance(v, list):
-        return any(_has_surrogate(x) for x in v)
-    if isinstance(v, dict):
-        return any(_has_surrogate(k) or _has_surrogate(x) for k, x in v.items())
-    return False
-
-
 def _rate_key(ip):
     """Aggregate IPv6 clients to /64 so a single host cannot rotate IIDs to bypass rate limits."""
     try:
@@ -194,6 +184,9 @@ def _csv_cell(v):
     if s and (s[0] in ('=', '+', '-', '@', '\t', '\r') or s.lstrip()[:1] in ('=', '+', '-', '@')):
         return "'" + s
     return s
+
+
+_SETUP_LOCK = threading.Lock()   # first-time setup runs once: see api_setup
 
 
 def setup_token():
@@ -627,13 +620,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def body_json(self, limit=4 << 20):
         self._read_body(limit)
         try:
-            obj = json.loads(self._raw or b'{}')
-        except ValueError:
-            raise _BadRequest('invalid json')
+            # strict: duplicate keys, NaN, overflowing numbers, very deep nesting and lone surrogates are refused
+            # here instead of becoming a 500 (RecursionError) or a value two readers disagree on
+            obj = secure.loads_json(self._raw or b'{}')
+        except secure.BadJson as e:
+            raise _BadRequest('invalid unicode' if e.kind == 'unicode' else 'invalid json')
         if not isinstance(obj, dict):
             raise _BadRequest('json object required')
-        if _has_surrogate(obj):          # a lone surrogate escape is valid JSON but not text: later a 500
-            raise _BadRequest('invalid unicode')
         return obj
 
     def client_ip(self):
@@ -1115,18 +1108,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if isinstance(changes, str):
             return self.json({'error': changes}, 400)
         admin_user = re.sub(r'[\x00-\x1f\x7f]', '', str(d.get('username') or 'admin')).strip()[:32] or 'admin'
-        changes.update(admin_user=admin_user, admin_hash=secure.hash_password(pw))
-        db.set_settings(**changes)
+        changes.update(admin_user=admin_user, admin_hash=secure.hash_password(pw))   # slow: before the lock
         first = re.sub(r'[\x00-\x1f\x7f]', '', str(d.get('first_user') or 'me')).strip()[:32] or 'me'
-        if not db.users():
-            db.add_user(first)
-        s = db.settings()
-        certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
-        db.set_settings(setup_done=True)
-        try:
-            os.unlink(SETUP_TOKEN_FILE)
-        except OSError:
-            pass
+        # Two requests with the setup link (a double click, two tabs) both passed the checks above on the
+        # settings read at the start. Only the first one sets the server up; the second must not replace its
+        # admin password or get a session of its own.
+        with _SETUP_LOCK:
+            if db.settings()['setup_done'] or not secure.hmac_eq(str(d.get('token', '')), setup_token()):
+                return self.json({'error': 'already set up'}, 409)
+            with db.transaction():
+                db.set_settings(**changes)
+                if not db.users():
+                    db.add_user(first)
+            s = db.settings()
+            certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
+            db.set_settings(setup_done=True)
+            try:
+                os.unlink(SETUP_TOKEN_FILE)
+            except OSError:
+                pass
         system.tune_network(s['tune_network'])
         system.open_firewall(s)
         apply_async(force=True)

@@ -10,7 +10,14 @@ permissions:
   contents: read
 
 jobs:
+  tests:
+    # the same tests as every push, on the tagged commit: a tag on a commit whose tests fail publishes nothing
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
   source:
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: write

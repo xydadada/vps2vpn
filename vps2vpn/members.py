@@ -74,21 +74,34 @@ def deducting(u, now=None):
 
 
 def _given_away(uid, by_inviter, now, seen):
+    """What `uid` has handed out through invites. An invitee who no longer deducts (paused, expired) still passes
+    on what it handed out itself, up to its own deduction. A loop with its own stack, not recursion: a chain of
+    invites over ~1000 deep would end in RecursionError. Same order and same `seen` rule as the recursive form."""
     if uid in seen:
         return 0.0
     seen.add(uid)
-    total = 0.0
-    for u in by_inviter.get(uid, ()):
-        ded = u.get('invite_deduct', 0)
-        if ded <= 0:
-            continue
-        if deducting(u, now):
-            total += ded
+    # frame: [user id, its invitees still to look at, total so far, deduction of the invitee being walked]
+    stack = [[uid, iter(by_inviter.get(uid, ())), 0.0, 0.0]]
+    while True:
+        frame = stack[-1]
+        for u in frame[1]:
+            ded = u.get('invite_deduct', 0)
+            if ded <= 0:
+                continue
+            if deducting(u, now):
+                frame[2] += ded
+            elif u['id'] not in seen:                # one already walked hands out nothing more here
+                seen.add(u['id'])
+                frame[3] = ded
+                stack.append([u['id'], iter(by_inviter.get(u['id'], ())), 0.0, 0.0])
+                break
         else:
-            sub = _given_away(u['id'], by_inviter, now, seen)
-            if sub > 0:
-                total += min(ded, sub)
-    return total
+            stack.pop()
+            if not stack:
+                return frame[2]
+            parent = stack[-1]
+            if frame[2] > 0:
+                parent[2] += min(parent[3], frame[2])
 
 
 def invitee_index(users):

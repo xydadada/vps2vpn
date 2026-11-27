@@ -754,7 +754,11 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertIn("tags: ['v*']", wf)
         self.assertRegex(wf, r'(?m)^permissions:\n  contents: read$')            # nothing more by default
         self.assertEqual(wf.count('contents: write'), 1)
-        self.assertEqual(set(re.findall(r'uses: (\S+)', wf)), {'actions/checkout@v4'})
+        self.assertEqual(set(re.findall(r'uses: (\S+)', wf)), {'actions/checkout@v4', './.github/workflows/test.yml'})
+        # nothing is published before the full test workflow passed on the tagged commit
+        self.assertRegex(wf, r'(?m)^  source:\n    needs: tests$')
+        with open(os.path.join(ROOT_DIR, '.github', 'workflows', 'test.yml'), encoding='utf-8') as f:
+            self.assertRegex(f.read(), r'(?m)^  workflow_call:')
         self.assertIn('git archive --format=tar --prefix="vps2vpn-$TAG/" HEAD | gzip -n -9', wf)
         self.assertIn('sha256sum "$name" > "$name.sha256"', wf)
         with open(INSTALL_SH, encoding='utf-8') as f:

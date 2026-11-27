@@ -92,7 +92,7 @@ def parse_join_code(code):
     if not code.startswith('v2v1.'):
         raise ValueError('not a vps2vpn join code')
     try:
-        d = json.loads(secure.b64url_decode(code[5:]))
+        d = secure.loads_json(secure.b64url_decode(code[5:]))
         url = urllib.parse.urlsplit(d['u'])
         pin = d.get('p', '')
         # urlsplit defers invalid-port errors until the .port property is read.
@@ -401,20 +401,28 @@ def _request(server, body, timeout=15):
                          headers={'Content-Type': 'application/json', 'X-V2V': '1',
                                   'Authorization': 'Bearer ' + server['key']})
             r = conn.getresponse()
-            data = r.read(8 << 20)
+            # one byte past the limit tells a complete answer from a cut one: a cut answer can still be valid
+            # JSON (an object that simply ends early), so it must be refused, not parsed
+            data = r.read(SYNC_ANSWER_MAX + 1)
+            if len(data) > SYNC_ANSWER_MAX:
+                raise SyncError('node sync response is too large (over %d MiB)' % (SYNC_ANSWER_MAX >> 20))
             if r.status != 200:
                 # A proxy or a broken node can return valid JSON that is not an
                 # object ([], null, "error"). It must still become SyncError:
                 # callers catch only that type to keep other nodes syncing.
                 try:
-                    response_body = json.loads(data)
+                    response_body = secure.loads_json(data)
                 except ValueError:
                     response_body = None
                 why = response_body.get('error') if isinstance(response_body, dict) else None
                 if not isinstance(why, str) or not why:
                     why = data[:120].decode('utf-8', 'replace')
                 raise SyncError('node answered %d: %s' % (r.status, why[:200]), r.status)
-            return _validate_sync_answer(json.loads(data)), got
+            try:
+                answer = secure.loads_json(data)
+            except ValueError as e:
+                raise SyncError('node sync response is not valid JSON: %s' % e)
+            return _validate_sync_answer(answer), got
         except ssl.SSLError as e:
             if attempt == 'public':
                 raise SyncError('certificate changed and is not publicly trusted (%s); remove and re-add the server'
@@ -703,6 +711,7 @@ def unique_name(name, s, skip=None):
     return out
 
 
+SYNC_ANSWER_MAX = 8 << 20
 _NAT64 = ipaddress.ip_network('64:ff9b::/96')
 _NONPUBLIC_V6 = tuple(ipaddress.ip_network(prefix) for prefix in (
     '64:ff9b:1::/48', '100::/64', '100:0:0:1::/64', '3fff::/20', '5f00::/16',
