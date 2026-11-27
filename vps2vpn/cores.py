@@ -466,7 +466,10 @@ def apply(s=None, force=False):
                 if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
                     errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
         # after the cores: they now mark exactly the accounts these classes are for
-        shaper.apply(limits(active_users()))
+        # A host that cannot shape at all (no tc / IFB, a container) is reported by the health check
+        # ("limits_unsupported"); retrying would never help there, so only a failure that can pass counts.
+        if not shaper.apply(limits(active_users())) and shaper.available():
+            errors.append('speed limits could not be applied')
         hop = system.port_hopping(s)
         if hop and hop.startswith('failed'):
             # Subscriptions stop listing the hop range; the watchdog tries again every 5 minutes.
