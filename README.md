@@ -5,7 +5,7 @@ Buy a VPS, click once, get your own private VPN. ([English below](#english))
 
 - 不用懂网络：在自己电脑上双击「一键部署」，填 IP、拖进密钥，剩下的全自动（建账号、查防火墙、导入 VPN 软件、测 AI 能不能用）。
 - 一个订阅链接通吃：Clash Verge Rev / FlClash / Mihomo Party / Stash、Shadowrocket（小火箭）、Hiddify、Karing、sing-box、v2rayN / v2rayNG，以及 Happ、Streisand 等都能导入。
-- 三种协议随时切换、互为备份：**Hysteria 2**（UDP，丢包严重的晚高峰线路上最快）、**VLESS + REALITY**（TCP，伪装成访问大网站，最稳）、**TUIC v5**（UDP，Hysteria 被限速时的另一条 QUIC 路）。每种都能在面板里单独开关，App 里可手动挑，也会自动切到能用的那个。
+- 三种协议随时切换、互为备份：**Hysteria 2**（UDP + QUIC，可用于丢包线路）、**VLESS + REALITY**（TCP + TLS，UDP 不通时可尝试）、**TUIC v5**（UDP + QUIC，另一种可选传输）。速度和稳定性取决于实际线路，没有一种协议在所有网络上都最好。每种都能在面板里单独开关，App 里可手动挑，也会自动切到能用的那个。
 - 适合分享给家人朋友：每人一个链接，可设流量上限、到期日、每月重置日；超额自动停用，续上自动恢复。还有邀请码和会员自助页面。
 - 管理面板：实时流量、每日用量、使用者二维码、浅色/深色，手机上也好用。
 - 面板只依赖系统自带的 Python 3，不装 Docker、不装数据库、不加载任何第三方网页脚本。
@@ -259,9 +259,9 @@ bash "$(ls -d /var/lib/vps2vpn/upgrade-snapshots/*-v*/ | tail -1)restore.sh"   #
 
 1. 面板「体检与维护」→「开始体检」，或在服务器上运行 `vps2vpn doctor`。每一项不正常都会写怎么修。
 2. 核对云厂商防火墙：`vps2vpn info` 列出的每个端口都要放行，注意 TCP 和 UDP 是分开的。
-3. 在 App 里换个协议试试。晚高峰 UDP 常被限速，这时 VLESS + REALITY（TCP）更稳；反过来 TCP 卡时试 Hysteria 2。
+3. 在 App 里换个协议试试。UDP 不通或被限速时，可试 VLESS + REALITY（TCP）；TCP 较慢且 UDP 可达时，可对比 Hysteria 2 / TUIC。速度和稳定性以同一线路上的实际表现为准。
 4. 某个端口被运营商封了：在「协议与设置」或总览页的提醒里点「换一个端口」，换到新的随机端口。然后在云厂商防火墙放行新端口，让大家更新一下订阅。
-5. UDP 整个被封时，可以在「协议与设置」里给 Hysteria 2 设一个混淆密码。
+5. UDP 仍可达、但 QUIC / HTTP/3 被识别过滤时，可在「协议与设置」里给 Hysteria 2 设置混淆密码，并让客户端刷新订阅，使两端密码一致。混淆仍然使用 UDP，不能解决 UDP 整体被封；这种情况改试 VLESS + REALITY（TCP）。参见 [Hysteria 官方混淆说明](https://v2.hysteria.network/docs/advanced/Full-Server-Config/#obfuscation)。
 6. 服务器的公网 IP 变了：会自动发现，两次确认后把订阅改成新 IP，App 下次更新订阅就好了。
 
 使用 vps2vpn 客户端时，有两个以上使用者报告同一条线路连不上，总览页会提示，Telegram 也会告诉你。
@@ -468,6 +468,8 @@ MIT
 
 **vps2vpn** turns a fresh Linux VPS into a private VPN server with a web panel, for people who know nothing about networking and want to share it with family and friends.
 
+Hysteria 2 and TUIC v5 use UDP + QUIC; VLESS + REALITY uses TCP + TLS and is an option when UDP is unavailable. Speed and reliability depend on the route: no protocol is best on every network. You can enable each separately and compare them in the app.
+
 ### Quick start
 
 1. **Server**: Ubuntu 22.04/24.04 or Debian 12 is easiest (RHEL family, Fedora, openSUSE and Arch work too), x86_64 or arm64, 512 MB RAM is enough. For Claude/ChatGPT pick the US, Japan, Singapore, the UK or Australia; Hong Kong does not work for them.
@@ -510,7 +512,7 @@ Health & upkeep → Telegram alerts: create a bot with @BotFather, paste the tok
 
 ### Troubleshooting
 
-- *Cannot connect*: run the health check (panel or `vps2vpn doctor`), check every port in the cloud firewall (TCP and UDP separately), try the other protocol in the app, use "Use another port" for a blocked port (then open it in the cloud firewall and refresh subscriptions), or set a Hysteria 2 obfuscation password when UDP is blocked.
+- *Cannot connect*: run the health check (panel or `vps2vpn doctor`), check every port in the cloud firewall (TCP and UDP separately), try the other protocol in the app, or use "Use another port" for a blocked port (then open it in the cloud firewall and refresh subscriptions). When UDP still works but QUIC / HTTP/3 is filtered, Hysteria 2 obfuscation may help; refresh subscriptions so the client and server use the same password. Obfuscation still uses UDP and cannot bypass a blanket UDP block: try VLESS + REALITY (TCP) in that case. See the [official Hysteria obfuscation guidance](https://v2.hysteria.network/docs/advanced/Full-Server-Config/#obfuscation).
 - *Certificate*: Let's Encrypt works without a domain (IP certificates, ~6 days, renewed automatically) once TCP 80 is open; retry with `vps2vpn cert`. With the self-signed fallback the browser warns and generic subscription links use plain HTTP, exposing the links and account credentials to interception or modification. Open TCP 80 and retry obtaining a trusted certificate.
 - *Traffic*: upload + download per user, counted by the proxy cores every 20 s; joined servers report into the same quota. The server's monthly figure is the network card total and is closer to the provider's bill.
 - *AI check*: tests claude.ai, the Claude API, ChatGPT and Gemini from the server (panel, Telegram `/ai`, daily). A hint, not a promise about account bans.
