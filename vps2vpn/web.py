@@ -1460,45 +1460,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'unknown action'}, 400)
         if action in ('extend', 'add_gb') and value <= 0:
             return self.json({'error': 'invalid number'}, 400)
-        now = int(time.time())
-        if action == 'extend':
-            # Verify the entire requested batch before changing the first
-            # account. The single-user form's year-9999 bound applies here too.
+        reset_ids = []
+        with db.transaction():
+            now = int(time.time())
+            if action == 'extend':
+                # Verify the entire requested batch before changing the first
+                # account. The single-user form's year-9999 bound applies here too.
+                for uid in ids:
+                    user = db.user(uid)
+                    if (user and user['expire_at']
+                            and int(max(user['expire_at'], now) + value * 86400) > MAX_ACCOUNT_EXPIRE_AT):
+                        return self.json({'error': 'expire_at is out of supported range'}, 400)
+            done = 0
+            managed = bool(db.settings()['node_master'])
             for uid in ids:
-                user = db.user(uid)
-                if (user and user['expire_at']
-                        and int(max(user['expire_at'], now) + value * 86400) > MAX_ACCOUNT_EXPIRE_AT):
-                    return self.json({'error': 'expire_at is out of supported range'}, 400)
-        done = 0
-        managed = bool(db.settings()['node_master'])
-        for uid in ids:
-            u = db.user(uid)
-            if not u or (managed and u['remote_id']):    # the main server's accounts are changed over there
-                continue
-            done += 1
-            if action == 'enable':
-                db.update_user(uid, enabled=1, disabled_reason='', paused_until=0)
-            elif action == 'disable':
-                db.update_user(uid, enabled=0, disabled_reason='manual')
-            elif action == 'reset':
-                db.update_user(uid, used_up=0, used_down=0, extra_gb=0)   # a new period: last one's top-up ends
-                jobs.forget_quota_alerts(uid)
-                if u['disabled_reason'] == 'quota':
-                    db.update_user(uid, enabled=1, disabled_reason='')
-            elif action == 'rotate':
-                db.rotate_user(uid)
-            elif action == 'delete':
-                db.delete_user(uid)
-            elif action == 'extend':
-                if u['expire_at']:     # from the old date, or from today if it already passed
-                    new_exp = int(max(u['expire_at'], now) + value * 86400)
-                    db.update_user(uid, expire_at=new_exp)
-                    _propagate_lifetime(uid, u['expire_at'], new_exp)
-            elif action == 'add_gb':
-                if u['quota_gb']:      # unlimited stays unlimited
-                    db.update_user(uid, quota_gb=u['quota_gb'] + value)
-            elif action == 'set_quota':
-                db.update_user(uid, quota_gb=max(0.0, value))
+                u = db.user(uid)
+                if not u or (managed and u['remote_id']):    # the main server's accounts are changed over there
+                    continue
+                done += 1
+                if action == 'enable':
+                    db.update_user(uid, enabled=1, disabled_reason='', paused_until=0)
+                elif action == 'disable':
+                    db.update_user(uid, enabled=0, disabled_reason='manual')
+                elif action == 'reset':
+                    db.update_user(uid, used_up=0, used_down=0, extra_gb=0)   # a new period: last one's top-up ends
+                    reset_ids.append(uid)
+                    if u['disabled_reason'] == 'quota':
+                        db.update_user(uid, enabled=1, disabled_reason='')
+                elif action == 'rotate':
+                    db.rotate_user(uid)
+                elif action == 'delete':
+                    db.delete_user(uid)
+                elif action == 'extend':
+                    if u['expire_at']:     # from the old date, or from today if it already passed
+                        new_exp = int(max(u['expire_at'], now) + value * 86400)
+                        db.update_user(uid, expire_at=new_exp)
+                        _propagate_lifetime(uid, u['expire_at'], new_exp)
+                elif action == 'add_gb':
+                    if u['quota_gb']:      # unlimited stays unlimited
+                        db.update_user(uid, quota_gb=u['quota_gb'] + value)
+                elif action == 'set_quota':
+                    db.update_user(uid, quota_gb=max(0.0, value))
+        # Alert receipts include an in-memory cache: change them only after commit.
+        for uid in reset_ids:
+            jobs.forget_quota_alerts(uid)
         jobs.enforce()
         apply_async()
         still = 0
