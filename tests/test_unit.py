@@ -817,7 +817,7 @@ class Ops(Base):
         system.systemctl = lambda *a: (calls.append(a), subprocess.CompletedProcess(a, 1 if a[0] == 'restart' else 0,
                                                                                     '', 'bad config'))[1]
         system.unit_active = lambda unit: False                    # switched back on, config file unchanged
-        cores.write_configs = lambda s, errors: set()
+        cores.write_configs = lambda s, errors, changed=None: set()
         system.port_hopping = lambda s: None
         try:
             db.set_settings(reality_enabled=True, hy2_enabled=False, tuic_enabled=False)

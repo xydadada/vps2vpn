@@ -232,12 +232,12 @@ def _placeholder(s):
     return hashlib.sha256(('vps2vpn-placeholder:' + s['stats_secret']).encode()).hexdigest()[:32]
 
 
-def write_configs(s=None, errors=None):
+def write_configs(s=None, errors=None, changed=None):
     """Render the core configs. Returns the paths that changed; a config a core rejects is reported in `errors`."""
     s = s or db.settings()
     errors = [] if errors is None else errors
     users = active_users()
-    changed = []
+    changed = [] if changed is None else changed
     group = 'vps2vpn'
     for path, data, on in ((paths.XRAY_CONFIG, xray_config(s, users), s['reality_enabled']),
                            (paths.HY2_CONFIG, hysteria_config(s, users), s['hy2_enabled']),
@@ -444,15 +444,25 @@ def apply(s=None, force=False):
         s = s or db.settings()
         errors = []
         old_xray = None if force else _read_json(paths.XRAY_CONFIG)
-        changed = write_configs(s, errors)
         units = {XRAY_UNIT: s['reality_enabled'], HY2_UNIT: s['hy2_enabled'], TUIC_UNIT: s['tuic_enabled']}
+        owed_before = set(_restart_owed)
+        changed = []
+        try:
+            changed = write_configs(s, errors, changed)
+        finally:
+            for path, unit in ((paths.XRAY_CONFIG, XRAY_UNIT), (paths.HY2_CONFIG, HY2_UNIT),
+                               (paths.TUIC_CONFIG, TUIC_UNIT)):
+                if path in changed and units[unit]:
+                    _restart_owed.add(unit)
         restart = []
         if force or paths.XRAY_CONFIG in changed:
             # Users only added: hand them to the running core and keep everyone else connected. The file is
             # already written, so a later restart comes up in the same state.
-            if force or not s['reality_enabled'] or \
+            if force or XRAY_UNIT in owed_before or not s['reality_enabled'] or \
                     not _xray_live_update(s, old_xray, _read_json(paths.XRAY_CONFIG)):
                 restart.append(XRAY_UNIT)
+            else:
+                _restart_owed.discard(XRAY_UNIT)
         if force or paths.HY2_CONFIG in changed:
             restart.append(HY2_UNIT)
         if force or paths.TUIC_CONFIG in changed:
@@ -462,6 +472,8 @@ def apply(s=None, force=False):
         restart += [u for u in sorted(_restart_owed) if u not in restart and units.get(u)]
         # also when the config did not change but the service is down (protocol switched back on, crash)
         start = [u for u, on in units.items() if on and (u in restart or system.unit_active(u) is False)]
+        # A timeout can leave later units untouched even though all their new configs are already on disk.
+        _restart_owed.update(start)
         _save_before_restart(s, start + [u for u, on in units.items() if not on])
         for unit, on in units.items():
             if not on:
@@ -470,7 +482,6 @@ def apply(s=None, force=False):
                 system.systemctl('enable', unit)
                 r = system.systemctl('restart', unit)
                 if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
-                    _restart_owed.add(unit)
                     errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
                 else:
                     _restart_owed.discard(unit)
