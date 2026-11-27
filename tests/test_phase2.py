@@ -393,6 +393,57 @@ class FeedbackValues(tu.Base):
         db.delete_user(uid)
         self.assertEqual(db.q('SELECT COUNT(*) FROM feedback')[0][0], 0)
 
+    def test_older_unread_answers_are_returned_before_read_items(self):
+        ids = [feedback.add(self.u, {'text': str(i), 'client': APP}, 1_800_000_000 + i * 90000)
+               for i in range(12)]
+        feedback.admin_act(ids[0], 'answer', 'older reply')
+        items = feedback.for_member(self.uid, mark_seen=False)
+        self.assertIn(ids[0], [r['id'] for r in items])
+        self.assertEqual(feedback.unread(self.uid), 1)
+        for fid in ids:
+            feedback.admin_act(fid, 'answer', 'reply %d' % fid)
+        first = feedback.for_member(self.uid)
+        self.assertEqual(len(first), 10)
+        self.assertEqual(feedback.unread(self.uid), 2)
+        second = feedback.for_member(self.uid)
+        self.assertEqual({r['id'] for r in first + second}, set(ids))
+        self.assertEqual(feedback.unread(self.uid), 0)
+
+    def test_answer_arriving_during_a_read_is_not_silently_acknowledged(self):
+        fid = feedback.add(self.u, {'text': 'slow', 'client': APP})
+        entered, resume, written = threading.Event(), threading.Event(), threading.Event()
+        result = []
+        original_q = db.q
+
+        def paused_q(sql, args=()):
+            rows = original_q(sql, args)
+            if sql.startswith('SELECT id, created_at, text, status, answer'):
+                entered.set()
+                if not resume.wait(5):
+                    raise RuntimeError('feedback read timed out')
+            return rows
+
+        def answer():
+            feedback.admin_act(fid, 'answer', 'new reply')
+            written.set()
+
+        reader = threading.Thread(target=lambda: result.extend(feedback.for_member(self.uid)), daemon=True)
+        writer = threading.Thread(target=answer, daemon=True)
+        with mock.patch.object(db, 'q', side_effect=paused_q):
+            reader.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                writer.start()
+                written.wait(0.1)
+            finally:
+                resume.set()
+                reader.join(3)
+                writer.join(3)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(result[0]['answer'], '')
+        self.assertEqual(feedback.unread(self.uid), 1)
+
 
 class FeedbackOverHttps(OverHttps):
     def setUp(self):

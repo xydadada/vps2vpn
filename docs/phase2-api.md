@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 
 ### 1.6 用户看到回复
 
-`GET <sub>/api/feedback` 返回这个账号最近 10 条反馈的摘要（不含日志）：
+`GET <sub>/api/feedback` 返回这个账号最多 10 条反馈的摘要（不含日志）：未读回复优先，同一组内按反馈时间倒序。较早的反馈收到新回复时也会出现。
 
 ```json
 {"items": [{"id": 123, "created_at": 1795000000, "text": "前 200 字", "status": "done",
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 - 请求体超过 128 KB（但不到 4 MB）返回 `413 too_large`；超过 4 MB 服务器直接断开连接。`diagnosis` 超过 32 KB、`log` 超过 64 KB 也是 413。
 - 订阅链接不对或已轮换：返回 404，**正文不是 JSON**（和其他会员接口一样的普通 404 页）。客户端只看状态码。
 - 429 时 `Retry-After` 是要等的秒数：2 分钟内发过就等到满 2 分钟；24 小时内已有 5 条就等到最早那条满 24 小时。
-- 数据表多了一列 `seen`：管理员回复时设为 0，会员 `GET api/feedback` 读过以后变回 1。`api/me` 的 `feedback_unread` 就是 `seen=0` 的条数；功能关着时 `api/me` 没有这个键。
+- 数据表多了一列 `seen`：管理员回复时设为 0，会员 `GET api/feedback` 实际返回的条目变回 1；未返回的回复保持未读。读取和标记在同一事务内，期间新到的回复不会被误标为已读。`api/me` 的 `feedback_unread` 就是 `seen=0` 的条数；功能关着时 `api/me` 没有这个键。
 - 管理面板：「会员」页最上面的「用户反馈」一块（不是单独一页），侧边栏「会员」的红点把待处理的反馈也算进去。管理接口：`GET api/feedback`、`GET api/feedback/<id>`、`POST api/feedback/<id>/answer`（`{"answer": "..."}`，最多 500 字）、`.../done`、`.../reopen`、`.../delete`。
 - Telegram 提醒用的去重键是 `fb-<账号 id>`，同一账号 1 小时最多一条。
 - 会员中心网页的反馈框只发文字，`client` 是 `{"platform": "web", "version": "web"}`。
