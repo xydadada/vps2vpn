@@ -73,6 +73,27 @@ class StatusValues(tu.Base):
             self.assertEqual(nodestatus.current(junk), nodestatus.OK, junk)       # a hand-edited backup
         self.assertEqual(nodestatus.current({'state': 'congested', 'note': None})['note'], '')
 
+    def test_until_uses_wall_time_across_daylight_saving_changes(self):
+        try:
+            from zoneinfo import ZoneInfo
+            zone = ZoneInfo('America/New_York')
+        except (ImportError, KeyError):
+            self.skipTest('IANA time zones unavailable')
+        with mock.patch.object(clock, 'zone', return_value=zone):
+            for date in ((2027, 3, 14, 4, 30), (2027, 11, 7, 3, 30)):
+                expected = dt.datetime(*date, tzinfo=zone)
+                text = expected.strftime('%Y-%m-%dT%H:%M')
+                self.assertEqual(nodestatus.until_of(text), int(expected.timestamp()))
+                self.assertEqual(nodestatus.view({'state': 'maintenance', 'note': '',
+                                                  'until': nodestatus.until_of(text)})['until_local'], text)
+
+    def test_until_validates_and_preserves_optional_seconds(self):
+        with mock.patch.object(clock, 'zone', return_value=UTC8):
+            self.assertEqual(nodestatus.until_of('2027-01-02T23:30:45'),
+                             int(dt.datetime(2027, 1, 2, 23, 30, 45, tzinfo=UTC8).timestamp()))
+            with self.assertRaises(ValueError):
+                nodestatus.until_of('2027-01-02T23:30:99')
+
     def test_joined_server_keeps_its_status_through_panel_edits(self):
         uid = db.add_user('m')
         _with_joined(uid)
