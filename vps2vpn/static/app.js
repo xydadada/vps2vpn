@@ -252,7 +252,7 @@ const T = {
 };
 let L = (navigator.language || '').startsWith('zh') ? 'zh' : 'en';
 const t = k => (T[L] && T[L][k]) || T.en[k] || k;
-const S = {view: 'home', data: null, days: [], timer: null, charts: {}, q: '', f: 'all', sort: 'id', sel: new Set(), sys: [], sysAt: 0, viewSeq: 0, drawerSeq: 0, refreshSeq: 0, refreshing: false};
+const S = {view: 'home', data: null, days: [], timer: null, charts: {}, q: '', f: 'all', sort: 'id', sel: new Set(), sys: [], sysAt: 0, viewSeq: 0, drawerSeq: 0, refreshSeq: 0, loadSeq: 0, daysSeq: 0, sysSeq: 0, sessionSeq: 0, refreshing: false};
 const GB = 1073741824;
 
 function setLang(l) {
@@ -260,6 +260,7 @@ function setLang(l) {
   document.documentElement.lang = L === 'zh' ? 'zh-CN' : 'en';
 }
 async function api(path, body, opts = {}) {
+  const session = S.sessionSeq;
   let r;
   try {
     r = await fetch('api/' + path, body === undefined ? {credentials: 'same-origin', cache: 'no-store'} : {
@@ -267,7 +268,7 @@ async function api(path, body, opts = {}) {
   } catch (e) { throw Error(KT.net); }
   let j = {};
   try { j = await r.json(); } catch (e) { /* empty */ }
-  if (r.status === 401 && !opts.quiet) { renderLogin(); throw Error('login'); }
+  if (r.status === 401 && !opts.quiet) { if (session === S.sessionSeq) renderLogin(); throw Error('login'); }
   if (!r.ok) throw Error(j.error || (KT.failed + ' (' + r.status + ')'));
   return j;
 }
@@ -408,6 +409,7 @@ async function renderSetup() {
 function renderLogin() {
   clearInterval(S.timer);
   S.viewSeq++; S.drawerSeq++; S.refreshSeq++; S.refreshing = false;
+  S.loadSeq++; S.daysSeq++; S.sysSeq++; S.sessionSeq++;
   document.body.style.overflow = '';
   const u = h('input', {type: 'text', autocomplete: 'username', required: true});
   const p = h('input', {type: 'password', autocomplete: 'current-password', required: true});
@@ -439,16 +441,27 @@ function updateReqBadges() {
   const n = waiting();
   for (const rb of document.querySelectorAll('[data-req-badge]')) { rb.textContent = n || ''; rb.hidden = !n; rb.className = n ? 'badge' : ''; }
 }
-async function saveSettings(body, redraw) { try { await api('settings', body); toast(t('saved')); await load(); if (redraw) redraw(); } catch (e) { err(e); } }
+async function saveSettings(body, redraw) {
+  const seq = S.viewSeq;
+  try { await api('settings', body); toast(t('saved')); await load(); if (redraw && seq === S.viewSeq) redraw(); } catch (e) { err(e); }
+}
 async function load() {
-  S.data = await api('state'); setLang(S.data.settings.language);
+  const seq = ++S.loadSeq, data = await api('state');
+  if (seq !== S.loadSeq) return S.data;
+  S.data = data; setLang(S.data.settings.language);
   Clock.seen(S.data.health.time || Date.now() / 1000);
   return S.data;
 }
-async function loadDays() { try { S.days = (await api('traffic?days=30')).days || []; } catch (e) { S.days = []; } }
+async function loadDays() {
+  const seq = ++S.daysSeq;
+  try { const days = (await api('traffic?days=30')).days || []; if (seq === S.daysSeq) S.days = days; }
+  catch (e) { if (seq === S.daysSeq) S.days = []; }
+}
 
 async function renderShell() {
+  const session = ++S.sessionSeq;
   await Promise.all([load(), loadDays()]);
+  if (session !== S.sessionSeq) return;
   const doLogout = async btn => { btn.disabled = true; try { await api('logout', {}); location.reload(); } catch (e) { err(e); btn.disabled = false; } };
   const nav = v => h('button', {class: 'nav-item', 'data-view': v[0], onclick: () => go(v[0])}, icon(v[1]), t(v[2]), v[0] === 'members' ? badge() : null);
   const themeBtn = (v, ic, k) => h('button', {'data-theme-btn': v, title: t(k)}, icon(ic));
@@ -532,6 +545,7 @@ async function refresh(manual) {
     if (lp) lp.classList.remove('stale');
     if (si2) si2.textContent = t('synced') + ' · ' + new Date().toLocaleTimeString(KT.locale, {hour12: false});
   } catch (e) {
+    if (seq !== S.refreshSeq) return;
     const lp = $('livePill'), si = $('syncInfo');
     if (lp) lp.classList.add('stale');
     if (si) si.textContent = e.message;
@@ -639,9 +653,10 @@ class HistChart {
 }
 async function loadSys(force) {
   if (!force && Date.now() - S.sysAt < 60000) return;
-  const seq = S.viewSeq;
+  const viewSeq = S.viewSeq, seq = ++S.sysSeq;
   try {
     const r = await api('sys-history');
+    if (seq !== S.sysSeq) return;
     // 5-minute averages: one point a minute is too jagged to read at a glance
     const B = new Map();
     for (const [tt, cpu, mem, rx, tx] of r.points) {
@@ -655,7 +670,7 @@ async function loadSys(force) {
     });
     S.sysAt = Date.now();
   } catch (e) { return; }
-  if (seq === S.viewSeq && S.view === 'home' && S.charts.sys) { S.charts.sys.set(S.sys); S.charts.net.set(S.sys); }
+  if (viewSeq === S.viewSeq && S.view === 'home' && S.charts.sys) { S.charts.sys.set(S.sys); S.charts.net.set(S.sys); }
 }
 
 function updateHome() {
@@ -1269,7 +1284,7 @@ async function drawMonitor() {
 
 /* ---------------- settings ---------------- */
 function drawSettings() {
-  const s = S.data.settings, inputs = [];
+  const s = S.data.settings, inputs = [], seq = S.viewSeq;
   const bind = (k, el) => { el.dataset.k = k; inputs.push(el); return el; };
   const cb = k => bind(k, h('input', {type: 'checkbox', checked: !!s[k]}));
   const inp = (k, type) => bind(k, h('input', {type: type || 'text', value: s[k] == null ? '' : s[k]}));
@@ -1295,7 +1310,7 @@ function drawSettings() {
     if (!body.reality_enabled && !body.hy2_enabled && !body.tuic_enabled) return toast(t('proto_one'), 'err');
     const prevLang = L;
     saveBtn.disabled = true;
-    try { await api('settings', body); toast(t('saved')); await load(); if (L !== prevLang) await renderShell(); else drawSettings(); }
+    try { await api('settings', body); toast(t('saved')); await load(); if (seq !== S.viewSeq) return; if (L !== prevLang) await renderShell(); else drawSettings(); }
     catch (e) { err(e); saveBtn.disabled = false; }
   };
   $('view').replaceChildren(h('section', {class: 'page'},
