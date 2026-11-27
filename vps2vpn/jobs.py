@@ -815,6 +815,7 @@ class Scheduler:
         self.last = {}
         self.cert_backoff_until = 0.0
         self.apply_owed, self.apply_wait, self.apply_at = False, 0, 0.0   # a failed apply, tried again later
+        self.backup_wait, self.backup_at = 0, 0.0
         self.stop = threading.Event()
         self.ipwatch = IpWatch()
         self._threads = []
@@ -920,10 +921,21 @@ class Scheduler:
             from . import devices, feedback
             feedback.prune()
             devices.prune()
-        if self.due('backup', 86400):
-            name = backup()
-            if s['tg_backup'] and s['tg_token'] and s['tg_chat']:
-                self.in_background('tg-backup', send_backup, name, s)
+        if time.monotonic() >= self.backup_at and self.due('backup', 86400):
+            try:
+                name = backup()
+            except Exception as e:
+                # due() records the attempt, not a successful backup. A
+                # temporary disk error must not suppress another attempt for
+                # a full day, nor should it cause a retry every ten seconds.
+                self.last.pop('backup', None)
+                self.backup_wait = min(self.backup_wait * 2 or 60, 900)
+                self.backup_at = time.monotonic() + self.backup_wait
+                log('backup failed, retrying in %d s: %s' % (self.backup_wait, e))
+            else:
+                self.backup_wait, self.backup_at = 0, 0.0
+                if s['tg_backup'] and s['tg_token'] and s['tg_chat']:
+                    self.in_background('tg-backup', send_backup, name, s)
 
     def renew_cert(self, s):
         """Renew the certificate when due and hand it to the cores."""
