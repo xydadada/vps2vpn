@@ -42,6 +42,8 @@ WORK = None
 TOKEN = secrets.token_urlsafe(16)          # only the browser tab we open can use this local page
 RECORDS = os.environ.get('V2V_RECORDS') or os.path.join(os.path.expanduser('~'), 'vps2vpn')
 JOBS = {}
+# the whole remote install (upload, packages, cores); it normally takes 1-3 minutes, a slow VPS ten
+INSTALL_DEADLINE = int(os.environ.get('V2V_INSTALL_DEADLINE') or 30 * 60)
 
 
 def work_dir():
@@ -509,16 +511,37 @@ def run_job(job):
             except OSError:
                 pass
         threading.Thread(target=feed, daemon=True).start()
+        # SSH keepalives only notice a dead link. A server that still answers while the installer hangs (a stuck
+        # package manager) would keep this loop reading forever, so the whole install has a deadline (#157).
+        stalled = threading.Event()
+
+        def stop_stalled():
+            stalled.set()
+            try:
+                p.kill()
+            except OSError:
+                pass
+        watchdog = threading.Timer(INSTALL_DEADLINE, stop_stalled)
+        watchdog.daemon = True
+        watchdog.start()
         res = None
-        for raw in p.stdout:
-            line = re.sub(r'\x1b\[[0-9;]*m', '', raw.decode('utf-8', 'replace'))
-            if line.startswith('V2V_RESULT:'):          # holds the new admin password: never shown in the log
-                try:
-                    res = json.loads(base64.b64decode(line.split(':', 1)[1].strip()))
-                except ValueError:
-                    pass
-                continue
-            say(line)
+        try:
+            for raw in p.stdout:
+                line = re.sub(r'\x1b\[[0-9;]*m', '', raw.decode('utf-8', 'replace'))
+                if line.startswith('V2V_RESULT:'):          # holds the new admin password: never shown in the log
+                    try:
+                        res = json.loads(base64.b64decode(line.split(':', 1)[1].strip()))
+                    except ValueError:
+                        pass
+                    continue
+                say(line)
+        finally:
+            watchdog.cancel()
+        if stalled.is_set():
+            p.wait(timeout=10)
+            raise RuntimeError('安装超过 %d 分钟还没有结束，已断开本机的连接。服务器上的安装可能还在进行：'
+                               '请等几分钟，再登录服务器运行  vps2vpn info  查看结果；不要马上重新部署。'
+                               % (INSTALL_DEADLINE // 60))
         try:
             p.wait(timeout=60)
         except subprocess.TimeoutExpired:

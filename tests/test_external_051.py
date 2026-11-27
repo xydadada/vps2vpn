@@ -222,7 +222,13 @@ class FailedRestartIsOwed(tu.Base):
             failed = args[0] == 'restart' and len([c for c in calls if c[0] == 'restart']) == 1
             return subprocess.CompletedProcess(args, 1 if failed else 0, '', 'job rejected' if failed else '')
         cores._restart_owed.clear()
-        with mock.patch.object(cores, 'write_configs', side_effect=[[paths.XRAY_CONFIG], [], []]),                 mock.patch.object(cores, '_xray_live_update', return_value=False),                 mock.patch.object(cores, '_save_before_restart'),                 mock.patch.object(system, 'unit_active', return_value=True),                 mock.patch.object(system, 'systemctl', side_effect=systemctl),                 mock.patch.object(system, 'port_hopping', return_value=None),                 mock.patch.object(shaper, 'apply', return_value=True):
+        with mock.patch.object(cores, 'write_configs', side_effect=[[paths.XRAY_CONFIG], [], []]), \
+                mock.patch.object(cores, '_xray_live_update', return_value=False), \
+                mock.patch.object(cores, '_save_before_restart'), \
+                mock.patch.object(system, 'unit_active', return_value=True), \
+                mock.patch.object(system, 'systemctl', side_effect=systemctl), \
+                mock.patch.object(system, 'port_hopping', return_value=None), \
+                mock.patch.object(shaper, 'apply', return_value=True):
             with self.assertRaisesRegex(RuntimeError, 'did not start'):
                 cores.apply()
             cores.apply()                                   # same file, service "active": restarts anyway
@@ -230,6 +236,49 @@ class FailedRestartIsOwed(tu.Base):
         restarts = [c for c in calls if c[0] == 'restart']
         self.assertEqual(len(restarts), 2, calls)
         self.assertEqual(cores._restart_owed, set())
+
+
+class StalledInstallHasADeadline(unittest.TestCase):
+    """#157: SSH still answers while the remote installer hangs and keeps its output open. The deployer stops
+    after the deadline, says the install may still be running, and keeps nothing waiting."""
+
+    def test_deadline(self):
+        import os
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+        import time
+        from deploy import deploy
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        real_popen = subprocess.Popen
+        started = []
+
+        def hanging_install(cmd, **kw):
+            kw.pop('env', None)
+            p = real_popen([sys.executable, '-c', 'import sys, time; print("installing", flush=True); time.sleep(120)'],
+                           **kw)
+            started.append(p)
+            return p
+        job, err = deploy.new_job('203.0.113.10', 'root', '22')
+        self.assertFalse(err)
+        job['key'] = os.path.join(d, 'key')
+        job['no_import'] = True
+        with mock.patch.object(deploy, 'RECORDS', d), \
+                mock.patch.object(deploy, 'INSTALL_DEADLINE', 1), \
+                mock.patch.object(deploy, 'probe', lambda cmd, env, user: subprocess.CompletedProcess(cmd, 0, 'connected Linux 0', '')), \
+                mock.patch.object(deploy, 'package', return_value=b'x'), \
+                mock.patch.object(deploy, 'restrict', lambda path: None), \
+                mock.patch.object(deploy.shutil, 'which', return_value='ssh'), \
+                mock.patch.object(deploy.subprocess, 'Popen', side_effect=hanging_install):
+            t0 = time.monotonic()
+            deploy.run_job(job)
+            took = time.monotonic() - t0
+        self.assertLess(took, 30)
+        self.assertEqual(job['state'], 'error')
+        self.assertIn('vps2vpn info', json.dumps(job, ensure_ascii=False))
+        self.assertIsNotNone(started[0].poll())                 # the local ssh process was stopped and reaped
 
 
 if __name__ == '__main__':
