@@ -95,11 +95,12 @@ const t = k => (T[L] && T[L][k]) || T.en[k] || k;
 const GB = 1073741824;
 // an empty number box is sent as null, not Number('') === 0: the server then asks for a number
 const numOrNull = v => (v === '' ? null : Number(v));
-const M = {hello: null, me: null};
+const M = {hello: null, me: null, viewSeq: 0};
 function setLang(l) { L = l === 'en' ? 'en' : 'zh'; KT = L === 'en' ? KT_EN : KT_ZH; document.documentElement.lang = L === 'zh' ? 'zh-CN' : 'en'; }
 const localDay = ms => { const d = new Date(ms); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 
 async function api(path, body) {
+  const view = M.viewSeq;
   let r;
   try {
     r = await fetch('api/' + path, body === undefined ? {credentials: 'same-origin', cache: 'no-store'} : {
@@ -107,7 +108,7 @@ async function api(path, body) {
   } catch (e) { throw Error(KT.net); }
   let j = {};
   try { j = await r.json(); } catch (e) { /* empty */ }
-  if (r.status === 401 && path !== 'login') { renderLogin(); throw Error('login'); }
+  if (r.status === 401 && path !== 'login') { if (view === M.viewSeq) renderLogin(); throw Error('login'); }
   if (!r.ok) throw Error(j.error || (KT.failed + ' (' + r.status + ')'));
   return j;
 }
@@ -162,6 +163,8 @@ function frame(card) {
   }});
 }
 function renderLogin(code) {
+  const view = ++M.viewSeq;
+  M.me = null;
   const reg = code !== undefined;
   const f = {name: h('input', {type: 'text', autocomplete: 'username', required: true, maxlength: '32'}),
     pw: h('input', {type: 'password', autocomplete: reg ? 'new-password' : 'current-password', required: true}),
@@ -179,8 +182,10 @@ function renderLogin(code) {
     b.disabled = true;
     try {
       await api(reg ? 'register' : 'login', reg ? {code: f.code.value, name: f.name.value.trim(), password: f.pw.value} : {name: f.name.value.trim(), password: f.pw.value});
+      if (view !== M.viewSeq) return;
       // hello was fetched before signing in, when the server leaves the admin's notice out: ask again
       M.hello = await api('hello').catch(() => M.hello);
+      if (view !== M.viewSeq) return;
       history.replaceState(null, '', location.pathname); await renderHome(); window.scrollTo(0, 0);
     } catch (er) { if (!reg) f.pw.value = ''; msg.textContent = er.message === 'wrong name or password' ? t('wrong') : errText(er.message); b.disabled = false; }
   };
@@ -189,7 +194,12 @@ function renderLogin(code) {
 
 /* ---------- the dashboard ---------- */
 async function renderHome() {
-  try { M.me = await api('me'); } catch (e) { if (e.message !== 'login') failPage(e.message, renderHome); return; }
+  const view = ++M.viewSeq;
+  try {
+    const data = await api('me');
+    if (view !== M.viewSeq) return;
+    M.me = data;
+  } catch (e) { if (view === M.viewSeq && e.message !== 'login') failPage(e.message, renderHome); return; }
   const me = M.me, used = me.used_up + me.used_down, q = me.quota_gb ? Math.max(0, (me.quota_eff || 0) * GB) : null;   // null = unlimited; 0 = a capped plan that shared everything
   const frac = q == null ? 0 : q > 0 ? used / q : 1;
   const reason = {quota: 'r_quota', expired: 'r_expired', manual: 'r_manual', remote: 'r_remote', devices: 'r_devices'}[me.disabled_reason] || 'r_manual';
