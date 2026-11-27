@@ -5,7 +5,7 @@
 1. [docs/goals.md](docs/goals.md)：项目是什么、用户现在的目标、已经定下的决定。
 2. [HANDOFF.md](HANDOFF.md)：当前版本、正在做的事、待办、怎么测试和发版、用户定的规矩。
 3. [docs/wording.md](docs/wording.md)：会员中心和管理面板的统一用词。
-4. 按需要再读：`docs/phase2-api.md`（客户端接口）、`docs/logic-review.md`（业务逻辑审查）、`docs/move-main-server.md`（主服务器换机器）。
+4. 按需要再读：`docs/admin-review.md`（管理面板和会员中心的细节审查清单）、`docs/phase2-api.md`（客户端接口）、`docs/logic-review.md`（业务逻辑审查）、`docs/move-main-server.md`（主服务器换机器）。
 
 客户端在另一个仓库 `xydadada/vps2vpn-client`（分支 `vps2vpn`），它有自己的 `AGENTS.md` 和 `HANDOFF.md`。
 
