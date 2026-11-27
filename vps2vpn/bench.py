@@ -45,9 +45,16 @@ class _ExplicitProxy(urllib.request.ProxyHandler):
         return None
 
 
-def _opener(proxy):
+class _NoMeasurementRedirect(urllib.request.HTTPRedirectHandler):
+    """An explicitly chosen test endpoint must not silently measure a different one."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _opener(proxy, allow_redirects=True):
     handler = _ExplicitProxy({'http': proxy, 'https': proxy}) if proxy else urllib.request.ProxyHandler({})
-    return urllib.request.build_opener(handler)
+    handlers = [handler] if allow_redirects else [handler, _NoMeasurementRedirect()]
+    return urllib.request.build_opener(*handlers)
 
 
 def measurement_urls(origin=None):
@@ -88,9 +95,9 @@ def _record_error(errors, phase, error):
         errors.append(message)
 
 
-def latency(proxy=None, n=10, url=LATENCY_URL, timeout=10, errors=None):
+def latency(proxy=None, n=10, url=LATENCY_URL, timeout=10, errors=None, allow_redirects=True):
     """Milliseconds for n fresh HTTPS requests. Returns {median, p90, min, fails}."""
-    op, ms, fails = _opener(proxy), [], 0
+    op, ms, fails = _opener(proxy, allow_redirects), [], 0
     for _ in range(n):
         t0 = time.perf_counter()
         try:
@@ -107,10 +114,11 @@ def latency(proxy=None, n=10, url=LATENCY_URL, timeout=10, errors=None):
             'min': round(ms[0]), 'fails': fails}
 
 
-def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagnostics=None, url=DOWN_URL, errors=None):
+def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagnostics=None, url=DOWN_URL, errors=None,
+             allow_redirects=True):
     """Mbit/s over `streams` parallel connections for `seconds` (after one second of warm-up).
     Cloudflare refuses single downloads near 100 MB, so each connection repeats 50 MB requests."""
-    op = _opener(proxy)
+    op = _opener(proxy, allow_redirects)
     lock, total, stop = threading.Lock(), [0], time.perf_counter() + seconds + 1
     marks, failures, retried = {}, [], [0]
 
@@ -160,9 +168,9 @@ def download(proxy=None, streams=1, seconds=10, size=50 << 20, timeout=15, diagn
     return round((total[0] - b0) * 8 / max(0.001, end - t0) / 1e6, 1)
 
 
-def upload(proxy=None, size=25 << 20, timeout=30, url=UP_URL, errors=None):
+def upload(proxy=None, size=25 << 20, timeout=30, url=UP_URL, errors=None, allow_redirects=True):
     """Mbit/s for one upload of `size` bytes."""
-    op = _opener(proxy)
+    op = _opener(proxy, allow_redirects)
     block = os.urandom(min(size, 1 << 20))
     data = block * (size // len(block)) + block[:size % len(block)] if block else b''
     t0 = time.perf_counter()
@@ -190,6 +198,13 @@ def working_download_url(proxy=None, size=50 << 20, timeout=15, candidates=None)
     return None
 
 
+def _download_source_id(url, controlled):
+    if controlled:
+        return 'controlled'
+    known = dict(zip((DOWN_URL,) + DOWN_FALLBACKS, ('cloudflare', 'ovh', 'hetzner-ash', 'hetzner-fsn')))
+    return known.get(url, 'custom')
+
+
 def run(proxy=None, quick=False, log=print, origin=None):
     latency_url, down_url, up_url = measurement_urls(origin)
     if origin is None:          # public endpoints: step past a refusing Cloudflare instead of reporting 0
@@ -198,32 +213,45 @@ def run(proxy=None, quick=False, log=print, origin=None):
             log('  (Cloudflare refused the download test; using %s)' % urllib.parse.urlsplit(picked).hostname)
         down_url = picked or down_url
     errors = []
-    out = {'errors': errors}
+    out = {'errors': errors, 'measurement': {
+        'source_policy': 'controlled-no-fallback' if origin is not None else 'public-fallback',
+        'latency_source_id': 'controlled' if origin is not None else 'gstatic',
+        'upload_source_id': 'controlled' if origin is not None else 'cloudflare'}}
     log('  latency…')
-    out['latency'] = latency(proxy, n=5 if quick else 10, url=latency_url, errors=errors)
+    out['latency'] = latency(proxy, n=5 if quick else 10, url=latency_url, errors=errors,
+                             allow_redirects=origin is None)
     out['download_diagnostics'] = {}
     for streams in (1, 4):
         label = 'down_%d' % streams
         log('  download, %d connection%s…' % (streams, '' if streams == 1 else 's'))
-        diagnostic = {}
-        out[label] = download(proxy, streams, 5 if quick else 10, diagnostics=diagnostic, url=down_url, errors=errors)
+        diagnostic, attempts = {}, []
+
+        def attempt(url):
+            info = {}
+            value = download(proxy, streams, 5 if quick else 10, diagnostics=info, url=url, errors=errors,
+                             allow_redirects=origin is None)
+            info['source_id'] = _download_source_id(url, origin is not None)
+            attempts.append(dict(info, mbps=value))
+            return value, info
+
+        out[label], diagnostic = attempt(down_url)
         if not out[label] and origin is None:
             # the source answered the probe but broke off during the test: try the next public source
             rest = (DOWN_URL,) + DOWN_FALLBACKS
             for alt in rest[rest.index(down_url) + 1:] if down_url in rest else ():
-                diagnostic = {}
-                out[label] = download(proxy, streams, 5 if quick else 10, diagnostics=diagnostic, url=alt, errors=errors)
+                out[label], diagnostic = attempt(alt)
                 if out[label]:
                     log('  (download source switched to %s)' % urllib.parse.urlsplit(alt).hostname)
                     down_url = alt
                     break
+        diagnostic['attempts'] = attempts
         out['download_diagnostics'][label] = diagnostic
         for error in dict.fromkeys(diagnostic.get('errors', [])):
             log('  download failed: ' + error)
         if not diagnostic.get('warmup_complete'):
             log('  no sustained download sample (%d bytes before warm-up completed)' % diagnostic.get('bytes', 0))
     log('  upload…')
-    out['up_1'] = upload(proxy, (8 if quick else 25) << 20, url=up_url, errors=errors)
+    out['up_1'] = upload(proxy, (8 if quick else 25) << 20, url=up_url, errors=errors, allow_redirects=origin is None)
     return out
 
 
