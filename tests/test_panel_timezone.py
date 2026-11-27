@@ -36,7 +36,7 @@ function h(tag, attrs, ...children) {
 const t = key=>key, icon = name=>h('i',null,name);
 const field = (...args)=>h('label',null,...args);
 const check = field, panel = field, tip = field, chip = field;
-const clientPanel = ()=>h('div');
+const clientPanel = ()=>h('div'), certStatus = ()=>null;
 const $ = ()=>({replaceChildren(){}});
 const numOrNull = v=>v==='' ? null : Number(v);
 const toast = ()=>{}, err = error=>{throw error;};

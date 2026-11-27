@@ -249,7 +249,8 @@ class StalledInstallHasADeadline(unittest.TestCase):
         import sys
         import tempfile
         import time
-        from deploy import deploy
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'deploy'))
+        import deploy                                           # the same module object test_deploy uses
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         real_popen = subprocess.Popen

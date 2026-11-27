@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.51
+
+Fixes from an outside code review: reliability, data safety and a few security details. The panel looks the same.
+按一次外部代码审查修了一批问题，主要是可靠性、数据安全和几处安全细节。面板外观不变。
+
+- Accounts and data: changing a member's password or credentials refuses a request based on stale data; bulk actions on accounts apply to all of them or none; unread feedback replies are kept across pages and when two replies arrive together; a failed traffic report no longer drops pending access changes.
+  账号和数据：基于过期数据的改密码、换凭据请求会被拒绝；批量操作账号要么全部生效，要么都不生效；分页和同时收到两条回复时，未读的反馈回复不会丢；流量上报失败时，待生效的访问规则变更不会丢。
+- Backups: a backup is one consistent snapshot of the database; a failed scheduled backup is retried with growing pauses; a restore only replaces the database while the panel is stopped.
+  备份：备份导出的是同一时刻的数据库；定时备份失败会隔一段时间重试，间隔逐渐变长；恢复时必须先停掉面板才会替换数据库文件。
+- Services: a restart that failed after the new config was written is tried again on the next apply, instead of being treated as done (#141). Speed limits that could not be applied are reported and retried, except on hosts that cannot shape traffic at all. Maintenance deadlines stay right across daylight-saving changes, and probes that miss their deadline count against availability.
+  服务：新配置写好但重启失败时，下次应用配置会再次重启，不再当作已经完成（#141）。限速没有生效时会报错并重试；本来就不支持限速的主机除外。维护截止时间在夏令时切换前后保持正确；超时的探测也计入可用率。
+- Security: request bodies and answers from joined servers are parsed strictly (duplicate keys, NaN, numbers that are too long and very deep nesting are refused with a clear error); an answer from a joined server over 8 MiB is refused instead of being cut short; first-time setup runs only once even if two requests arrive together; cluster addresses must be public unicast. The docs say plainly that subscription links use HTTP until a certificate is issued, and that the cloud firewall only needs the listed ports open.
+  安全：请求内容和子服务器的回复按严格规则解析（重复的键、NaN、过长的数字、嵌套过深都会被拒绝并给出明确错误）；子服务器回复超过 8 MiB 时直接拒绝，不再截断后解析；两个首次设置请求同时到达时只会成功一个；集群地址必须是公网单播地址。文档写明：申请到证书之前订阅链接走 HTTP；云防火墙只需放行列出的端口。
+- Deployer: a remote install that stops making progress is cut off after 30 minutes, with a note that it may still be finishing on the server (#157); damaged saved server records are skipped; on Windows it stops if the key file's permissions cannot be made private.
+  部署工具：服务器上的安装超过 30 分钟没有结束时断开本机连接，并提示服务器上可能还在安装（#157）；跳过损坏的已保存服务器记录；Windows 上密钥文件无法设为仅自己可读时停止部署。
+- Panel: an older refresh no longer overwrites newer data, a saved time zone that is not in the list is kept, the member page ignores answers that arrive after you moved on, and the theme buttons have labels for screen readers. Rule import keeps the rules after an exact domain match.
+  面板：旧的刷新结果不会覆盖新数据；不在预设列表里的已保存时区会保留；会员中心切换页面后，忽略之前页面迟到的响应；主题按钮加了读屏标签。导入规则时，精确域名匹配之后的规则不会丢。
+- Releases now run the whole test suite before publishing, and CI finds every test file by itself.
+  发布前先跑完整测试；CI 会自动找到所有测试文件。
+
 ## 0.2.50
 
 Fixes for the most serious problems found in a full review of the admin panel and the member center. The layout and colors are unchanged.
