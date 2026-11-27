@@ -2,29 +2,29 @@
 /* vps2vpn panel. Built on kit.js, the component kit of the original admin console. No framework, no external scripts. */
 const T = {
   zh: {
-    welcome: '欢迎使用 vps2vpn', welcome_sub: '三步把这台服务器变成你自己的 VPN，其它都已经自动设好。',
+    welcome: '欢迎使用 vps2vpn', welcome_sub: '三步把这台服务器变成你自己的 VPN，其他都已经自动设好。',
     art_h: '一台服务器，\n一个属于你的 VPN。', art_p: '三种协议随时切换，订阅一键导入 Clash 和小火箭，流量、到期、证书、告警全自动。',
-    art_1: 'VLESS + REALITY · Hysteria 2 · TUIC v5', art_2: '自动证书、自动调优、自动备份', art_3: '一键体检，出问题告诉你怎么修',
+    art_1: 'VLESS + REALITY · Hysteria 2 · TUIC v5', art_2: '自动证书、自动调优、自动备份', art_3: '一键体检，发现问题时给出修复方法',
     admin: '管理员账号', username: '用户名', password: '密码（至少 8 位）', password2: '再输一次密码',
-    first_user: '第一个使用者的名字', server_addr: '服务器地址（IP 或域名，已自动识别；修改后订阅链接也会改变，需要把新链接重新发给大家）',
-    next: '下一步', back: '上一步', build: '一键建好 VPN', building: '搭建中，大约 10 秒…',
+    first_user: '第一个用户的名字', server_addr: '服务器地址（IP 或域名，已自动识别；修改后订阅链接也会改变，需要把新链接重新发给大家）',
+    next: '下一步', back: '上一步', build: '开始搭建', building: '搭建中，大约 10 秒…',
     advanced: '高级选项（不了解时请保持默认）', lang: '语言 / Language',
     time_zone: '每月重置按哪个时区', tz_server: '服务器自己的时间',
     login: '登录', login_intro: '输入安装时设置的管理员账号。连续输错 8 次会锁定 10 分钟。', logout: '退出登录', wrong: '用户名或密码错误',
-    nav_main: '运营', nav_infra: '服务器', nav_home: '总览', nav_users: '使用者', nav_settings: '协议与设置', nav_system: '体检与维护',
-    k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
-    live: '实时吞吐', down: '下行', up_: '上行', online: '在线连接', users_n: '个使用者', active_n: '正常', paused_n: '停用',
+    nav_main: '运营', nav_infra: '服务器', nav_home: '总览', nav_users: '用户', nav_settings: '协议与设置', nav_system: '体检与维护',
+    k_home: '管理面板', k_users: '管理面板', k_settings: '管理面板', k_system: '管理面板',
+    live: '实时吞吐', down: '下行', up_: '上行', online: '在线连接', users_n: '个用户', active_n: '正常', paused_n: '停用',
     month: '近 30 天用户流量（计入额度）', today: '今日', avg7: '近 7 日均', server: '服务器', mem: '内存', load: '负载', uptime: '已运行',
-    live_chart: '实时流量', live_sub: '服务器网卡 · 3 分钟', days_chart: '每日流量', days_sub: '近 30 天，全部使用者',
+    live_chart: '实时流量', live_sub: '服务器网卡 · 3 分钟', days_chart: '每日流量', days_sub: '近 30 天，全部用户',
     services: '服务状态', running: '运行中', stopped: '未运行', off: '已关闭', unknown: '未知',
-    users: '使用者', add_user: '添加使用者', name: '名字', quota: '流量上限 (GB，0 = 不限)', expire: '到期日（留空 = 永久）',
+    users: '用户', add_user: '添加用户', name: '名字', quota: '流量上限 (GB，0 = 不限)', expire: '到期日（留空 = 永久）',
     reset_day: '每月几号重置流量（0 = 不重置）', period_ends: '已保存。改了重置日：这一期用到 {d} 才重置（不会马上清零），之后每月按新的日子重置。', note: '备注', save: '保存', cancel: '取消', del: '删除',
     used: '已用', unlimited: '不限', never: '永久', status: '状态', expires: '到期', last_seen: '最近使用', sub_fetched: '最近拉取订阅', sub_never: '还没有 App 拉取过', sub_app: '拉取订阅的 App',
     enabled: '正常', r_quota: '流量用完', r_expired: '已到期', r_manual: '手动停用', r_remote: '主服务器停用', search: '搜索名字或备注',
-    share: '订阅', share_tip: '把链接或二维码发给使用者：手机扫码，或在 App 里「从 URL 导入」。',
+    share: '订阅', share_tip: '把链接或二维码发给用户：手机扫码，或在 App 里「从 URL 导入」。',
     copy: '复制订阅链接', open_page: '打开导入页面', open_app: '在 vps2vpn 客户端中打开', rotate: '更换订阅链接', reset: '清零流量',
     confirm_del: '删除后该用户的链接立即失效，不能恢复。', confirm_rotate: '旧链接会立刻失效，需要把新链接重新发给该用户。',
-    confirm_reset: '把本月已用流量清零？', enable: '启用', disable: '停用', edit: '编辑', usage: '用量', actions: '操作',
+    confirm_reset: '这个用户本期已用的流量会归零。', enable: '启用', disable: '停用', edit: '编辑', usage: '用量', actions: '操作',
     s_basic: '基本', s_proto: '协议（可同时开，App 里随时切换）', s_route: '分流', s_cert: '证书',
     node_name: '节点名字（显示在 App 里）', support_url: '客服 / 帮助链接（App 里显示，http(s):// 或 tg://，留空不显示）', sub_update_hours: '订阅自动更新间隔（小时，1–168；更换服务器或修改设置后，App 多久能获取到）', tune: '自动网络调优（BBR + 按内存调整缓冲区）',
     reality: 'VLESS + REALITY', reality_d: 'TCP。最稳定，伪装成访问大型网站，几乎不会被识别。默认首选。',
@@ -36,12 +36,12 @@ const T = {
     ipv6_nodes: '同时提供 IPv6 节点（IPv4 网络较慢时可以改用）',
     tcp_first: 'TCP 优先：订阅里先用 Reality，再用 Hysteria 2 / TUIC（适合 UDP 常被限速的网络）',
     cert_mode: '证书方式', cert_auto: '自动申请免费证书（Let\'s Encrypt，支持纯 IP）', cert_self: '只用自签名证书',
-    domain: '域名（可选，有就填）', email: '邮箱（可选，证书快过期时提醒）', cert_now: '立即申请证书',
+    domain: '域名（可选）', email: '邮箱（可选，证书快过期时提醒）', cert_now: '立即申请证书',
     cert_ok: '受信任证书', cert_self_s: '自签名证书', cert_self_tip: '代理连接仍然加密，但浏览器会提示不安全，订阅链接也会改用 HTTP：链接和其中的账号信息可能在传输途中被读取或篡改。建议放行 TCP 80，申请受信任证书。',
     cert_st_ok: '上次申请证书成功。', cert_st_failed: '上次申请证书失败。最常见的原因是云服务商的防火墙没有放行 TCP 80。点击查看原因。',
     saved: '已保存，生效中…', change_pw: '修改管理员密码', old_pw: '当前密码', new_pw: '新密码',
     backup: '备份与恢复', backup_tip: '每天自动备份一次（保留 14 天）。更换服务器时下载备份，在新服务器上恢复即可。',
-    download_backup: '下载备份', restore: '从备份恢复', restore_ok: '已恢复', confirm_restore: '恢复会覆盖当前所有用户、邀请码和设置，确定继续吗？', retry: '重试',
+    download_backup: '下载备份', restore: '从备份恢复', restore_ok: '已恢复', confirm_restore: '恢复会覆盖当前所有用户、邀请码和设置。', retry: '重试',
     ports: '防火墙端口', ports_tip: '需要在云服务商的防火墙 / 安全组里放行这些端口（服务器自己的防火墙已自动放行）。',
     logs: '最近日志', restart: '重启代理服务', rules_refresh: '立即更新分流规则', rules_age: '分流规则更新于', ago: '前', version: '版本',
     days: '天', hours: '小时', minutes: '分钟', bbr: 'BBR 加速', yes: '已开启', no: '未开启',
@@ -55,8 +55,8 @@ const T = {
     tg_pair: '请把下面这行命令发送到与机器人的私聊（不要发送到群组）：',
     tg_repair: '旧版或从备份恢复的 Telegram 收件人尚未验证，告警和备份已暂停。请向原机器人私聊发送下面的配对命令，再点击「连接」；如果沿用原 token，可以留空。',
     refresh: '刷新', syncing: '同步中…', synced: '已同步', theme_auto: '跟随系统', theme_light: '浅色', theme_dark: '深色',
-    no_users: '还没有使用者，点击右上角添加。', proto_one: '至少要开一种协议',
-    copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
+    no_users: '还没有用户，点击右上角添加。', proto_one: '至少要开一种协议',
+    copy_btn: '复制', nav_members: '会员与邀请', nav_servers: '多服务器', nav_monitor: '监控与风控', k_members: '管理面板', k_servers: '管理面板', k_monitor: '管理面板',
     tab_home: '总览', tab_users: '用户', tab_members: '会员', tab_servers: '服务器', tab_monitor: '监控', tab_settings: '设置', tab_system: '体检',
     online_now: '在线', devices: '个设备', shared_out: '分给邀请的人', extra_now: '本期临时加量（下次重置或手动清零时取消）', extra_gone: '本期临时加量也会一起取消。', invited_by: '邀请人', eff_quota: '实际可用额度', plan: '套餐', history: '每日用量', history_sub: '近 30 天',
     member_login: '会员中心登录', member_login_tip: '设置密码后，该用户可以用用户名和密码登录会员中心（查看用量、申请流量、邀请朋友）。不设密码也能通过订阅链接看到同样的页面。',
@@ -64,15 +64,15 @@ const T = {
     requests: '流量申请', req_none: '没有待处理的申请。', approve: '批准', reject: '拒绝', approve_gb: '批准增加多少 GB', approve_tip: '留空 = 按申请的数量批准。只加到本期：下次重置日（或手动清零流量时）自动取消；没设重置日的账号会一直保留到手动清零。想长期提高，请在用户编辑里改「流量上限」。', answer: '回复（可选）', asked: '（申请了 {n} GB）',
     pending: '待处理', approved: '已批准', rejected: '已拒绝',
     invites: '邀请码', inv_tip: '管理员邀请码：自定义额度和有效期，不占用任何人的流量。会员也可以在会员中心用自己的额度生成邀请码。',
-    inv_make: '生成邀请码', inv_quota: '每个账号的流量 (GB，0 = 不限)', inv_life: '账号有效期（天，0 = 永久）', inv_uses: '可以用几次', inv_valid: '邀请码几天内有效', inv_reset: '每月几号重置（0 = 不重置）',
+    inv_make: '生成邀请码', inv_quota: '每个账号的流量 (GB，0 = 不限)', inv_life: '账号有效期（天，0 = 永久）', inv_uses: '可使用次数', inv_valid: '邀请码几天内有效', inv_reset: '每月几号重置（0 = 不重置）',
     inv_none: '还没有邀请码。', inv_by: '生成者', inv_admin: '管理员', revoke: '撤销', copy_code: '复制邀请码', copy_link: '复制注册链接',
     st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', used_by: '注册了',
     member_centre: '会员中心', member_url: '会员中心地址（发给会员，或附在邀请码后面）', member_enabled: '开启会员中心', member_invites: '允许会员用自己的额度邀请朋友', member_requests: '允许会员申请增加流量', member_notice: '给会员的公告（显示在会员中心顶部，留空则不显示）', save_notice: '保存公告',
     servers: '已加入的服务器', servers_tip: '只有一台服务器时，不需要设置这一页。有第二台（例如新加坡 + 美国）时：在另一台的面板复制它的「加入码」，粘贴到下面，点击「添加服务器」。之后每个人的订阅里会同时包含两台服务器的节点，流量计入同一个额度，用户只在这台服务器上管理。',
     join_code: '本机加入码', join_tip: '只在反过来、要让这台服务器被另一台管理时使用：把这串字符复制到另一台面板的「多服务器」页面。它相当于这台服务器的钥匙，请勿发给他人。', reset_key: '更换加入码',
-    reset_key_tip: '旧加入码立刻失效，主服务器那边要删掉本机重新添加。', add_server: '添加服务器', paste_code: '粘贴子服务器的加入码', server_name: '显示名字（如「东京」）',
-    no_servers: '还没有加入其它服务器。', sync_failed: '同步失败', sync_failed_why: '同步失败，点击查看原因', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。面板会马上通知那台服务器删掉从这里同步过去的账号，并记上它们最后用的流量。', remove_unreached: '已移除。那台服务器目前无法连接，面板会每隔几分钟再通知它，它一上线就会删除从这里同步过去的账号（最多等待 30 天）。', leaving: '等它上线', leaving_wait: '已移除，无法连接：等它上线后通知它删除从这里同步过去的账号（最多再等 {d} 天）', leaving_forget: '不等了，直接删', leaving_forget_tip: '面板不再通知那台服务器。从这里同步过去的账号在那边会一直可用，流量也不再计入这里，除非在那台服务器面板的「多服务器」页点击「更换加入码」。',
-    client_upd: 'vps2vpn 客户端更新', client_ver: '最新版本号（留空 = 按服务器上的安装包自动判断）', client_url: '下载链接（留空 = 用服务器上的安装包）', client_notes: '更新说明（显示给大家看，可不填）',
+    reset_key_tip: '旧加入码立即失效。主服务器需要先移除本机，再用新的加入码重新添加。', add_server: '添加服务器', paste_code: '粘贴子服务器的加入码', server_name: '显示名字（如「东京」）',
+    no_servers: '还没有加入其他服务器。', sync_failed: '同步失败', sync_failed_why: '同步失败，点击查看原因', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。面板会立即通知那台服务器删除从这里同步过去的账号，并记上它们最后用的流量。', remove_unreached: '已移除。那台服务器目前无法连接，面板会每隔几分钟再通知它，它一上线就会删除从这里同步过去的账号（最多等待 30 天）。', leaving: '等它上线', leaving_wait: '已移除，无法连接：等它上线后通知它删除从这里同步过去的账号（最多再等 {d} 天）', leaving_forget: '直接删除', leaving_forget_tip: '面板不再通知那台服务器。从这里同步过去的账号在那边会一直可用，流量也不再计入这里，除非在那台服务器面板的「多服务器」页点击「更换加入码」。',
+    client_upd: 'vps2vpn 客户端更新', client_ver: '最新版本号（留空 = 按服务器上的安装包自动判断）', client_url: '下载链接（留空 = 用服务器上的安装包）', client_notes: '更新说明（可选，显示给用户）',
     client_tip: '面板会自动从 GitHub 获取最新的 vps2vpn 客户端（带签名的 Windows 安装包和安卓 APK），放进下面这个文件夹；使用 vps2vpn 客户端（1.0.9 及以上）的用户会在后台下载、校验签名，点击一次即可安装并重启。使用 Clash Verge、FlClash、小火箭等其他软件的用户不受影响，也收不到这个更新。也可以自己把安装包和同名 .sig 文件放进去，其他都不用填写。',
     client_auto_update: '自动从 GitHub 获取最新客户端（只要带发布签名的）',
     client_traffic_rank: '在客户端里显示「流量排行」（每个应用实时用了多少流量；仅 vps2vpn 客户端支持）',
@@ -90,9 +90,9 @@ const T = {
     client_found: (v, p) => `服务器上找到安装包：版本 ${v}（${p}），只有订阅链接有效的人能下载。`, client_none: d => `服务器上还没有安装包。放进 ${d} 即可。`, client_unsigned: n => `缺少签名文件：${n}。App 只装带签名的安装包，请把 GitHub 发布页上同名的 .sig 文件一起放进来。`,
     renew: '服务器到期提醒', renew_at: '这台 VPS 哪天到期（续费日）', renew_note: '在哪里续费（例如 AWS Lightsail）',
     renew_tip: '填写后，到期前 7 天、3 天、1 天和当天会用 Telegram 提醒你，总览页也会提示。不填写则不提醒。如果按月付费，每次续费后改成下个月的日期。',
-    renew_left: n => n > 0 ? `服务器还有 ${n} 天到期，记得续费` : n === 0 ? '服务器今天到期，请马上续费' : `服务器已过期 ${-n} 天，请检查是否已续费`,
+    renew_left: n => n > 0 ? `服务器还有 ${n} 天到期，请及时续费` : n === 0 ? '服务器今天到期，请马上续费' : `服务器已过期 ${-n} 天，请检查是否已续费`,
     renew_clear: '不提醒',
-    line_down: (n, name) => `最近 24 小时有 ${n} 个使用者的 vps2vpn 客户端报告「${name}」无法连接（使用其他软件的用户不会报告）`,
+    line_down: (n, name) => `最近 24 小时有 ${n} 个用户的 vps2vpn 客户端报告「${name}」无法连接（使用其他软件的用户不会报告）`,
     line_far: '（属于其他服务器的节点，请到那台服务器的面板处理）',
     change_port: '更换端口', change_port_q: name => `把「${name}」更换到一个新的随机端口？`,
     change_port_tip: '端口被运营商封锁或限速时使用。更换后，大家的软件更新一次订阅即可使用（vps2vpn 客户端和多数软件会按「订阅自动更新间隔」自动更新，默认 12 小时；小火箭等未开启自动更新的软件需要手动更新）。云服务器自带防火墙的（如 AWS Lightsail、阿里云、腾讯云），还需要在云控制台放行新端口。',
@@ -107,23 +107,29 @@ const T = {
     f_all: '全部', f_online: '在线', f_active: '正常', f_paused: '已停用', f_soon: '7 天内到期', f_low: '快用完',
     s_id: '按添加顺序', s_name: '按名字', s_used: '按用量', s_exp: '按到期日', s_seen: '按最近使用',
     selected: '已选', sel_all: '全选', clear_sel: '取消选择', b_reset: '清零流量', b_extend: '延期', b_addgb: '永久提高上限', b_rotate: '更换订阅链接',
-    extend_days: '延长多少天（没设到期日的人不受影响）', add_gb_q: '每人的流量上限永久提高多少 GB（每月都有效；不限量的人不受影响）', bulk_done: '已处理', still_n: '其中 {n} 个已到期或流量用完，启用后马上又暂停了：请先延期或加流量。', still_expired: '已到期，启用后马上又暂停了：请先把到期日往后改。', still_quota: '流量已用完，启用后马上又暂停了：请先清零流量或调高上限。',
-    confirm_bulk_del: '删除后这些人的链接立即失效，不能恢复。', confirm_bulk_rotate: '这些人的旧链接会立刻失效，需要把新链接重新发给他们。',
+    extend_days: '延长多少天（没有设置到期日的用户不受影响）', add_gb_q: '每个用户的流量上限永久提高多少 GB（每月都有效；不限量的用户不受影响）', bulk_done: '已处理', still_n: '其中 {n} 个已到期或流量用完，启用后马上又暂停了：请先延期或加流量。', still_expired: '已到期，启用后马上又暂停了：请先把到期日往后改。', still_quota: '流量已用完，启用后马上又暂停了：请先清零流量或调高上限。',
+    confirm_bulk_del: '删除后，这些用户的链接立即失效，不能恢复。', confirm_bulk_rotate: '这些用户的旧链接立即失效，需要把新链接重新发给他们。',
     batch_add: '批量添加', export_csv: '导出表格', batch_prefix: '名字前缀（生成 前缀-01、前缀-02…）', batch_count: '数量（1–200）', batch_made: '已创建',
     max_ips: '同时在线上限（按同时连接的 IP 数计算：同一个 Wi‑Fi 下的多台设备算一台；0 = 不限）', speed_mbps: '限速 Mbps（0 = 不限）', throttle_mbps: '流量用完后降速到 Mbps（0 = 直接停用）',
     srv_pick: '可用服务器', srv_all: '全部服务器（以后加入的也算）', srv_none: '至少选一台服务器', limited_now: '限速中', slowed: '已降速',
     shaper_off: '这台服务器的内核不支持按账号限速（容器 VPS 常见），限速设置在这台上不生效。设了「用完后降速」的账号，流量用完后在这台上会停用，不会降速；如果它能用的其他服务器支持限速，会在那些服务器上降速继续用。',
     rate: '倍率', rate_tip: '这台服务器的流量按几倍计入额度（机场常见做法，如 ×2 表示 1 GB 记 2 GB；0 = 不计）', rate_this: '本机倍率', rate_set: '设置倍率',
     inv_limits: '限速与服务器', exp_mode: '到期方式', exp_never: '永久有效', exp_date: '指定日期', exp_first: '首次使用后开始计时', exp_days: '从今天起多少天',
-    exp_first_days: '首次使用后多少天到期', exp_waiting: '首用后', r_devices: '设备超限', dev_limit: '设备上限', reset_on: '每月 {d} 号重置', srv_pause: '暂停这台（上面的账号全部停用）', srv_resume: '恢复这台', no_match: '没有符合条件的使用者。',
-    sec: '登录安全', totp: '两步验证（2FA）', totp_tip: '开启后，登录时除了密码，还要输入手机验证器 App（Google Authenticator、Microsoft Authenticator、1Password 等）里的 6 位数字。就算密码泄露也登不进来。',
+    exp_first_days: '首次使用后多少天到期', exp_waiting: '首用后', r_devices: '设备超限', dev_limit: '设备上限', reset_on: '每月 {d} 号重置', srv_pause: '暂停这台（上面的账号全部停用）', srv_resume: '恢复这台', no_match: '没有符合条件的用户。',
+    sec: '登录安全', totp: '两步验证（2FA）', totp_tip: '开启后，登录时除了密码，还要输入手机验证器 App（Google Authenticator、Microsoft Authenticator、1Password 等）里的 6 位数字。即使密码泄露，他人也无法登录。',
     totp_on: '已开启', totp_off: '未开启', totp_enable: '开启两步验证', totp_disable: '关闭两步验证', totp_scan: '① 用验证器 App 扫码（或手动输入下面的密钥）　② 填入 App 显示的 6 位数字',
     totp_code: '6 位验证码', totp_need: '请输入验证器 App 里的 6 位数字', totp_pw: '输入管理员密码确认关闭', totp_confirm: '确认开启',
-    logins: '最近登录', login_ok: '登录成功', login_fail: '密码错误', login_fail2fa: '验证码错误', sessions: '已登录的设备', logout_others: '退出其它所有设备', no_logins: '还没有记录。',
+    logins: '最近登录', login_ok: '登录成功', login_fail: '密码错误', login_fail2fa: '验证码错误', sessions: '已登录的设备', logout_others: '退出其他所有设备', no_logins: '还没有记录。',
     routing_custom: '自定义分流', routing_tip: '每行一个域名，自动包含子域名（写 example.com 就包括 www.example.com）。优先级：屏蔽 > 直连 > 走代理，都排在内置规则之前。保存后，App 下次更新订阅时生效。',
     c_direct: '直连（不走代理）', c_proxy: '走代理', c_block: '屏蔽（拒绝连接）', ip_limit_pause: '设备超过上限时暂停 10 分钟（关掉则只提醒）',
     tg_bot: '接受机器人命令', tg_backup: '每天把备份发到 Telegram', tg_cmds: '在 Telegram 里给机器人发：/status 服务器状态 · /users 每人用量 · /user 名字 · /doctor 体检 · /ai AI 可用性 · /expiring 快到期或流量快用完的人 · /backup 立即要一份备份。只回复你自己的聊天。',
-    sys24: '服务器负载', sys24_sub: 'CPU、内存 · 24 小时', net24: '服务器网络', net24_sub: '24 小时 · 每分钟一个点', cpu: 'CPU', no_hist: '每分钟记录一次，稍后再来看。', dev_events: '设备超限记录'
+    sys24: '服务器负载', sys24_sub: 'CPU、内存 · 24 小时', net24: '服务器网络', net24_sub: '24 小时 · 每分钟一个点', cpu: 'CPU', no_hist: '每分钟记录一次，稍后再来看。', dev_events: '设备超限记录',
+    q_reset: '清零本期流量？', q_rotate: '更换订阅链接？', q_del: n => `删除「${n}」？`, q_bulk_del: n => `删除这 ${n} 个用户？`, q_bulk_rotate: n => `更换这 ${n} 个用户的订阅链接？`,
+    q_bulk_extend: n => `给 ${n} 个用户延期`, q_bulk_addgb: n => `提高 ${n} 个用户的流量上限`,
+    q_revoke: '撤销这个邀请码？', revoke_tip: c => `撤销后，${c} 不能再用来注册；已经注册的账号不受影响。`, fb_del_tip: '删除后不能恢复。',
+    q_remove: n => `移除「${n}」？`, q_forget: n => `不再等待「${n}」？`, q_reset_key: '更换加入码？', q_restore: '从备份恢复？',
+    q_restart: '重启代理服务？', restart_tip: '使用中的连接会断开几秒，之后自动重新连接。', restart_ok: '重启',
+    brand_sub: '自建 VPN', console: '管理面板', live_pill: '实时'
   },
   en: {
     welcome: 'Welcome to vps2vpn', welcome_sub: 'Three steps turn this server into your own VPN. Everything else is set up for you.',
@@ -137,7 +143,7 @@ const T = {
     login: 'Sign in', login_intro: 'Use the admin account you created during setup. 8 wrong tries lock sign-in for 10 minutes.', logout: 'Sign out', wrong: 'Wrong username or password',
     nav_main: 'Operate', nav_infra: 'Server', nav_home: 'Overview', nav_users: 'Users', nav_settings: 'Protocols & settings', nav_system: 'Health & upkeep',
     k_home: 'OVERVIEW', k_users: 'USERS', k_settings: 'SETTINGS', k_system: 'SYSTEM',
-    live: 'Live throughput', down: 'down', up_: 'up', online: 'Online', users_n: 'users', active_n: 'active', paused_n: 'paused',
+    live: 'Live throughput', down: 'down', up_: 'up', online: 'Online', users_n: 'users', users_n_1: 'user', active_n: 'active', paused_n: 'paused',
     month: 'User traffic, 30 days (as billed)', today: 'Today', avg7: '7-day avg', server: 'Server', mem: 'Memory', load: 'Load', uptime: 'Uptime',
     live_chart: 'Live traffic', live_sub: 'Server network · 3 minutes', days_chart: 'Daily traffic', days_sub: 'Last 30 days, all users',
     services: 'Services', running: 'running', stopped: 'stopped', off: 'off', unknown: 'unknown',
@@ -148,7 +154,7 @@ const T = {
     share: 'Subscription', share_tip: 'Send this link or QR code to the user. Scan it, or use "Import from URL" in the app.',
     copy: 'Copy link', open_page: 'Open import page', open_app: 'Open in the vps2vpn app', rotate: 'New subscription link', reset: 'Reset usage',
     confirm_del: 'Their link stops working immediately. This cannot be undone.', confirm_rotate: 'The old link stops working immediately; send them the new one.',
-    confirm_reset: 'Reset this month\'s usage to zero?', enable: 'Enable', disable: 'Pause', edit: 'Edit', usage: 'Usage', actions: 'Actions',
+    confirm_reset: 'This account\'s usage for the current period goes back to zero.', enable: 'Enable', disable: 'Pause', edit: 'Edit', usage: 'Usage', actions: 'Actions',
     s_basic: 'Basics', s_proto: 'Protocols (turn on several and switch in the app)', s_route: 'Routing', s_cert: 'Certificate',
     node_name: 'Node name (shown in apps)', support_url: 'Support link shown in apps (http(s):// or tg://, empty = none)', sub_update_hours: 'Subscription refresh interval (hours, 1-168: how soon apps pick up a change)', tune: 'Automatic network tuning (BBR + buffers sized to RAM)',
     reality: 'VLESS + REALITY', reality_d: 'TCP. The most robust: looks like a visit to a big website. Default choice.',
@@ -165,7 +171,7 @@ const T = {
     cert_st_ok: 'The last certificate request worked.', cert_st_failed: 'The last certificate request failed, most often because TCP 80 is closed in the provider firewall. Click for the reason.',
     saved: 'Saved, applying…', change_pw: 'Change admin password', old_pw: 'Current password', new_pw: 'New password',
     backup: 'Backup & restore', backup_tip: 'A backup is made every day (14 kept). To move servers, download one here and restore it on the new server.',
-    download_backup: 'Download backup', restore: 'Restore from backup', restore_ok: 'Restored', confirm_restore: 'Restoring replaces all current users, invite codes and settings. Continue?', retry: 'Retry',
+    download_backup: 'Download backup', restore: 'Restore from backup', restore_ok: 'Restored', confirm_restore: 'Restoring replaces all current users, invite codes and settings.', retry: 'Retry',
     ports: 'Firewall ports', ports_tip: 'Open these in your cloud provider\'s firewall / security group (the server\'s own firewall is already open).',
     logs: 'Recent log', restart: 'Restart proxy services', rules_refresh: 'Update routing rules now', rules_age: 'Routing rules updated', ago: 'ago', version: 'Version',
     days: 'd', hours: 'h', minutes: 'min', bbr: 'BBR', yes: 'on', no: 'off',
@@ -173,7 +179,7 @@ const T = {
     pw_mismatch: 'Passwords do not match', pw_short: 'Password needs 8+ characters', done_title: 'Done!', done_sub: 'Here is your subscription. Scan it or click a button to import it into an app.',
     import_to: 'Import', apps_hint: 'Windows: the vps2vpn app (free, recommended), or Clash Verge Rev / FlClash. Mac: Clash Verge Rev / FlClash. Android: FlClash / Hiddify. iPhone: Shadowrocket / Stash / Karing.',
     ai: 'AI availability', ai_tip: 'Tests from this server whether Claude, ChatGPT and Gemini work. For reference only: bans also depend on payment and usage.', ai_run: 'Check again', ai_never: 'Not checked yet. Click "Check again" (about 10 s).', ai_where: 'Location', ai_net: 'Network', ai_kind: 'IP type', ai_at: 'Checked', ai_others: 'Other servers', ai_ok: 'works', ai_blocked: 'region blocked', ai_unreachable: 'unreachable', ai_unknown: 'unsure',
-    doctor: 'Health check', doctor_tip: 'Not connecting or slow? Run this first: it checks everything and tells you how to fix it.', doctor_run: 'Run check', doctor_ok: 'All good', doctor_bad: 'problem(s)',
+    doctor: 'Health check', doctor_tip: 'Not connecting or slow? Run this first: it checks everything and tells you how to fix it.', doctor_run: 'Run check', doctor_ok: 'All good', doctor_bad: 'problems', doctor_bad_1: 'problem',
     fix: 'Fix', tg: 'Telegram alerts', tg_tip: 'Get a message when quota runs low, a user is paused, a service is down or the IP changes. 1) In Telegram, message @BotFather with /newbot and paste the token below. 2) Send the pairing command below to the bot in a private chat. 3) Click "Connect".',
     tg_token: 'Bot token', tg_connect: 'Connect', tg_off: 'Turn off', tg_on: 'Alerts are on', tg_no_chat: 'No matching private-chat pairing message: send the full command below, then click "Connect".', tg_bad: 'That token is not valid; copy it again from @BotFather.',
     tg_pair: 'Send this command to your bot in a private chat (not a group):',
@@ -182,7 +188,7 @@ const T = {
     no_users: 'No users yet. Add one with the button above.', proto_one: 'Turn on at least one protocol',
     copy_btn: 'Copy', nav_members: 'Members & invites', nav_servers: 'Servers', nav_monitor: 'Monitor & abuse', k_members: 'MEMBERS', k_servers: 'SERVERS', k_monitor: 'MONITOR',
     tab_home: 'Home', tab_users: 'Users', tab_members: 'Members', tab_servers: 'Servers', tab_monitor: 'Monitor', tab_settings: 'Settings', tab_system: 'Health',
-    online_now: 'online', devices: 'device(s)', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset or manual reset)', extra_gone: 'The top-up for this period ends too.', invited_by: 'Invited by', eff_quota: 'Effective quota', plan: 'plan', history: 'Daily usage', history_sub: 'last 30 days',
+    online_now: 'online', devices: 'devices', devices_1: 'device', shared_out: 'Shared with invitees', extra_now: 'Top-up this period (ends at the next reset or manual reset)', extra_gone: 'The top-up for this period ends too.', invited_by: 'Invited by', eff_quota: 'Effective quota', plan: 'plan', history: 'Daily usage', history_sub: 'last 30 days',
     member_login: 'Member center sign-in', member_login_tip: 'With a password this user can sign in to the member center by name (usage, asking for more, inviting friends). Without one, their subscription link shows the same page.',
     login_on: 'password set', login_off: 'no password', set_pw: 'Set / reset password', clear_pw: 'Remove password sign-in', pw_cleared: 'Removed', pw_ph: 'New password (8+ characters)', pw_first: 'Type the new password first (8+ characters), then click "Set / reset password"',
     requests: 'Quota requests', req_none: 'No pending requests.', approve: 'Approve', reject: 'Decline', approve_gb: 'GB to add', approve_tip: 'Leave it empty to approve what was asked. For the current period only: it ends at the next reset day or a manual traffic reset (accounts without a reset day keep it until a manual reset). To raise the plan for good, change the quota under Edit.', answer: 'Reply (optional)', asked: ' (asked for {n} GB)',
@@ -194,7 +200,7 @@ const T = {
     member_centre: 'Member center', member_url: 'Member center address (send it to members or with an invite code)', member_enabled: 'Member center on', member_invites: 'Members may invite friends from their own quota', member_requests: 'Members may ask for more quota', member_notice: 'Notice for members (shown at the top of the member center; empty = none)', save_notice: 'Save notice',
     servers: 'Joined servers', servers_tip: 'Only one server? You can ignore this page. With a second one (say Singapore + US): copy the other server\'s join code from its panel, paste it below and click "Add server". Every subscription then lists both servers, traffic counts against the same quota, and users are managed here only.',
     join_code: 'Join code of this server', join_tip: 'Only for the other way round, when another server should manage this one: paste this code into that server\'s Servers page. It is a key to this server: keep it private.', reset_key: 'New join code',
-    reset_key_tip: 'The old code stops working at once; remove and re-add this server on the main server.', add_server: 'Add server', paste_code: 'Paste the join code of the node', server_name: 'Display name (e.g. "Tokyo")',
+    reset_key_tip: 'The old code stops working at once; remove and re-add this server on the main server.', add_server: 'Add server', paste_code: 'Paste the other server\'s join code', server_name: 'Display name (e.g. "Tokyo")',
     no_servers: 'No other servers yet.', sync_failed: 'sync failed', sync_failed_why: 'Sync failed; click for the reason', last_sync: 'synced', sync_now: 'Sync now', remove: 'Remove', remove_tip: 'Its entries disappear from subscriptions. The panel tells that server at once to delete the accounts it got from here, and bills their last traffic.', remove_unreached: 'Removed. That server cannot be reached right now: the panel tells it again every few minutes and it deletes the accounts it got from here as soon as it answers (waiting up to 30 days).', leaving: 'Waiting for it', leaving_wait: 'Removed, unreachable: it is told to delete the accounts it got from here once it answers (up to {d} more days)', leaving_forget: 'Stop waiting', leaving_forget_tip: 'The panel stops telling that server. The accounts it got from here keep working there, unbilled, until "New join code" is clicked on its own panel (Servers page).',
     client_upd: 'vps2vpn app updates', client_ver: 'Latest version (empty = from the installers on the server)', client_url: 'Download link (empty = the installers on the server)', client_notes: 'What is new (shown to everyone, optional)',
     client_tip: 'The panel fetches the newest vps2vpn app from GitHub (the signed Windows setup and Android APK) into the folder below. From 1.0.9 the vps2vpn app downloads it in the background, checks its signature and installs it with one click; other apps (Clash Verge, FlClash, Shadowrocket...) are not affected and get nothing from here. You can also put installers and their .sig files there yourself and leave these empty.',
@@ -214,11 +220,11 @@ const T = {
     client_found: (v, p) => `Installers found on the server: version ${v} (${p}); only people with a valid subscription link can download them.`, client_none: d => `No installers on the server yet. Put them in ${d}.`, client_unsigned: n => `Signature missing: ${n}. The app only installs signed installers; put the matching .sig file from the GitHub release next to it.`,
     renew: 'Renewal reminder', renew_at: 'Date this VPS must be renewed', renew_note: 'Where to renew (e.g. AWS Lightsail)',
     renew_tip: 'You get a Telegram reminder 7, 3 and 1 days before and on the day, and a note on the overview. Leave empty for no reminder.',
-    renew_left: n => n > 0 ? `The server must be renewed in ${n} day(s)` : n === 0 ? 'The server must be renewed today' : `The renewal date passed ${-n} day(s) ago`,
+    renew_left: n => n > 0 ? `The server must be renewed in ${n} ${n === 1 ? 'day' : 'days'}` : n === 0 ? 'The server must be renewed today' : `The renewal date passed ${-n} ${n === -1 ? 'day' : 'days'} ago`,
     renew_clear: 'No reminder',
-    line_down: (n, name) => `In the last 24 hours the vps2vpn app of ${n} account(s) reported that ${name} does not connect (other apps do not report)`,
+    line_down: (n, name) => `In the last 24 hours the vps2vpn app of ${n} ${n === 1 ? 'account' : 'accounts'} reported that ${name} does not connect (other apps do not report)`,
     line_far: ' (a node of another server: fix it in that server\'s panel)',
-    change_port: 'Use another port', change_port_q: name => `Move ${name} to a new random port?`,
+    change_port: 'Change port', change_port_q: name => `Move ${name} to a new random port?`,
     change_port_tip: 'For a port that gets blocked or throttled. Everyone then updates the subscription (the vps2vpn app and most others do it by themselves at the subscription refresh interval, 12 hours by default; Shadowrocket and apps without auto-update need a manual update). With a cloud firewall (AWS Lightsail, Alibaba, Tencent...) also open the new port there.',
     port_changed: p => `Moved to port ${p}. Ask everyone to update the subscription and open the port in the cloud firewall.`,
     managed_by: 'This server is managed by main server: ', remote_user: 'This account comes from the main server "{m}", which manages it: change quota, expiry, pausing or deleting there. Changes made here are overwritten at the next sync.', server_month: 'This server, this month', cap: 'Monthly traffic cap (GB, 0 = none)', cap_day: 'Billing period starts on day', cap_tip: 'Many VPS plans cap monthly traffic. You get a Telegram alert at 80% and 100% (nothing is cut off).',
@@ -237,7 +243,7 @@ const T = {
     max_ips: 'Devices online at once (counted by IP address: several on one Wi-Fi count as one; 0 = no limit)', speed_mbps: 'Speed limit, Mbps (0 = none)', throttle_mbps: 'When the quota is used up, slow down to Mbps (0 = stop)',
     srv_pick: 'Servers it may use', srv_all: 'All servers (including ones added later)', srv_none: 'Pick at least one server', limited_now: 'Limited', slowed: 'Slowed down',
     shaper_off: 'This server\'s kernel cannot limit single accounts (common on container VPSes): speed limits do not apply here. An account set to slow down once its quota is used up stops on this server instead; on other servers it may use that can limit speed, it keeps working, slowed down.',
-    rate: 'Rate', rate_tip: 'How many times this server\'s traffic counts against quotas (as airports do: x2 means 1 GB counts as 2 GB; 0 = free)', rate_this: 'This server\'s rate', rate_set: 'Set rate',
+    rate: 'Rate', rate_tip: 'How many times this server\'s traffic counts against quotas (2× means 1 GB counts as 2 GB; 0 = free)', rate_this: 'This server\'s rate', rate_set: 'Set rate',
     inv_limits: 'Speed and servers', exp_mode: 'Expiry', exp_never: 'Never expires', exp_date: 'On a date', exp_first: 'Counted from first use', exp_days: 'Days from today',
     exp_first_days: 'Days after first use', exp_waiting: 'after first use', r_devices: 'too many devices', dev_limit: 'Device limit', reset_on: 'resets on day {d}', srv_pause: 'Pause this server (every account on it is switched off)', srv_resume: 'Resume this server', no_match: 'No users match.',
     sec: 'Sign-in security', totp: 'Two-step verification (2FA)', totp_tip: 'When on, signing in also needs the 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password …). A leaked password alone is not enough.',
@@ -247,11 +253,22 @@ const T = {
     routing_custom: 'Custom routing', routing_tip: 'One domain per line; subdomains are included (example.com covers www.example.com). Block wins over direct, direct over proxy, and all of them come before the built-in rules. Apps pick changes up on their next subscription update.',
     c_direct: 'Direct (no proxy)', c_proxy: 'Through the proxy', c_block: 'Block', ip_limit_pause: 'Pause for 10 minutes when over the device limit (off = warn only)',
     tg_bot: 'Answer bot commands', tg_backup: 'Send the daily backup to Telegram', tg_cmds: 'Send your bot: /status server status · /users usage per person · /user NAME · /doctor health check · /ai AI availability · /expiring who ends or runs out soon · /backup a backup now. Only your own chat is answered.',
-    sys24: 'Server load', sys24_sub: 'CPU, memory · 24 hours', net24: 'Server network', net24_sub: '24 hours · one point a minute', cpu: 'CPU', no_hist: 'Recorded once a minute; check back soon.', dev_events: 'Device limit events'
+    sys24: 'Server load', sys24_sub: 'CPU, memory · 24 hours', net24: 'Server network', net24_sub: '24 hours · one point a minute', cpu: 'CPU', no_hist: 'Recorded once a minute; check back soon.', dev_events: 'Device limit events',
+    q_reset: 'Reset usage?', q_rotate: 'Change the subscription link?', q_del: n => `Delete “${n}”?`, q_bulk_del: n => `Delete ${n} ${n === 1 ? 'user' : 'users'}?`, q_bulk_rotate: n => `Change the links of ${n} ${n === 1 ? 'user' : 'users'}?`,
+    q_bulk_extend: n => `Extend ${n} ${n === 1 ? 'user' : 'users'}`, q_bulk_addgb: n => `Raise the quota of ${n} ${n === 1 ? 'user' : 'users'}`,
+    q_revoke: 'Revoke this invite code?', revoke_tip: c => `${c} can no longer be used to sign up. Accounts already created stay.`, fb_del_tip: 'This cannot be undone.',
+    q_remove: n => `Remove “${n}”?`, q_forget: n => `Stop waiting for “${n}”?`, q_reset_key: 'Change the join code?', q_restore: 'Restore from backup?',
+    q_restart: 'Restart proxy services?', restart_tip: 'Connections in use drop for a few seconds, then reconnect by themselves.', restart_ok: 'Restart',
+    brand_sub: 'Self-hosted VPN', console: 'Admin console', live_pill: 'Live'
   }
 };
 let L = (navigator.language || '').startsWith('zh') ? 'zh' : 'en';
 const t = k => (T[L] && T[L][k]) || T.en[k] || k;
+// a count's noun: English has a singular (key + '_1'), Chinese does not
+const tn = (k, n) => (n === 1 && T[L] && T[L][k + '_1']) || t(k);
+// protocol names as the rest of the panel writes them (the server reports its internal ids)
+const PROTO = {reality: 'VLESS + REALITY', vless: 'VLESS + REALITY', hy2: 'Hysteria 2', hysteria2: 'Hysteria 2', tuic: 'TUIC v5'};
+const protoNames = list => [...new Set((list || []).map(p => PROTO[p] || p))];
 const S = {view: 'home', data: null, days: [], timer: null, charts: {}, q: '', f: 'all', sort: 'id', sel: new Set(), sys: [], sysAt: 0, viewSeq: 0, drawerSeq: 0, refreshSeq: 0, loadSeq: 0, daysSeq: 0, sysSeq: 0, sessionSeq: 0, refreshing: false};
 const GB = 1073741824;
 
@@ -294,7 +311,7 @@ const legend = () => h('div', {class: 'legend'}, h('span', {style: '--c:var(--do
 // an empty number box is sent as null, not Number('') === 0: the server rejects it or uses its default
 // (0 would quietly mean "not counted" for a traffic rate)
 const numOrNull = v => (v === '' ? null : Number(v));
-const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, 'vps2vpn'), h('small', null, 'SELF-HOSTED VPN')));
+const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, 'vps2vpn'), h('small', null, t('brand_sub'))));
 const AVA = ['#e5432a', '#3f5fe6', '#0b9e86', '#d4860f', '#8b5cf6', '#db2777', '#0891b2'];
 // the note an invited sign-up gets (members.py); before 0.2.50 it was always English
 const noteText = n => (n && L === 'zh' ? n.replace(/^invite ([A-Z0-9-]+)/, '邀请码 $1') : n || '');
@@ -417,7 +434,7 @@ function renderLogin() {
   const msg = h('div', {class: 'err', role: 'status'});
   const code = h('input', {type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '12', class: 'otp'});
   const codeField = field(t('totp_code'), code); codeField.hidden = true;
-  const f = h('form', null, h('div', {class: 'kicker'}, 'ADMIN CONSOLE'), h('h1', null, t('login')), h('p', {class: 'intro'}, t('login_intro')),
+  const f = h('form', null, h('div', {class: 'kicker'}, t('console')), h('h1', null, t('login')), h('p', {class: 'intro'}, t('login_intro')),
     field(t('username'), u), field(t('password').replace(/（.*|\(.*/, ''), p), codeField, b, msg);
   f.onsubmit = async e => {
     e.preventDefault(); b.disabled = true; msg.textContent = '';
@@ -480,7 +497,7 @@ async function renderShell() {
   const mobLogout = h('button', {class: 'btn icon mob-only', title: t('logout')}, icon('out'));
   mobLogout.onclick = () => doLogout(mobLogout);
   const top = h('header', {class: 'top'}, h('div', null, h('div', {class: 'kicker', id: 'viewKicker'}), h('h1', {id: 'viewTitle'})),
-    h('div', {class: 'top-actions'}, h('span', {id: 'livePill', class: 'live-pill'}, 'LIVE'), h('span', {class: 'sync', id: 'syncInfo'}, t('synced')),
+    h('div', {class: 'top-actions'}, h('span', {id: 'livePill', class: 'live-pill'}, t('live_pill')), h('span', {class: 'sync', id: 'syncInfo'}, t('synced')),
       mobTheme, mobLogout,
       h('button', {class: 'btn', onclick: () => refresh(true)}, icon('refresh'), t('refresh')),
       h('button', {class: 'btn primary', id: 'newBtn', onclick: () => editUser(null)}, icon('plus'), t('add_user'))));
@@ -682,7 +699,7 @@ function updateHome() {
   $('kDownS').replaceChildren(h('span', null, t('up_') + ' ', h('b', {class: 'num'}, fmt.mbps(hl.rx_rate != null ? hl.rx_rate * 8 / 1e6 : null)), ' Mbps'));
   const active = d.users.filter(u => u.enabled).length;
   c.tw.online.set(d.online);
-  $('kOnlineU').textContent = '/ ' + d.users.length + ' ' + t('users_n');
+  $('kOnlineU').textContent = '/ ' + d.users.length + ' ' + tn('users_n', d.users.length);
   $('kOnlineS').replaceChildren(h('span', null, t('active_n') + ' ', h('b', null, active)), h('span', null, t('paused_n') + ' ', h('b', null, d.users.length - active)));
   const rows = S.days.map(x => ({day: x.day, upload: x.up, download: x.down}));
   const days30 = last30(), d30 = new Set(days30), d7 = new Set(days30.slice(-7));
@@ -724,7 +741,7 @@ function updateHome() {
 }
 
 async function changePort(line, name, redraw) {
-  if (!await confirmBox(t('change_port_q')(name), t('change_port_tip'))) return;
+  if (!await confirmBox(t('change_port_q')(name), t('change_port_tip'), {confirm: t('change_port')})) return;
   try { const r = await api('change-port', {line}); toast(t('port_changed')(r.port)); await load(); if (redraw) redraw(); } catch (e) { err(e); }
 }
 
@@ -734,7 +751,15 @@ function userState(u) {
   if (u.disabled_reason === 'devices') return chip('warn', t('r_devices'));
   return chip(u.disabled_reason === 'manual' || !u.disabled_reason ? 'off' : 'bad', t({quota: 'r_quota', expired: 'r_expired', remote: 'r_remote'}[u.disabled_reason] || 'r_manual'));
 }
-const expText = u => u.expire_at ? (u.expire_day || dateStr(u.expire_at)) : u.expire_after_days ? u.expire_after_days + ' ' + t('days') + ' · ' + t('exp_waiting') : t('never');
+// "12月5日" / "Dec 5" (the year only when it is not this one), like the member center
+const dayLabel = iso => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if (!m) return iso || '—';
+  const y = +m[1], mo = +m[2], d = +m[3], same = y === new Date().getFullYear();
+  return L === 'zh' ? (same ? '' : y + '年') + mo + '月' + d + '日'
+    : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][mo - 1] + ' ' + d + (same ? '' : ', ' + y);
+};
+const expText = u => u.expire_at ? dayLabel(u.expire_day || dateStr(u.expire_at)) : u.expire_after_days ? u.expire_after_days + ' ' + t('days') + ' · ' + t('exp_waiting') : t('never');
 // Bytes an account may use now. A capped plan whose share went to invitees is 'used up', never 'unlimited'.
 const quotaBytes = u => u.quota_gb ? Math.max(1, (u.quota_eff != null ? u.quota_eff : u.quota_gb) * GB) : 0;
 const FILTERS = {
@@ -752,12 +777,12 @@ async function bulk(action) {
   const ids = [...S.sel]; if (!ids.length) return;
   let value = 0;
   if (action === 'extend' || action === 'add_gb') {
-    const v = await modal({title: t(action === 'extend' ? 'b_extend' : 'b_addgb') + ' · ' + ids.length, text: t(action === 'extend' ? 'extend_days' : 'add_gb_q'),
+    const v = await modal({title: t(action === 'extend' ? 'q_bulk_extend' : 'q_bulk_addgb')(ids.length), text: t(action === 'extend' ? 'extend_days' : 'add_gb_q'),
       input: true, type: 'number', value: action === 'extend' ? '30' : '50', confirm: t(action === 'extend' ? 'b_extend' : 'b_addgb')});
     if (v == null) return; value = Number(v);
   }
-  if (action === 'delete' && !await confirmBox(t('del') + ' · ' + ids.length, t('confirm_bulk_del'), {danger: true, confirm: t('del')})) return;
-  if (action === 'rotate' && !await confirmBox(t('b_rotate') + ' · ' + ids.length, t('confirm_bulk_rotate'))) return;
+  if (action === 'delete' && !await confirmBox(t('q_bulk_del')(ids.length), t('confirm_bulk_del'), {danger: true, confirm: t('del')})) return;
+  if (action === 'rotate' && !await confirmBox(t('q_bulk_rotate')(ids.length), t('confirm_bulk_rotate'), {confirm: t('b_rotate')})) return;
   try {
     const r = await api('users-bulk', {ids, action, value});
     toast(t('bulk_done') + ' ' + r.done);
@@ -794,10 +819,10 @@ function renderUsersList() {
       h('label', {class: 'c-sel'}, box),
       h('div', {class: 'who'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
         h('div', {style: 'min-width:0'}, h('b', null, u.online ? h('span', {class: 'on-dot', title: t('online_now')}) : null, u.name),
-          h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + t('devices') : '') + ' · ' + u.online.protocols.join('/')
+          h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + tn('devices', dev) : '') + ' · ' + protoNames(u.online.protocols).join(' / ')
             : noteText(u.note) || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
       h('div', {class: 'c-use'}, usageBar(u)),
-      h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
+      h('div', {class: 'c-exp'}, h('span', {class: 'num', style: FILTERS.soon(u) ? 'color:var(--warn);font-weight:600' : null}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
         [u.reset_day ? t('reset_on').replace('{d}', u.reset_day) : '', u.max_ips ? t('dev_limit') + ' ' + u.max_ips : ''].filter(Boolean).join(' · ')) : null,
         u.limit_mbps ? h('div', {class: 'cell-sub'}, (u.throttled ? t('slowed') : t('limited_now')) + ' ' + u.limit_mbps + ' Mbps') : null),
       h('div', {class: 'c-state'}, userState(u)),
@@ -908,7 +933,7 @@ async function openUser(id, first) {
         // on Windows our own app takes the subscription in one click (vps2vpn://install-config), like the member page
         imp.vps2vpn && /Windows/i.test(navigator.userAgent || '') ?
           h('a', {class: 'btn', href: imp.vps2vpn, style: 'margin-top:8px;width:100%'}, icon('bolt'), t('open_app')) : null,
-        h('div', {class: 'import-grid', style: 'margin-top:8px'}, [['Clash', imp.clash], ['Shadowrocket', imp.shadowrocket], ['Hiddify', imp.hiddify], ['sing-box', imp.singbox]].map(([n, href]) =>
+        h('div', {class: 'import-grid', style: 'margin-top:8px'}, [['Clash', imp.clash], [L === 'zh' ? '小火箭' : 'Shadowrocket', imp.shadowrocket], ['Hiddify', imp.hiddify], ['sing-box', imp.singbox]].map(([n, href]) =>
           h('a', {class: 'btn', href}, t('import_to') + ' ' + n))),
         h('p', {class: 'muted', style: 'font-size:12px;margin:10px 0 0'}, t('apps_hint'))),
       h('div', {class: 'dr-sec'}, h('h4', null, t('usage'), h('span', {class: 'right'}, userState(u))),
@@ -922,7 +947,7 @@ async function openUser(id, first) {
           u.shared_gb ? h('div', null, h('small', null, t('shared_out')), h('b', null, u.shared_gb + ' GB')) : null,
           u.extra_gb ? h('div', null, h('small', null, t('extra_now')), h('b', null, '+' + u.extra_gb + ' GB')) : null,
           u.invited_by_name ? h('div', null, h('small', null, t('invited_by')), h('b', null, u.invited_by_name)) : null,
-          u.online && u.online.ips.length ? h('div', {style: 'grid-column:1/-1'}, h('small', null, t('online_now') + ' · ' + u.online.ips.length + ' ' + t('devices')), h('b', {style: 'font-size:12px'}, u.online.ips.join('  '))) : null))),
+          u.online && u.online.ips.length ? h('div', {style: 'grid-column:1/-1'}, h('small', null, t('online_now') + ' · ' + u.online.ips.length + ' ' + tn('devices', u.online.ips.length)), h('b', {style: 'font-size:12px'}, u.online.ips.join('  '))) : null))),
       h('div', {class: 'dr-sec'}, h('h4', null, t('history'), h('span', {class: 'right muted', style: 'font-weight:500'}, t('history_sub'))), histBox),
       devBox,
       u.remote_id ? null : h('div', {class: 'dr-sec'}, h('h4', null, t('member_login'), h('span', {class: 'right'}, u.has_login ? chip('ok', t('login_on')) : chip('off', t('login_off')))),
@@ -937,9 +962,9 @@ async function openUser(id, first) {
       h('div', {class: 'dr-sec'}, h('h4', null, t('actions')), h('div', {class: 'act-grid'},
         h('button', {class: 'btn', onclick: () => { closeDrawer(); editUser(u); }}, icon('edit'), t('edit')),
         actBtn('btn', u.enabled ? 'pause' : 'play', u.enabled ? t('disable') : t('enable'), b => act(b, () => api(`users/${u.id}/save`, {enabled: !u.enabled}))),
-        actBtn('btn', 'refresh', t('reset'), async b => { if (await confirmBox(t('reset'), t('confirm_reset') + (u.extra_gb ? ' ' + t('extra_gone') : ''))) await act(b, () => api(`users/${u.id}/reset`, {})); }),
-        actBtn('btn', 'key', t('rotate'), async b => { if (await confirmBox(t('rotate'), t('confirm_rotate'))) await act(b, () => api(`users/${u.id}/rotate`, {})); }),
-        actBtn('btn danger', 'x', t('del'), async b => { if (await confirmBox(t('del') + ' · ' + u.name, t('confirm_del'), {danger: true, confirm: t('del')})) await act(b, () => api(`users/${u.id}/delete`, {})); })))));
+        actBtn('btn', 'refresh', t('reset'), async b => { if (await confirmBox(t('q_reset'), t('confirm_reset') + (u.extra_gb ? ' ' + t('extra_gone') : ''), {confirm: t('reset')})) await act(b, () => api(`users/${u.id}/reset`, {})); }),
+        actBtn('btn', 'key', t('rotate'), async b => { if (await confirmBox(t('q_rotate'), t('confirm_rotate'), {confirm: t('rotate')})) await act(b, () => api(`users/${u.id}/rotate`, {})); }),
+        actBtn('btn danger', 'x', t('del'), async b => { if (await confirmBox(t('q_del')(u.name), t('confirm_del'), {danger: true, confirm: t('del')})) await act(b, () => api(`users/${u.id}/delete`, {})); })))));
   openDrawer();
   new Ring(ringBox.firstChild).set(q ? used / q : 0, q && used / q > .9 ? 'danger' : 'down');
   const drawDevices = () => api('users/' + u.id + '/devices').then(r => {
@@ -1077,14 +1102,14 @@ async function drawMembers() {
   };
   const invRows = inv.invites.map(i => h('div', {class: 'tl-row'}, h('code', {class: 'code-chip'}, i.code),
     h('span', {class: 'muted'}, (i.kind === 'admin' ? t('inv_admin') : i.inviter_name) + ' · ' + (i.quota_gb ? i.quota_gb + ' GB' : t('unlimited')) +
-      (i.kind === 'admin' && i.expire_days ? ' · ' + i.expire_days + t('days') : '') + ' · ' + i.uses + '/' + i.max_uses +
+      (i.kind === 'admin' && i.expire_days ? ' · ' + i.expire_days + ' ' + t('days') : '') + ' · ' + i.uses + '/' + i.max_uses +
       (i.used_by.length ? ' · ' + t('used_by') + ' ' + i.used_by.join(', ') : '') + (i.note ? ' · ' + i.note : '') +
       (i.speed_mbps ? ' · ⏬ ' + i.speed_mbps + ' Mbps' : '') + (i.throttle_mbps ? ' · ' + t('slowed') + ' ' + i.throttle_mbps + ' Mbps' : '') +
       (i.servers && i.servers.length ? ' · ' + i.servers.map(id => (serverChoices().find(x => x.id === id) || {name: id}).name).join('/') : '') +
       ' · ' + fmt.time(i.valid_until)),
     h('span', {class: 'tl-acts'}, chip(i.status === 'unused' ? 'ok' : 'off', t('st_' + i.status)),
       i.status === 'unused' ? h('button', {class: 'btn sm', title: t('copy_link'), onclick: () => copyText(i.register_url || i.code, t('copy_link'))}, icon('link')) : null,
-      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('revoke'), i.code)) { b.disabled = true; try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (er) { err(er); b.disabled = false; } } }}, t('revoke')) : null)));
+      i.status === 'unused' ? h('button', {class: 'btn sm', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('q_revoke'), t('revoke_tip')(i.code), {danger: true, confirm: t('revoke')})) { b.disabled = true; try { await api(`invites/${i.id}/revoke`, {}); drawMembers(); } catch (er) { err(er); b.disabled = false; } } }}, t('revoke')) : null)));
   const cb = k => { const e = h('input', {type: 'checkbox', checked: !!s[k]}); e.onchange = () => saveSettings({[k]: e.checked}); return check(t(k), e); };
   const fbAct = async (x, a, body) => { try { await api(`feedback/${x.id}/${a}`, body || {}); toast(t('saved')); await load(); updateReqBadges(); drawMembers(); } catch (e) { err(e); } };
   const fbDetail = async (x, box, btn) => {
@@ -1106,14 +1131,14 @@ async function drawMembers() {
       ans, h('div', {class: 'act-grid'},
         h('button', {class: 'btn sm primary', onclick: () => fbAct(x, 'answer', {answer: ans.value})}, icon('check'), t('fb_answer')),
         x.status === 'open' ? h('button', {class: 'btn sm', onclick: () => fbAct(x, 'done')}, t('fb_mark')) : h('button', {class: 'btn sm', onclick: () => fbAct(x, 'reopen')}, t('fb_reopen')),
-        h('button', {class: 'btn sm danger', onclick: async () => { if (await confirmBox(t('fb_del'), t('fb_del_q'), {danger: true, confirm: t('fb_del')})) fbAct(x, 'delete'); }}, icon('x'), t('fb_del')))));
+        h('button', {class: 'btn sm danger', onclick: async () => { if (await confirmBox(t('fb_del_q'), t('fb_del_tip'), {danger: true, confirm: t('fb_del')})) fbAct(x, 'delete'); }}, icon('x'), t('fb_del')))));
   };
   const fbRows = fb ? fb.items.map(x => {
     const box = h('div'), btn = h('button', {class: 'btn sm'}, t('fb_view'));
     btn.onclick = () => fbDetail(x, box, btn);
     const c = x.client || {};
     return h('div', null, h('div', {class: 'tl-row'}, h('b', null, x.name),
-      h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, fmt.time(x.created_at) + ' · ' + [c.platform, c.version].filter(Boolean).join(' ') + (x.text ? ' · ' + x.text : '')),
+      h('span', {class: 'muted', style: 'overflow-wrap:anywhere'}, fmt.time(x.created_at) + ' · ' + [PLATFORM_NAMES[c.platform] || c.platform, c.version].filter(Boolean).join(' ') + (x.text ? ' · ' + x.text : '')),
       h('span', {class: 'tl-acts'}, chip(x.status === 'open' ? 'warn' : 'ok', t(x.status === 'open' ? 'fb_open' : 'fb_done')), btn)), box);
   }) : [];
   const fbOpen = fb ? fb.items.filter(x => x.status === 'open').length : 0;
@@ -1153,7 +1178,7 @@ async function drawServers() {
   add.onclick = async () => { add.disabled = true; try { await api('servers', {code: code.value.trim(), name: name.value.trim()}); toast(t('saved')); await load(); drawServers(); } catch (e) { err(e); add.disabled = false; } };
   const act = async (btn, id, a, body) => { if (btn) btn.disabled = true; try { const r = await api(`servers/${id}/${a}`, body || {}); if (r && r.released === false) toast(t('remove_unreached')); await load(); drawServers(); } catch (e) { err(e); if (btn) btn.disabled = false; } };
   const rows = sv.servers.map(x => h('div', {class: 'tl-row'},
-    h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + x.protocols.join(' / ') + ' · ' + x.users + ' ' + t('users_n') +
+    h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + protoNames(x.protocols).join(' / ') + ' · ' + x.users + ' ' + tn('users_n', x.users) +
       (x.health && x.health.mem_total ? ' · ' + t('mem') + ' ' + Math.round(x.health.mem_used * 100 / x.health.mem_total) + '%' : '') +
       (x.last_ok ? ' · ' + t('last_sync') + ' ' + fmt.ago(x.last_ok) : '') + (x.version ? ' · v' + x.version : '') + ' · ' + t('rate') + ' ×' + x.rate),
     h('span', {class: 'tl-acts'}, x.error ? chip('bad', t('sync_failed')) : x.enabled ? chip('ok', t('running')) : chip('off', t('off')),
@@ -1162,12 +1187,12 @@ async function drawServers() {
         if (v != null) act(b, x.id, 'save', {rate: Number(v)}); }}, '×' + x.rate),
       h('button', {class: 'btn sm', title: t('sync_now'), 'aria-label': t('sync_now'), onclick: e => act(e.currentTarget, x.id, 'sync')}, icon('refresh')),
       h('button', {class: 'btn sm', title: t(x.enabled ? 'srv_pause' : 'srv_resume'), 'aria-label': t(x.enabled ? 'srv_pause' : 'srv_resume'), onclick: e => act(e.currentTarget, x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
-      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x'))),
+      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('q_remove')(x.name), t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x'))),
     x.error ? srvErr(x.error) : null));
   rows.push(...(sv.leaving || []).map(x => h('div', {class: 'tl-row'},
     h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + t('leaving_wait').replace('{d}', x.days_left)),
     h('span', {class: 'tl-acts'}, chip('warn', t('leaving')),
-      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('leaving_forget') + ' · ' + x.name, t('leaving_forget_tip'), {danger: true, confirm: t('leaving_forget')})) act(b, x.id, 'forget'); }}, t('leaving_forget'))),
+      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('q_forget')(x.name), t('leaving_forget_tip'), {danger: true, confirm: t('leaving_forget')})) act(b, x.id, 'forget'); }}, t('leaving_forget'))),
     x.error ? srvErr(x.error, 'warn') : null)));
   const stRow = x => {
     const st = h('select', null, ...[['ok', t('st_ok')], ['maintenance', t('st_maint')], ['congested', t('st_cong')]].map(([v, l]) => h('option', {value: v}, l)));
@@ -1189,7 +1214,7 @@ async function drawServers() {
   const ring = h('div', {class: 'ring-box'}, h('div', {class: 'chart'}), h('div', {class: 'lbl'}, h('b', null, cap ? fmt.pct(used / cap) : '∞'), h('small', null, sm.period || '')));
   const resetKeyBtn = h('button', {class: 'btn'}, icon('key'), t('reset_key'));
   resetKeyBtn.onclick = async () => {
-    if (!await confirmBox(t('reset_key'), t('reset_key_tip'))) return;
+    if (!await confirmBox(t('q_reset_key'), t('reset_key_tip'), {danger: true, confirm: t('reset_key')})) return;
     resetKeyBtn.disabled = true;
     try { await api('node-key', {}); await load(); drawServers(); } catch (e) { err(e); resetKeyBtn.disabled = false; }
   };
@@ -1368,7 +1393,7 @@ async function runDoctor(btn, box) {
   try {
     const r = (await api('doctor', {})).results, bad = r.filter(x => x.ok === false).length;
     const sep = L === 'zh' ? '：' : ': ';
-    box.replaceChildren(h('div', {style: 'margin-bottom:6px'}, bad ? chip('bad', bad + ' ' + t('doctor_bad')) : chip('ok', t('doctor_ok'))),
+    box.replaceChildren(h('div', {style: 'margin-bottom:6px'}, bad ? chip('bad', bad + ' ' + tn('doctor_bad', bad)) : chip('ok', t('doctor_ok'))),
       // name, detail and fix come in the panel's language; `orig` is the server's English detail (hover / click)
       ...r.map(x => h('div', {class: 'doc-row'}, h('span', {class: 'dot ' + (x.ok === true ? 'ok' : x.ok === false ? 'bad' : '')}),
         h('div', null, h('b', null, x.name || x.id), x.detail ? xdetail(x.detail, x.orig, 'doc-detail') : null,
@@ -1495,7 +1520,7 @@ function drawSystem() {
   restore.onchange = async () => {
     const f = restore.files[0]; if (!f) return;
     try {
-      if (!await confirmBox(t('restore'), t('confirm_restore'), {danger: true, confirm: t('restore')})) return;
+      if (!await confirmBox(t('q_restore'), t('confirm_restore'), {danger: true, confirm: t('restore')})) return;
       await api('restore', JSON.parse(await f.text())); toast(t('restore_ok')); await renderShell();
     } catch (er) { err(er); }
     finally { restore.value = ''; }
@@ -1504,7 +1529,7 @@ function drawSystem() {
   rulesBtn.onclick = async () => { rulesBtn.disabled = true; try { await api('rules-refresh', {}); toast('…'); } catch (e) { err(e); } finally { rulesBtn.disabled = false; } };
   const restartBtn = h('button', {class: 'btn sm'}, icon('bolt'), t('restart'));
   restartBtn.onclick = async () => {
-    if (!await confirmBox(t('restart'), '')) return;
+    if (!await confirmBox(t('q_restart'), t('restart_tip'), {confirm: t('restart_ok')})) return;
     restartBtn.disabled = true;
     try { await api('restart', {}); toast(t('saved')); } catch (e) { err(e); } finally { restartBtn.disabled = false; }
   };
@@ -1523,7 +1548,7 @@ function drawSystem() {
       panel(t('backup'), null, null, h('p', {class: 'muted', style: 'margin:0 0 12px;font-size:12.5px;line-height:1.8'}, t('backup_tip')),
         h('div', {class: 'act-grid'}, h('a', {class: 'btn', href: 'api/backup'}, icon('arrowDown'), t('download_backup')),
           h('label', {class: 'btn'}, icon('arrowUp'), t('restore'), restore)))),
-    panel(t('logs'), `${t('rules_age')} ${d.rules_age == null ? '—' : dur(d.rules_age) + ' ' + t('ago')} · ${t('version')} ${d.version} · ${d.os}`,
+    panel(t('logs'), [t('rules_age') + ' ' + (d.rules_age == null ? '—' : dur(d.rules_age) + (L === 'zh' ? '' : ' ') + t('ago')), t('version') + ' ' + d.version, d.os].filter(Boolean).join(' · '),
       h('div', {style: 'display:flex;flex-wrap:wrap;gap:8px'}, rulesBtn, restartBtn),   // the English labels need two rows on a phone
       h('div', {class: 'log'}, d.log.join('\n') || '—'))));
 }

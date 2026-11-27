@@ -217,5 +217,45 @@ class DeployersHaveAnInstallDeadline(unittest.TestCase):
         self.assertIn('vps2vpn info', msg)
 
 
+def _static(name):
+    with open(os.path.join(ROOT, 'vps2vpn', 'static', name), encoding='utf-8') as f:
+        return f.read()
+
+
+class PanelWording(unittest.TestCase):
+    """docs/admin-review.md P2: question titles with a verb button, one word for accounts, no English captions in
+    the Chinese panel, singular and plural in English."""
+
+    def test_chinese_panel(self):
+        app = _static('app.js')
+        zh = app[:app.index('\n  en: {')]
+        for word in ('使用者', '其它', '不等了', '记得续费', '有就填', '这些人', 'OVERVIEW', 'USERS', 'MEMBERS', 'SERVERS',
+                     'MONITOR', 'SETTINGS', 'SYSTEM'):
+            self.assertNotIn(word, zh)
+        for literal in ("'SELF-HOSTED VPN'", "'ADMIN CONSOLE'", "'LIVE')"):
+            self.assertNotIn(literal, app)
+
+    def test_every_confirm_box_names_its_action(self):
+        for name in ('app.js', 'member.js'):
+            for call in re.findall(r"confirmBox\((.*?)\)\)?\s*(?:return|\{|await|act|fbAct)", _static(name)):
+                with self.subTest(file=name, call=call[:60]):
+                    self.assertIn('confirm:', call)
+                    self.assertTrue(call.startswith("t('q_") or call.startswith("t('fb_del_q')") or
+                                    call.startswith("t('dv_revoke_t')") or call.startswith("t('change_port_q')"), call)
+
+    def test_new_texts_in_both_languages(self):
+        app = _static('app.js')
+        i = app.index('\n  en: {')
+        zh, en = app[:i], app[i:app.index('\n};', i)]
+        for key in re.findall(r"t\('(q_[a-z_]+|restart_tip|restart_ok|fb_del_tip|revoke_tip|brand_sub|console|live_pill)'\)", app):
+            with self.subTest(key=key):
+                self.assertIn(key + ':', zh)
+                self.assertIn(key + ':', en)
+        for key in ('users_n_1', 'devices_1', 'doctor_bad_1'):
+            self.assertIn(key + ':', en)
+        self.assertFalse(re.findall(r'[a-z]\(s\)(?!:)', en))         # http(s):// is fine
+        self.assertNotIn('airports', en)
+
+
 if __name__ == '__main__':
     unittest.main()

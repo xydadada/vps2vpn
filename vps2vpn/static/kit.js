@@ -71,7 +71,7 @@ const ERR_ZH=[
  [/^name: 2-32/,'用户名 2–32 位，只能用字母、数字、汉字和 . _ -'],[/^that name is taken/,'这个名字已经有人用了，换一个吧'],[/^name already used/,'这个名字已经有人用了'],
  [/^name required/,'请填写名字'],[/^password: (\d+) to 128/,(m,a)=>'密码 '+a+'–128 位'],[/^password must be at least 8/,'密码至少 8 位'],
  [/^invite code is wrong, used up or expired/,'邀请码不对、已用完或已过期'],[/^the person who invited you can no longer invite/,'邀请你的人现在不能再邀请了，这个邀请码作废'],
- [/^the inviter's quota has run short/,'邀请人的额度不够了，这个邀请码作废'],[/^no such account/,'账号不存在'],[/^no such user/,'没有这个使用者'],
+ [/^the inviter's quota has run short/,'邀请人的额度不够了，这个邀请码作废'],[/^no such account/,'账号不存在'],[/^no such user/,'没有这个用户'],
  [/^no such server/,'没有这台服务器'],[/^unknown line/,'不支持的协议'],[/^already set up/,'已经完成初始化'],[/^bad setup link/,'设置链接无效或已过期'],
  [/^date must look like/,'日期格式不对，请填类似 2026-12-31'],[/^version must look like/,'版本号格式不对，请填类似 1.2.3'],
  [/^download link must start with/,'下载链接必须以 http:// 或 https:// 开头'],[/^masquerade must be/,'伪装地址必须是公开的 https:// 链接'],
@@ -186,7 +186,7 @@ class LiveChart{
   const dt=this.lastT?Math.min(.1,(t-this.lastT)/1000):0;this.lastT=t;this.ymax=this.ymax==null?target:this.ymax+(target-this.ymax)*Math.min(1,dt*2.5);
   const Y=v=>pt+(h-pt-pb)*(1-Math.max(0,v)/this.ymax);
   if(this.o.axis){const step=niceStep(this.ymax,3);ctx.font='10.5px '+Palette.mono;ctx.textBaseline='bottom';for(let v=step;v<this.ymax;v+=step){const y=Math.round(Y(v))+.5;ctx.strokeStyle=alpha(P.line||'#888',.9);ctx.setLineDash([3,5]);ctx.beginPath();ctx.moveTo(pl,y);ctx.lineTo(w-pr,y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=P.muted;ctx.fillText(fmt.mbps(v)+' Mbps',pl+2,y-3);}
-   ctx.strokeStyle=P.line;ctx.beginPath();ctx.moveTo(pl,h-pb+.5);ctx.lineTo(w-pr,h-pb+.5);ctx.stroke();ctx.fillStyle=P.muted;ctx.textBaseline='top';ctx.textAlign='right';ctx.fillText(KT.now,w-pr,h-pb+4);ctx.textAlign='left';ctx.fillText(Math.round(this.o.span/60*10)/10+KT.min_ago,pl,h-pb+4);ctx.textAlign='center';ctx.fillText(Math.round(this.o.span/120*10)/10+KT.min,pl+(w-pl-pr)/2,h-pb+4);ctx.textAlign='left';}
+   ctx.strokeStyle=P.line;ctx.beginPath();ctx.moveTo(pl,h-pb+.5);ctx.lineTo(w-pr,h-pb+.5);ctx.stroke();ctx.fillStyle=P.muted;ctx.textBaseline='top';ctx.textAlign='right';ctx.fillText(KT.now,w-pr,h-pb+4);ctx.textAlign='left';ctx.fillText(Math.round(this.o.span/60*10)/10+KT.min_ago,pl,h-pb+4);ctx.textAlign='center';ctx.fillText(Math.round(this.o.span/120*10)/10+KT.min_ago,pl+(w-pl-pr)/2,h-pb+4);ctx.textAlign='left';}
   ctx.save();ctx.beginPath();ctx.rect(pl,0,w-pl-pr,h);ctx.clip();
   for(const s of [...this.o.series].reverse()){if(vis.length<2)break;const pts=vis.map(p=>[X(p.t),Y(p[s.key]||0)]),col=P[s.color]||s.color;
    if(s.fill){const g=ctx.createLinearGradient(0,pt,0,h-pb);g.addColorStop(0,alpha(col,.32));g.addColorStop(1,alpha(col,0));ctx.beginPath();traceMonotone(ctx,pts,true);ctx.lineTo(pts[pts.length-1][0],h-pb);ctx.lineTo(pts[0][0],h-pb);ctx.closePath();ctx.fillStyle=g;ctx.fill();}

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.52
+
+The rest of the outside review issues, the Windows and Mac deployers' install deadline, and wording fixes in the panel. The layout does not change.
+外部审查剩下的几个问题、Windows 和 Mac 部署器的安装期限，以及面板的文案修正。布局不变。
+
+- Subscriptions: a server named like a built-in group ("Auto", "节点选择", "DIRECT"…) or like another entry gets its group renamed with a trailing "_", so a two-server profile is no longer rejected by mihomo (#122, from PR #131). Entry names do not change, and a one-server subscription is unchanged.
+  订阅：服务器名和内置分组（「Auto」「节点选择」「DIRECT」等）或其他条目同名时，它的分组名后面加「_」，两台服务器的订阅不会再被 mihomo 整份拒收（#122，来自 PR #131）。条目名不变，只有一台服务器时订阅完全不变。
+- Monthly reset: a reset missed while the server was off is caught up once when it is back; an account created inside the current period keeps the traffic it used until its first reset day (#124, from PR #131).
+  每月重置：服务器关机时错过的重置，开机后补一次；本期内新建的账号，到第一个重置日之前已用的流量不会被清零（#124，来自 PR #131）。
+- Settings: when the certificate for a new address cannot be written (for example, the disk is full), the old address and the other changes in that save are put back, and the panel says so, instead of keeping an address without its certificate (#126).
+  设置：新地址的证书写不进去时（例如磁盘满了），这次保存的地址和其他改动都会退回原样，并提示保存失败，不再留下没有证书的新地址（#126）。
+- Upgrades: a failing `systemctl enable` / `restart` or `journalctl` now goes through the rollback to the previous version instead of ending the script half way; a failed move of the new code no longer leaves only the `.old` copy (#120).
+  升级：`systemctl enable` / `restart` 或 `journalctl` 出错时，会照常退回上一个版本，不再让安装脚本停在一半；新代码没能放到位时，不会只剩下 `.old` 那一份（#120）。
+- Deployers: the Windows and Mac deployers also stop a remote install after `V2V_INSTALL_DEADLINE` seconds (30 minutes by default) and say it may still be finishing on the server (#157).
+  部署器：Windows 和 Mac 部署器也会在 `V2V_INSTALL_DEADLINE` 秒（默认 30 分钟）后停止等待，并提示服务器上可能还在安装（#157）。
+- Panel wording (review list P2): confirmation dialogs ask a question and name the action on the button ("删除这 10 个用户？" / "删除"); the restart dialog says connections drop for a few seconds; "使用者" is now "用户" everywhere in the admin panel; colloquial phrases, "其它" and the English captions above page titles in the Chinese panel are gone; English counts use singular and plural; protocol and platform names are written out (Hysteria 2, Windows); the user list shows expiry as "12月6日" and colors dates within 7 days; a few spacing and axis-label fixes.
+  面板文案（审查清单 P2）：确认框改成问句标题，按钮写具体动作（「删除这 10 个用户？」/「删除」）；重启代理服务的确认框说明会断线几秒；管理面板里的「使用者」统一改成「用户」；去掉口语、「其它」和中文界面里页面标题上方的英文小标题；英文的数量分单复数；协议和平台写全称（Hysteria 2、Windows）；用户列表的到期日写成「12月6日」，7 天内到期的标成提醒色；修了几处空格和图表横轴的文字。
+
 ## 0.2.51
 
 Fixes from an outside code review: reliability, data safety and a few security details. The panel looks the same.

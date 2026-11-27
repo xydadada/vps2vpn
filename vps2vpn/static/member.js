@@ -25,7 +25,7 @@ const T = {
     pending: '等待批准', approved: '已批准', rejected: '未批准', req_none: '还没有申请记录。',
     invites: '邀请朋友', invites_tip: '从你的额度中分出一部分给朋友。朋友注册后，你每月的额度会立即减去分给对方的部分，直到对方的账号到期或被删除；对方的用量只从这部分中扣除。未使用的邀请码可以随时撤销；要收回已注册用户的额度，请联系管理员。你自己至少保留 1 GB。',
     can_share: '可分出', quota_each: '每人多少 GB', uses: '可用次数', valid: '邀请码有效天数', note: '备注（可选）', make: '生成邀请码',
-    no_share: '不限量账号不能分出额度；如需邀请码，请联系管理员。', inv_none: '还没有生成过邀请码。', revoke: '撤销', revoked: '已撤销',
+    no_share: '不限量账号不能分出额度；如需邀请码，请联系管理员。', inv_none: '还没有生成过邀请码。', revoke: '撤销', revoked: '已撤销', q_revoke: '撤销这个邀请码？', revoke_tip: '撤销后，{c} 不能再用来注册；已经注册的账号不受影响。', q_rotate: '更换订阅链接？',
     st_unused: '可用', st_used: '已用完', st_revoked: '已撤销', st_expired: '已过期', st_void: '已失效：你的额度不足', reserved: '已预留给邀请码', used_by: '已注册', send_link: '复制注册链接',
     invitees: '你邀请的人', pw: '登录密码', pw_tip: '设置密码后，可以用用户名和密码登录会员中心，忘记订阅链接时也能登录。', pw_tip_link: '通过专属链接打开此页时，无需输入旧密码即可设置新密码（链接本身就是凭证）。', pw_set: '设置密码', pw_change: '修改密码', pw_old: '当前密码',
     saved: '已保存', member_link: '会员中心网址', link_mode: '这是你的专属页面，链接即凭证，请勿发给他人。', days: '天',
@@ -41,8 +41,8 @@ const T = {
     paused_expired: '账号已到期，请联系管理员续期。', paused_devices: '同时在线设备超过上限{lim}，已自动暂停 10 分钟。请断开多余的设备，稍后会自动恢复。', paused_other: '账号已暂停，如有疑问请联系管理员。',
     expiring: '账号将在 {d} 天后到期（{date}），需要续期请联系管理员。', low: '流量即将用完：仅剩 {left}。', slowed: '本期流量已用完，已降速到 {mbps} Mbps，下次重置或增加流量后恢复。', slowed_nr: '流量已用完，已降速到 {mbps} Mbps。这个账号不按月重置，增加流量后恢复：可以在下方申请，或联系管理员。', capped: '这个账号限速 {mbps} Mbps。',
     security: '账号安全', rotate: '更换订阅链接', rotate_tip: '链接不慎发给了他人？更换后旧链接立即失效，每台设备都需要重新导入。',
-    rotate_q: '更换后旧链接立即失效，所有设备都需要重新导入。确定更换吗？', rotated: '已更换，请重新导入到 App',
-    rotate_q_link: '更换后，当前页面的网址也会失效。如果还没有设置密码，建议先在上方设置；否则请务必保存好新链接。确定更换吗？',
+    rotate_q: '更换后旧链接立即失效，所有设备都需要重新导入。', rotated: '已更换，请重新导入到 App',
+    rotate_q_link: '更换后，当前页面的网址也会失效。如果还没有设置密码，建议先在上方设置；否则请务必保存好新链接。',
     new_link: '新的订阅链接', new_link_tip: '旧链接已失效。请复制并保存新链接，然后在每台设备上重新导入。', copy_short: '复制', close: '关闭',
     wx: '在微信 / QQ 中无法打开 App。请点击右上角 ···，选择「在浏览器打开」；或点击「复制订阅链接」，再到 App 中导入。'
   },
@@ -57,7 +57,7 @@ const T = {
     logout: 'Sign out', wrong: 'Wrong name or password', mismatch: 'Passwords do not match',
     used: 'Used', quota: 'Quota', left: 'Left', unlimited: 'unlimited', expires: 'Expires', never: 'never', reset: 'Next reset', none: 'never',
     down: 'down', up_: 'up', status: 'Status', ok: 'active', paused: 'paused', r_quota: 'quota used up', r_expired: 'expired', r_manual: 'paused by the admin', r_remote: 'paused by the main server', r_devices: 'too many devices',
-    shared: 'Shared with invitees', invited_by: 'Invited by', online: 'Online', online_now: 'in use now', devices: 'device(s)', offline: 'not connected',
+    shared: 'Shared with invitees', invited_by: 'Invited by', online: 'Online', online_now: 'in use now', devices: 'devices', devices_1: 'device', offline: 'not connected',
     import: 'Import into an app', import_tip: 'On a phone, tap a button; on a computer, copy the link and choose "Import from URL" in the app. The subscription updates itself.', copy: 'Copy subscription link',
     sr_full: 'Shadowrocket', sr_full_tip: '"Shadowrocket" imports the full config: nodes + routing + DNS.', sr_nodes: 'Shadowrocket (nodes only)', scan: 'Scan with your phone',
     apps: 'Which app', open_app: 'Open in the vps2vpn app', get_app: 'No vps2vpn app yet? Download it here (free)',
@@ -68,7 +68,7 @@ const T = {
     pending: 'waiting', approved: 'approved', rejected: 'declined', req_none: 'No requests yet.',
     invites: 'Invite friends', invites_tip: 'Share part of your quota. As soon as a friend registers, your monthly quota drops by their share until their account expires or is deleted; what they use only comes out of that share. You can revoke a code nobody has used yet; taking a share back from someone who already registered needs the admin. You always keep at least 1 GB.',
     can_share: 'You can share', quota_each: 'GB per person', uses: 'Uses', valid: 'Code valid (days)', note: 'Note (optional)', make: 'Create code',
-    no_share: 'Unlimited accounts cannot share quota; ask the admin for invite codes.', inv_none: 'No invite codes yet.', revoke: 'Revoke', revoked: 'Revoked',
+    no_share: 'Unlimited accounts cannot share quota; ask the admin for invite codes.', inv_none: 'No invite codes yet.', revoke: 'Revoke', revoked: 'Revoked', q_revoke: 'Revoke this invite code?', revoke_tip: '{c} can no longer be used to sign up. Accounts already created stay.', q_rotate: 'Change your subscription link?',
     st_unused: 'usable', st_used: 'used up', st_revoked: 'revoked', st_expired: 'expired', st_void: 'void: not enough quota left', reserved: 'Kept for invite codes', used_by: 'Registered', send_link: 'Copy sign-up link',
     invitees: 'People you invited', pw: 'Password', pw_tip: 'With a password you can sign in to the member center by name (handy if you lose the link).', pw_tip_link: 'Opened from your personal link, you can set a new password without the old one (the link itself is the key).', pw_set: 'Set password', pw_change: 'Change password', pw_old: 'Current password',
     saved: 'Saved', member_link: 'Member center', link_mode: 'This is your personal page. The link is the key: do not share it.', days: 'days',
@@ -84,14 +84,16 @@ const T = {
     paused_expired: 'The account has expired; ask the admin to extend it.', paused_devices: 'Too many devices were online at once{lim}; the account is paused for 10 minutes. Close the extra ones and it resumes by itself.', paused_other: 'The account is paused; ask the admin if this is unexpected.',
     expiring: 'The account expires in {d} days ({date}); ask the admin to extend it.', low: 'Almost out of data: {left} left.', slowed: 'This period\'s data is used up: slowed down to {mbps} Mbps until the next reset or more data.', slowed_nr: 'The data is used up: slowed down to {mbps} Mbps. This account has no monthly reset; more data brings full speed back (ask below or ask the admin).', capped: 'This account is limited to {mbps} Mbps.',
     security: 'Account security', rotate: 'New subscription link', rotate_tip: 'Shared your link by mistake? Get a new one; the old link stops working at once. Re-import it on every device.',
-    rotate_q: 'The old link stops working immediately and every device must re-import. Continue?', rotated: 'Done. Import the new link into your apps.',
-    rotate_q_link: 'The address of this very page stops working too. Set a password above first if you have none, or make sure to save the new link. Continue?',
+    rotate_q: 'The old link stops working immediately and every device must re-import.', rotated: 'Done. Import the new link into your apps.',
+    rotate_q_link: 'The address of this very page stops working too. Set a password above first if you have none, or make sure to save the new link.',
     new_link: 'Your new subscription link', new_link_tip: 'The old link no longer works. Copy and keep this one, and re-import it on every device.', copy_short: 'Copy', close: 'Close',
     wx: 'Apps cannot be opened from inside WeChat / QQ. Tap ··· at the top right and choose "Open in browser", or copy the subscription link into your app.'
   }
 };
 let L = (navigator.language || '').startsWith('zh') ? 'zh' : 'en';
 const t = k => (T[L] && T[L][k]) || T.en[k] || k;
+// a count's noun: English has a singular (key + '_1'), Chinese does not
+const tn = (k, n) => (n === 1 && T[L] && T[L][k + '_1']) || t(k);
 const GB = 1073741824;
 // an empty number box is sent as null, not Number('') === 0: the server then asks for a number
 const numOrNull = v => (v === '' ? null : Number(v));
@@ -218,7 +220,7 @@ async function renderHome() {
   const hero = h('div', {class: 'panel m-hero'}, h('div', {class: 'panel-b'},
     h('div', {class: 'm-hello'}, h('div', null, h('div', {class: 'kicker'}, t('kicker')), h('h1', null, me.name)),
       me.enabled ? chip('ok', t('ok')) : chip(me.disabled_reason === 'devices' ? 'warn' : 'bad', t(reason)),
-      on ? chip('info', t('online_now') + (dev ? ' · ' + dev + ' ' + t('devices') : '')) : chip('off', t('offline'))),
+      on ? chip('info', t('online_now') + (dev ? ' · ' + dev + ' ' + tn('devices', dev) : '')) : chip('off', t('offline'))),
     h('div', {class: 'usage-hero'}, ringBox, h('div', {class: 'mini-stats m-stats'},
       stat(t('used'), fmt.bytes(used)), stat(t('quota'), q != null ? fmt.bytes(q) : t('unlimited')),
       stat(t('left'), q != null ? fmt.bytes(Math.max(0, q - used - (me.reserved_gb || 0) * GB)) : t('unlimited')),
@@ -374,7 +376,7 @@ function invList() {
     const revBtn = i.status === 'unused' ? (() => {
       const b = h('button', {class: 'btn sm'}, t('revoke'));
       b.onclick = async () => {
-        if (!await confirmBox(t('revoke'), i.code)) return;
+        if (!await confirmBox(t('q_revoke'), t('revoke_tip').replace('{c}', i.code), {danger: true, confirm: t('revoke')})) return;
         b.disabled = true;
         try { await api('invite-revoke', {id: i.id}); toast(t('revoked')); await renderHome(); } catch (e) { err(e); b.disabled = false; }
       };
@@ -399,7 +401,7 @@ function passwordPanel() {
   const rot = h('button', {class: 'btn'}, icon('refresh'), t('rotate'));
   const byLink = M.hello.mode === 'link';
   rot.onclick = async () => {
-    if (!await confirmBox(t('rotate'), t(byLink ? 'rotate_q_link' : 'rotate_q'))) return;
+    if (!await confirmBox(t('q_rotate'), t(byLink ? 'rotate_q_link' : 'rotate_q'), {confirm: t('rotate')})) return;
     rot.disabled = true;
     let r;
     try { r = await api('rotate', {}); } catch (e) { err(e); rot.disabled = false; return; }
@@ -411,7 +413,7 @@ function passwordPanel() {
     await renderHome();
   };
   const sep = L === 'zh' ? '：' : ': ';
-  return panel(t('security'), null, null, h('div', {class: 'stack'}, h('p', {class: 'muted m-tip'}, t('pw_tip') + (byLink && me.has_login ? ' ' + t('pw_tip_link') : '')),
+  return panel(t('security'), null, null, h('div', {class: 'stack'}, h('p', {class: 'muted m-tip'}, t('pw_tip') + (byLink && me.has_login ? (L === 'zh' ? '' : ' ') + t('pw_tip_link') : '')),
     h('div', {class: 'form-grid'}, me.has_login && !byLink ? field(t('pw_old'), f.old) : null, field(t('password_new'), f.nw)), h('div', null, b),
     h('p', {class: 'muted m-tip', style: 'margin-top:8px'}, t('rotate_tip')), h('div', null, rot),
     M.hello.member_url ? h('div', {class: 'muted m-tip'}, t('member_link') + sep, h('a', {href: M.hello.member_url}, M.hello.member_url)) : null));
