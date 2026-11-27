@@ -4,7 +4,7 @@
    centre (/<member path>/) with a name and password, where invite codes also create new accounts. */
 const T = {
   zh: {
-    kicker: '会员中心', title: '我的 VPN', login: '登录', register: '用邀请码注册', name: '用户名', password: '密码',
+    kicker: '会员中心', title: '我的 VPN', retry: '重试', fail_title: '页面没有加载出来', fail_server: '服务器出错了，请稍后再试；一直这样请联系管理员。', login: '登录', register: '用邀请码注册', name: '用户名', password: '密码',
     password_new: '设置密码（至少 8 位）', password2: '再次输入密码', code: '邀请码', have_code: '有邀请码？注册新账号', have_account: '已有账号？登录',
     login_intro: '使用管理员提供的用户名和密码登录。没有密码时，打开管理员发给你的订阅链接也能进入此页。',
     reg_intro: '输入朋友或管理员提供的邀请码，设置用户名和密码后即可使用。',
@@ -46,7 +46,7 @@ const T = {
     wx: '在微信 / QQ 中无法打开 App。请点击右上角 ···，选择「在浏览器打开」；或点击「复制订阅链接」，再到 App 中导入。'
   },
   en: {
-    kicker: 'MEMBER', title: 'My VPN', login: 'Sign in', register: 'Register with an invite code', name: 'Name', password: 'Password',
+    kicker: 'MEMBER', title: 'My VPN', retry: 'Try again', fail_title: 'The page did not load', fail_server: 'The server ran into an error. Try again later; if it keeps happening, tell the admin.', login: 'Sign in', register: 'Register with an invite code', name: 'Name', password: 'Password',
     password_new: 'Choose a password (8+ characters)', password2: 'Repeat the password', code: 'Invite code', have_code: 'Have an invite code? Create an account', have_account: 'Already have an account? Sign in',
     login_intro: 'Use the name and password the admin gave you. No password? Opening your subscription link shows this page too.',
     reg_intro: 'Enter the invite code you were given, pick a name and a password, and you are ready.',
@@ -131,6 +131,15 @@ const inChatApp = () => /MicroMessenger|QQ\//i.test(navigator.userAgent || '');
 const onWindows = () => /Windows/i.test(navigator.userAgent || '') && !inChatApp();
 const chatBanner = () => inChatApp() ? h('div', {class: 'alert warn', id: 'chat-app'}, icon('alert'), t('wx')) : null;
 
+// the page could not load: the brand, one plain sentence (never the server's raw words) and a retry button
+function failPage(msg, again) {
+  Theme.apply(Theme.get());     // hello may have failed before the theme was set
+  const b = h('button', {class: 'btn', onclick: async () => { b.disabled = true; await again(); }}, icon('refresh'), t('retry'));
+  const why = msg === KT.net ? KT.net : /^internal error/.test(msg) || !msg ? t('fail_server') : errText(msg);
+  document.body.replaceChildren(h('main', {class: 'm-wrap m-fail'}, h('header', {class: 'm-top'}, brand()),
+    h('div', {class: 'panel'}, h('div', {class: 'empty-state'}, h('span', {class: 'es-ic'}, icon('alert')), h('b', null, t('fail_title')), h('p', null, why), b))));
+}
+
 /* ---------- sign in / register (the split layout of the console) ---------- */
 function frame(card) {
   const cv = h('canvas', {'aria-hidden': 'true'});
@@ -168,6 +177,8 @@ function renderLogin(code) {
     b.disabled = true;
     try {
       await api(reg ? 'register' : 'login', reg ? {code: f.code.value, name: f.name.value.trim(), password: f.pw.value} : {name: f.name.value.trim(), password: f.pw.value});
+      // hello was fetched before signing in, when the server leaves the admin's notice out: ask again
+      M.hello = await api('hello').catch(() => M.hello);
       history.replaceState(null, '', location.pathname); await renderHome(); window.scrollTo(0, 0);
     } catch (er) { if (!reg) f.pw.value = ''; msg.textContent = er.message === 'wrong name or password' ? t('wrong') : errText(er.message); b.disabled = false; }
   };
@@ -176,7 +187,7 @@ function renderLogin(code) {
 
 /* ---------- the dashboard ---------- */
 async function renderHome() {
-  try { M.me = await api('me'); } catch (e) { if (e.message !== 'login') document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
+  try { M.me = await api('me'); } catch (e) { if (e.message !== 'login') failPage(e.message, renderHome); return; }
   const me = M.me, used = me.used_up + me.used_down, q = me.quota_gb ? Math.max(0, (me.quota_eff || 0) * GB) : null;   // null = unlimited; 0 = a capped plan that shared everything
   const frac = q == null ? 0 : q > 0 ? used / q : 1;
   const reason = {quota: 'r_quota', expired: 'r_expired', manual: 'r_manual', remote: 'r_remote', devices: 'r_devices'}[me.disabled_reason] || 'r_manual';
@@ -395,7 +406,7 @@ function passwordPanel() {
 }
 
 async function boot() {
-  try { M.hello = await api('hello'); } catch (e) { document.body.replaceChildren(h('div', {class: 'empty'}, e.message)); return; }
+  try { M.hello = await api('hello'); } catch (e) { failPage(e.message, boot); return; }
   setLang(M.hello.language); Theme.apply(Theme.get());
   document.title = (M.hello.node_name || 'vps2vpn') + ' · ' + t('title');
   const reg = (location.hash.match(/register=([A-Z0-9-]+)/i) || [])[1];

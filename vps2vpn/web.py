@@ -2144,7 +2144,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_doctor(self, method, s):
         if method != 'POST':
             return self.json({'error': 'POST only'}, 405)
-        return self.json({'results': doctor.run_all()})
+        return self.json({'results': doctor.localized(doctor.run_all(), s['language'])})
 
     def api_telegram(self, method, s):
         """POST {token?, challenge} -> verify a private chat pairing code before saving."""

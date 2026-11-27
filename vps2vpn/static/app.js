@@ -38,6 +38,7 @@ const T = {
     cert_mode: '证书方式', cert_auto: '自动申请免费证书（Let\'s Encrypt，支持纯 IP）', cert_self: '只用自签名证书',
     domain: '域名（可选，有就填）', email: '邮箱（可选，证书快过期时提醒）', cert_now: '立即申请证书',
     cert_ok: '受信任证书', cert_self_s: '自签名证书', cert_self_tip: '仍然全程加密，只是浏览器会提示不安全。',
+    cert_st_ok: '上次申请证书成功。', cert_st_failed: '上次申请证书失败。最常见的原因是云服务商的防火墙没有放行 TCP 80。点击查看原因。',
     saved: '已保存，生效中…', change_pw: '修改管理员密码', old_pw: '当前密码', new_pw: '新密码',
     backup: '备份与恢复', backup_tip: '每天自动备份一次（保留 14 天）。更换服务器时下载备份，在新服务器上恢复即可。',
     download_backup: '下载备份', restore: '从备份恢复', restore_ok: '已恢复', confirm_restore: '恢复会覆盖当前所有用户、邀请码和设置，确定继续吗？', retry: '重试',
@@ -70,7 +71,7 @@ const T = {
     servers: '已加入的服务器', servers_tip: '只有一台服务器时，不需要设置这一页。有第二台（例如新加坡 + 美国）时：在另一台的面板复制它的「加入码」，粘贴到下面，点击「添加服务器」。之后每个人的订阅里会同时包含两台服务器的节点，流量计入同一个额度，用户只在这台服务器上管理。',
     join_code: '本机加入码', join_tip: '只在反过来、要让这台服务器被另一台管理时使用：把这串字符复制到另一台面板的「多服务器」页面。它相当于这台服务器的钥匙，请勿发给他人。', reset_key: '更换加入码',
     reset_key_tip: '旧加入码立刻失效，主服务器那边要删掉本机重新添加。', add_server: '添加服务器', paste_code: '粘贴子服务器的加入码', server_name: '显示名字（如「东京」）',
-    no_servers: '还没有加入其它服务器。', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。面板会马上通知那台服务器删掉从这里同步过去的账号，并记上它们最后用的流量。', remove_unreached: '已移除。那台服务器目前无法连接，面板会每隔几分钟再通知它，它一上线就会删除从这里同步过去的账号（最多等待 30 天）。', leaving: '等它上线', leaving_wait: '已移除，无法连接：等它上线后通知它删除从这里同步过去的账号（最多再等 {d} 天）', leaving_forget: '不等了，直接删', leaving_forget_tip: '面板不再通知那台服务器。从这里同步过去的账号在那边会一直可用，流量也不再计入这里，除非在那台服务器面板的「多服务器」页点击「更换加入码」。',
+    no_servers: '还没有加入其它服务器。', sync_failed: '同步失败', sync_failed_why: '同步失败，点击查看原因', last_sync: '同步于', sync_now: '立即同步', remove: '移除', remove_tip: '移除后，订阅里不再有这台服务器的节点。面板会马上通知那台服务器删掉从这里同步过去的账号，并记上它们最后用的流量。', remove_unreached: '已移除。那台服务器目前无法连接，面板会每隔几分钟再通知它，它一上线就会删除从这里同步过去的账号（最多等待 30 天）。', leaving: '等它上线', leaving_wait: '已移除，无法连接：等它上线后通知它删除从这里同步过去的账号（最多再等 {d} 天）', leaving_forget: '不等了，直接删', leaving_forget_tip: '面板不再通知那台服务器。从这里同步过去的账号在那边会一直可用，流量也不再计入这里，除非在那台服务器面板的「多服务器」页点击「更换加入码」。',
     client_upd: 'vps2vpn 客户端更新', client_ver: '最新版本号（留空 = 按服务器上的安装包自动判断）', client_url: '下载链接（留空 = 用服务器上的安装包）', client_notes: '更新说明（显示给大家看，可不填）',
     client_tip: '面板会自动从 GitHub 获取最新的 vps2vpn 客户端（带签名的 Windows 安装包和安卓 APK），放进下面这个文件夹；使用 vps2vpn 客户端（1.0.9 及以上）的用户会在后台下载、校验签名，点击一次即可安装并重启。使用 Clash Verge、FlClash、小火箭等其他软件的用户不受影响，也收不到这个更新。也可以自己把安装包和同名 .sig 文件放进去，其他都不用填写。',
     client_auto_update: '自动从 GitHub 获取最新客户端（只要带发布签名的）',
@@ -161,6 +162,7 @@ const T = {
     cert_mode: 'Certificate', cert_auto: 'Free certificate from Let\'s Encrypt (works with a bare IP)', cert_self: 'Self-signed only',
     domain: 'Domain (optional)', email: 'E-mail (optional, expiry notices)', cert_now: 'Get certificate now',
     cert_ok: 'Trusted certificate', cert_self_s: 'Self-signed', cert_self_tip: 'Still fully encrypted; browsers just show a warning.',
+    cert_st_ok: 'The last certificate request worked.', cert_st_failed: 'The last certificate request failed, most often because TCP 80 is closed in the provider firewall. Click for the reason.',
     saved: 'Saved, applying…', change_pw: 'Change admin password', old_pw: 'Current password', new_pw: 'New password',
     backup: 'Backup & restore', backup_tip: 'A backup is made every day (14 kept). To move servers, download one here and restore it on the new server.',
     download_backup: 'Download backup', restore: 'Restore from backup', restore_ok: 'Restored', confirm_restore: 'Restoring replaces all current users, invite codes and settings. Continue?', retry: 'Retry',
@@ -193,7 +195,7 @@ const T = {
     servers: 'Joined servers', servers_tip: 'Only one server? You can ignore this page. With a second one (say Singapore + US): copy the other server\'s join code from its panel, paste it below and click "Add server". Every subscription then lists both servers, traffic counts against the same quota, and users are managed here only.',
     join_code: 'Join code of this server', join_tip: 'Only for the other way round, when another server should manage this one: paste this code into that server\'s Servers page. It is a key to this server: keep it private.', reset_key: 'New join code',
     reset_key_tip: 'The old code stops working at once; remove and re-add this server on the main server.', add_server: 'Add server', paste_code: 'Paste the join code of the node', server_name: 'Display name (e.g. "Tokyo")',
-    no_servers: 'No other servers yet.', last_sync: 'synced', sync_now: 'Sync now', remove: 'Remove', remove_tip: 'Its entries disappear from subscriptions. The panel tells that server at once to delete the accounts it got from here, and bills their last traffic.', remove_unreached: 'Removed. That server cannot be reached right now: the panel tells it again every few minutes and it deletes the accounts it got from here as soon as it answers (waiting up to 30 days).', leaving: 'Waiting for it', leaving_wait: 'Removed, unreachable: it is told to delete the accounts it got from here once it answers (up to {d} more days)', leaving_forget: 'Stop waiting', leaving_forget_tip: 'The panel stops telling that server. The accounts it got from here keep working there, unbilled, until "New join code" is clicked on its own panel (Servers page).',
+    no_servers: 'No other servers yet.', sync_failed: 'sync failed', sync_failed_why: 'Sync failed; click for the reason', last_sync: 'synced', sync_now: 'Sync now', remove: 'Remove', remove_tip: 'Its entries disappear from subscriptions. The panel tells that server at once to delete the accounts it got from here, and bills their last traffic.', remove_unreached: 'Removed. That server cannot be reached right now: the panel tells it again every few minutes and it deletes the accounts it got from here as soon as it answers (waiting up to 30 days).', leaving: 'Waiting for it', leaving_wait: 'Removed, unreachable: it is told to delete the accounts it got from here once it answers (up to {d} more days)', leaving_forget: 'Stop waiting', leaving_forget_tip: 'The panel stops telling that server. The accounts it got from here keep working there, unbilled, until "New join code" is clicked on its own panel (Servers page).',
     client_upd: 'vps2vpn app updates', client_ver: 'Latest version (empty = from the installers on the server)', client_url: 'Download link (empty = the installers on the server)', client_notes: 'What is new (shown to everyone, optional)',
     client_tip: 'The panel fetches the newest vps2vpn app from GitHub (the signed Windows setup and Android APK) into the folder below. From 1.0.9 the vps2vpn app downloads it in the background, checks its signature and installs it with one click; other apps (Clash Verge, FlClash, Shadowrocket...) are not affected and get nothing from here. You can also put installers and their .sig files there yourself and leave these empty.',
     client_auto_update: 'Fetch the newest app from GitHub (signed releases only)',
@@ -293,7 +295,15 @@ const legend = () => h('div', {class: 'legend'}, h('span', {style: '--c:var(--do
 const numOrNull = v => (v === '' ? null : Number(v));
 const brand = () => h('div', {class: 'brand'}, h('span', {class: 'seal'}, 'V'), h('div', null, h('b', null, 'vps2vpn'), h('small', null, 'SELF-HOSTED VPN')));
 const AVA = ['#e5432a', '#3f5fe6', '#0b9e86', '#d4860f', '#8b5cf6', '#db2777', '#0891b2'];
-const retryBox = (msg, fn) => h('div', {class: 'empty-state'}, h('p', null, msg), h('button', {class: 'btn sm', onclick: fn}, icon('refresh'), t('retry')));
+// the note an invited sign-up gets (members.py); before 0.2.50 it was always English
+const noteText = n => (n && L === 'zh' ? n.replace(/^invite ([A-Z0-9-]+)/, '邀请码 $1') : n || '');
+const retryBox = (msg, fn) => h('div', {class: 'empty-state'}, h('p', null, errText(msg)), h('button', {class: 'btn sm', onclick: fn}, icon('refresh'), t('retry')));
+// a joined server's error, in the panel's language when it is a known one (otherwise a plain "sync failed"),
+// two lines at most; a click shows the whole text and the server's own words
+// the last certificate request: '' (none yet), 'ok' or 'failed: <reason in English>'
+const certStatus = st => !st ? null : st === 'ok' ? h('div', {class: 'muted', style: 'font-size:12.5px'}, t('cert_st_ok'))
+  : xdetail(t('cert_st_failed'), st.replace(/^failed: /, ''), 'srv-err warn');
+const srvErr = (e, kind) => { const zh = errText(e); return xdetail(L === 'zh' && zh === e ? t('sync_failed_why') : zh, e, 'srv-err' + (kind ? ' ' + kind : '')); };
 
 /* ---------------- start ---------------- */
 async function boot() {
@@ -770,7 +780,7 @@ function renderUsersList() {
       h('div', {class: 'who'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
         h('div', {style: 'min-width:0'}, h('b', null, u.online ? h('span', {class: 'on-dot', title: t('online_now')}) : null, u.name),
           h('small', null, u.online ? t('online_now') + (dev ? ' · ' + dev + (u.max_ips ? '/' + u.max_ips : '') + ' ' + t('devices') : '') + ' · ' + u.online.protocols.join('/')
-            : u.note || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
+            : noteText(u.note) || (u.last_seen ? t('last_seen') + ' ' + fmt.ago(u.last_seen) : '—')))),
       h('div', {class: 'c-use'}, usageBar(u)),
       h('div', {class: 'c-exp'}, h('span', {class: 'num'}, expText(u)), u.reset_day || u.max_ips ? h('div', {class: 'cell-sub'},
         [u.reset_day ? t('reset_on').replace('{d}', u.reset_day) : '', u.max_ips ? t('dev_limit') + ' ' + u.max_ips : ''].filter(Boolean).join(' · ')) : null,
@@ -872,7 +882,7 @@ async function openUser(id, first) {
   const sep = L === 'zh' ? '：' : ': ';
   $('drawer').replaceChildren(
     h('div', {class: 'dr-h'}, h('span', {class: 'ava', style: 'background:' + AVA[u.id % AVA.length]}, (u.name[0] || '?').toUpperCase()),
-      h('div', null, h('b', null, first ? t('done_title') : u.name), h('small', null, first ? t('done_sub') : (u.note || ('#' + u.id)))),
+      h('div', null, h('b', null, first ? t('done_title') : u.name), h('small', null, first ? t('done_sub') : (noteText(u.note) || ('#' + u.id)))),
       h('button', {class: 'btn ghost icon', onclick: closeDrawer, title: KT.cancel}, icon('x'))),
     h('div', {class: 'dr-b'},
       h('div', {class: 'dr-sec'}, h('h4', null, t('share')), h('img', {class: 'qr', alt: 'QR', src: 'api/qr?text=' + encodeURIComponent(links.sub)}),
@@ -1131,17 +1141,19 @@ async function drawServers() {
     h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + x.protocols.join(' / ') + ' · ' + x.users + ' ' + t('users_n') +
       (x.health && x.health.mem_total ? ' · ' + t('mem') + ' ' + Math.round(x.health.mem_used * 100 / x.health.mem_total) + '%' : '') +
       (x.last_ok ? ' · ' + t('last_sync') + ' ' + fmt.ago(x.last_ok) : '') + (x.version ? ' · v' + x.version : '') + ' · ' + t('rate') + ' ×' + x.rate),
-    h('span', {class: 'tl-acts'}, x.error ? chip('bad', x.error.slice(0, 60)) : x.enabled ? chip('ok', t('running')) : chip('off', t('off')),
+    h('span', {class: 'tl-acts'}, x.error ? chip('bad', t('sync_failed')) : x.enabled ? chip('ok', t('running')) : chip('off', t('off')),
       h('button', {class: 'btn sm', title: t('rate_set'), onclick: async e => { const b = e.currentTarget;
         const v = await modal({title: t('rate_set') + ' · ' + x.name, text: t('rate_tip'), input: true, type: 'number', value: String(x.rate), confirm: t('save')});
         if (v != null) act(b, x.id, 'save', {rate: Number(v)}); }}, '×' + x.rate),
       h('button', {class: 'btn sm', title: t('sync_now'), 'aria-label': t('sync_now'), onclick: e => act(e.currentTarget, x.id, 'sync')}, icon('refresh')),
       h('button', {class: 'btn sm', title: t(x.enabled ? 'srv_pause' : 'srv_resume'), 'aria-label': t(x.enabled ? 'srv_pause' : 'srv_resume'), onclick: e => act(e.currentTarget, x.id, 'save', {enabled: !x.enabled})}, icon(x.enabled ? 'pause' : 'play')),
-      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x')))));
+      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('remove') + ' · ' + x.name, t('remove_tip'), {danger: true, confirm: t('remove')})) act(b, x.id, 'remove'); }}, icon('x'))),
+    x.error ? srvErr(x.error) : null));
   rows.push(...(sv.leaving || []).map(x => h('div', {class: 'tl-row'},
     h('b', null, x.name), h('span', {class: 'muted'}, x.host + ' · ' + t('leaving_wait').replace('{d}', x.days_left)),
-    h('span', {class: 'tl-acts'}, chip('warn', x.error ? x.error.slice(0, 60) : t('leaving')),
-      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('leaving_forget') + ' · ' + x.name, t('leaving_forget_tip'), {danger: true, confirm: t('leaving_forget')})) act(b, x.id, 'forget'); }}, t('leaving_forget'))))));
+    h('span', {class: 'tl-acts'}, chip('warn', t('leaving')),
+      h('button', {class: 'btn sm danger', onclick: async e => { const b = e.currentTarget; if (await confirmBox(t('leaving_forget') + ' · ' + x.name, t('leaving_forget_tip'), {danger: true, confirm: t('leaving_forget')})) act(b, x.id, 'forget'); }}, t('leaving_forget'))),
+    x.error ? srvErr(x.error, 'warn') : null)));
   const stRow = x => {
     const st = h('select', null, ...[['ok', t('st_ok')], ['maintenance', t('st_maint')], ['congested', t('st_cong')]].map(([v, l]) => h('option', {value: v}, l)));
     const note = h('input', {type: 'text', maxlength: '100', value: x.note || ''}), until = h('input', {type: 'datetime-local', value: x.until_local || ''});
@@ -1312,7 +1324,8 @@ function drawSettings() {
     panel(t('s_cert'), null, S.data.cert.trusted ? chip('ok', t('cert_ok')) : chip('warn', t('cert_self_s')), h('div', {class: 'stack'},
       h('div', {class: 'form-grid'}, field(t('cert_mode'), sel('cert_mode', [['auto', t('cert_auto')], ['self', t('cert_self')]])), field(t('domain'), inp('domain')),
         field(t('email'), inp('acme_email', 'email'))),
-      h('div', {class: 'muted', style: 'font-size:12.5px'}, (S.data.cert.trusted ? '' : t('cert_self_tip') + ' ') + (S.data.cert.status || '')), h('div', null, certBtn))),
+      S.data.cert.trusted ? null : h('div', {class: 'muted', style: 'font-size:12.5px'}, t('cert_self_tip')),
+      certStatus(S.data.cert.status), h('div', null, certBtn))),
     clientPanel(s, inp),
     h('div', {class: 'save-bar'}, saveBtn)));
 }
@@ -1334,35 +1347,17 @@ function clientPanel(s, inp) {
 }
 
 /* ---------------- health check + maintenance ---------------- */
-const DOC = {   // id -> [zh name, zh fix]; English falls back to the server's own text
-  service_panel: ['面板服务', ''], service_xray: ['REALITY 服务（Xray）', '点下面「重启代理服务」；还不行就在服务器上运行 vps2vpn doctor 看详情'],
-  service_hysteria: ['Hysteria 2 服务', '点下面「重启代理服务」；还不行可能是 UDP 端口被占用，去设置里换个端口'],
-  service_tuic: ['TUIC 服务（sing-box）', '点下面「重启代理服务」；还不行可能是 UDP 端口被占用，去设置里换个端口'],
-  reality_camouflage: ['伪装网站可用', '去「协议与设置」点「自动挑最快的伪装网站」，然后保存'],
-  hysteria_api: ['Hysteria 2 响应', '点「重启代理服务」'], hysteria_port: ['UDP 端口归属', '有别的程序占了这个 UDP 端口，去设置里换一个端口'],
-  tuic_port: ['TUIC 端口归属', '有别的程序占了这个 UDP 端口，去设置里换一个 TUIC 端口'],
-  port_hopping: ['端口跳跃规则', '点「重启代理服务」重新写入规则'],
-  certificate: ['证书', '在云服务商防火墙放行 TCP 80，再去设置点「立即申请证书」；不放行也能用（自签名照样加密）'],
-  bbr: ['BBR 加速', '设置里打开「自动网络调优」；内核太老的话需要升级系统'], udp_buffers: ['UDP 缓冲区', '设置里打开「自动网络调优」'],
-  clock: ['系统时间同步', '时间不准会导致连不上；服务器上运行 timedatectl set-ntp true'],
-  internet: ['服务器能上外网', '服务器自己连不上外网，检查云服务商的网络/DNS 设置'],
-  disk: ['磁盘空间', '清理磁盘空间'], memory: ['内存', '关掉服务器上其它占内存的程序，或升级套餐'],
-  xray_version: ['内核版本', '在服务器上重新运行一次安装命令'], rules: ['分流规则', '点「立即更新分流规则」；服务器要能访问 github.com'],
-  address: ['服务器地址', 'IP 变了：vps2vpn 一天内会自动改好；着急的话去设置里把服务器地址改成新 IP'],
-  speed_limits: ['按账号限速', '在服务器上重新运行一次安装命令（让内核服务可以给限速账号打标记）；容器 VPS 不支持限速，账号会按全速使用']
-};
 async function runDoctor(btn, box) {
   btn.disabled = true; box.replaceChildren(h('div', {class: 'skeleton', style: 'height:120px'}));
   try {
     const r = (await api('doctor', {})).results, bad = r.filter(x => x.ok === false).length;
     const sep = L === 'zh' ? '：' : ': ';
     box.replaceChildren(h('div', {style: 'margin-bottom:6px'}, bad ? chip('bad', bad + ' ' + t('doctor_bad')) : chip('ok', t('doctor_ok'))),
-      ...r.map(x => {
-        const zh = L === 'zh' && DOC[x.id], name = zh ? zh[0] : x.id.replace(/_/g, ' '), fix = x.ok === false ? ((zh && zh[1]) || x.fix) : '';
-        return h('div', {class: 'doc-row'}, h('span', {class: 'dot ' + (x.ok === true ? 'ok' : x.ok === false ? 'bad' : '')}),
-          h('div', null, h('b', null, name), h('small', null, x.detail), fix ? h('div', {class: 'fix'}, h('b', null, t('fix') + sep), fix) : null));
-      }));
-  } catch (e) { box.replaceChildren(h('div', {class: 'empty'}, e.message)); }
+      // name, detail and fix come in the panel's language; `orig` is the server's English detail (hover / click)
+      ...r.map(x => h('div', {class: 'doc-row'}, h('span', {class: 'dot ' + (x.ok === true ? 'ok' : x.ok === false ? 'bad' : '')}),
+        h('div', null, h('b', null, x.name || x.id), x.detail ? xdetail(x.detail, x.orig, 'doc-detail') : null,
+          x.fix ? h('div', {class: 'fix'}, h('b', null, t('fix') + sep), x.fix) : null))));
+  } catch (e) { box.replaceChildren(retryBox(e.message, () => runDoctor(btn, box))); }
   btn.disabled = false;
 }
 const AI_KIND = {hosting: ['机房 IP（数据中心）', 'Data-center IP'], residential: ['家庭宽带 IP', 'Home broadband IP'], mobile: ['手机网络 IP', 'Mobile IP']};

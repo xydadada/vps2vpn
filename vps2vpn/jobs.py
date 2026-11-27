@@ -720,10 +720,10 @@ def tg_command(text):
                 '备份（含密钥，请妥善保存）' if zh else 'Backup (contains keys, keep it private)')
     if cmd == '/doctor':
         from . import doctor
-        bad = [r for r in doctor.run_all() if r.get('ok') is False]
+        bad = [r for r in doctor.localized(doctor.run_all(), 'zh' if zh else 'en') if r.get('ok') is False]
         if not bad:
             return '✅ 体检全部正常' if zh else '✅ Health check: all good'
-        return '\n'.join('❌ %s: %s' % (r['id'], r.get('fix') or r.get('detail', '')) for r in bad)
+        return '\n'.join('❌ %s%s%s' % (r['name'], '：' if zh else ': ', r.get('fix') or r.get('detail', '')) for r in bad)
     if cmd == '/ai':
         return ai_text(aicheck.run())
     return ('可用命令：\n/status 服务器状态\n/users 使用者用量\n/user 名字 某个人的详情\n/expiring 快到期或快用完的账号\n/doctor 一键体检\n/ai AI 可用性检测\n/backup 发送备份' if zh else

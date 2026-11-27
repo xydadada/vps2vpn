@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.50
+
+Fixes for the most serious problems found in a full review of the admin panel and the member center. The layout and colors are unchanged.
+按管理面板和会员中心的全面审阅，修了最严重的几处问题。整体布局和配色不变。
+
+- A joined server whose stored info is missing a field (an older version, a damaged record) is now left out of the subscriptions instead of breaking them: members only lose that server's nodes, and the member page keeps loading. The log gets one warning per server every 10 minutes.
+  子服务器保存的信息缺字段时（版本太旧、记录损坏），订阅里跳过这台服务器，不再整份出错：用户只是少了这台的节点，会员中心照常打开。日志里每台服务器每 10 分钟记一条警告。
+- Messages from the server appear in the panel's language. The health check gives each item a name, a result and a fix in Chinese, and keeps the original English on hover or tap. A failed sync or certificate check on a joined server says why in Chinese when it can; otherwise it says "sync failed, click to see why". The full message is shown in two lines, and a click shows all of it instead of cutting it at 60 characters. The Telegram /doctor command uses the same Chinese names. A member who signs up with an invite gets the note 邀请码 … in a Chinese panel.
+  服务端返回的内容按面板语言显示：体检每一项都有中文名称、结果和修复建议，悬停或点按可以看英文原文；子服务器同步失败、证书检查失败时尽量用中文说明原因，没有译文的写「同步失败，点击查看原因」。错误信息显示两行，点击展开全文，不再在 60 个字处截断。Telegram 的 /doctor 用同样的中文名称。中文面板里，用邀请码注册的用户备注写成「邀请码 …」。
+- On a phone, the buttons of a joined server wrap onto a second line instead of running off the screen, and the error sits under the row instead of in a long label.
+  手机上子服务器那一行的按钮会自动换行，不再超出屏幕；错误信息放在这一行下面，不再挤在一个很长的标签里。
+- Web-address, date-time and phone inputs are styled like the other inputs, so they are readable in dark mode.
+  网址、日期时间、电话这几种输入框和其他输入框样式一致，深色模式下也能看清。
+- A member who signs in with a password sees the admin's notice right away, without reloading the page.
+  用户用密码登录会员中心后，马上就能看到管理员的公告，不用刷新页面。
+- If the member page cannot load, it shows the brand, one plain sentence and a "Retry" button, like the admin panel, instead of a bare error.
+  会员中心加载失败时，和管理面板一样显示标志、一句说明和「重试」按钮，不再只显示一行英文错误。
+- The closed side drawer no longer leaves a shadow along the right edge of the screen.
+  侧边抽屉关闭后，屏幕右边缘不再留下一道阴影。
+
 ## 0.2.49
 
 Small fixes to the member center and the admin panel after a page-by-page screenshot review. The overall layout and colors are unchanged.

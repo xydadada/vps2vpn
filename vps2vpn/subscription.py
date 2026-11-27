@@ -91,15 +91,21 @@ def nodes(s, u):
         info, lid = x.get('info'), (x.get('idmap') or {}).get(str(u['id']))
         if not x.get('enabled', True) or not info or lid is None or not db.allowed_on(u, x['id']):
             continue                       # not synced yet: the next sync (within a minute) adds it
-        if slowed and not cluster.server_can_slow(info):
+        try:
+            if slowed and not cluster.server_can_slow(info):
+                continue
+            label = rate_label(x['name'], cluster.server_rate(x))
+            if label in seen_labels:
+                label = rate_label('%s %s' % (x['name'], x['id'][:4]), cluster.server_rate(x))
+            while label in seen_labels:
+                label += '_'
+            more = server_nodes(info, info.get('tls') or {'sni': info['public_host'], 'pin': '', 'pem': ''}, label, lid, u)
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
+            # what a joined server reported lacks a field (another version, a damaged record): leave that
+            # server out, so the member page and the subscription still work with the others
+            _warn_bad_server(x, e)
             continue
-        label = rate_label(x['name'], cluster.server_rate(x))
-        if label in seen_labels:
-            label = rate_label('%s %s' % (x['name'], x['id'][:4]), cluster.server_rate(x))
-        while label in seen_labels:
-            label += '_'
         seen_labels.add(label)
-        more = server_nodes(info, info.get('tls') or {'sni': info['public_host'], 'pin': '', 'pem': ''}, label, lid, u)
         down = marked and nodestatus.current(x.get('status'))['state'] == 'maintenance'
         for n in more:
             n['ai_score'] = info.get('ai_score', -1)
@@ -110,6 +116,20 @@ def nodes(s, u):
     if s.get('ipv4_only'):            # the old panel's ".ipv4.yaml" link
         out = [n for n in out if ':' not in n['server']]
     return out
+
+
+_bad_warned = {}
+
+
+def _warn_bad_server(x, e):
+    """Log a joined server left out of subscriptions, at most once in 10 minutes per server."""
+    sid, now = str(x.get('id', '?')), time.time()
+    if now - _bad_warned.get(sid, 0) < 600:
+        return
+    _bad_warned[sid] = now
+    from . import jobs
+    jobs.log('warning: server %s (%s) left out of subscriptions, its info is incomplete: %r'
+             % (x.get('name', '?'), sid, e))
 
 
 def _ordered(s, entries):

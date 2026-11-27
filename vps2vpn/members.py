@@ -312,7 +312,9 @@ def register(code, name, password, now=None):
         expire_at = int(now + inv['expire_days'] * 86400) if inv['expire_days'] else 0
     src = inviter if inv['kind'] == 'member' else inv     # the inviter's limits now: the admin may have tightened them
     fields.update(servers=src['servers'] or '', speed_mbps=src['speed_mbps'] or 0, throttle_mbps=src['throttle_mbps'] or 0)
-    note = 'invite %s' % inv['code'] + (' · ' + inv['note'] if inv['note'] else '')
+    # in the panel's language (the panel shows a pre-0.2.50 English one in Chinese too)
+    note = ('invite %s' if db.settings()['language'] == 'en' else '邀请码 %s') % inv['code'] + (
+        ' · ' + inv['note'] if inv['note'] else '')
     with db.transaction():
         uid = db.add_user(name, inv['quota_gb'], expire_at, inv['reset_day'], note[:200], **fields)
         used = [x for x in inv['used_by'].split(',') if x] + [str(uid)]

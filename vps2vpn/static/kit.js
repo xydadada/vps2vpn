@@ -82,7 +82,6 @@ const ERR_ZH=[
  [/^not a vps2vpn join code/,'这不是 vps2vpn 的加入码'],[/^the join code is damaged/,'加入码不完整，请重新复制'],
  [/^that server is already added/,'这台服务器已经添加过了'],[/^cannot reach that server: (.*)$/,(m,a)=>'无法连接那台服务器：'+a],
  [/^this server already belongs to main server "(.*)"/,(m,a)=>'那台服务器已经归主服务器「'+a+'」管理；要换主服务器，先在那台的面板上点「换新加入码」'],
- [/^certificate (changed|does not match)/,'那台服务器的证书变了，请删掉后用新的加入码重新添加'],
  [/^invalid number/,'数字不对'],[/^invalid port|^port must be/,'端口必须是 1–65535'],[/^reset day must be 1-31/,'重置日必须是 1–31（0 = 不重置）'],[/^server reset day must be/,'服务器流量重置日必须是 1–31（小月没有这一天时按月底算）'],[/^unknown time zone/,'时区不认识（例如 UTC+8）'],
  [/^turn on at least one protocol/,'至少要开一种协议'],[/^Hysteria 2 and TUIC need different/,'Hysteria 2 和 TUIC 不能用同一个 UDP 端口'],
  [/must be outside the hopping range/,'这个端口不能落在端口跳跃范围里'],[/^the panel already uses that TCP port/,'面板已经占用了这个 TCP 端口'],
@@ -107,8 +106,33 @@ const ERR_ZH=[
  [/^too many reports, wait a moment/,'发送过于频繁，请 2 分钟后再试'],[/^too many reports today/,'今天已发送 5 条，请明天再试'],
  [/^feedback is turned off/,'管理员未开启反馈功能'],[/^devices are turned off/,'管理员未开启设备管理'],[/^no such device/,'没有这台设备'],
  [/^too many new links, wait an hour/,'1 小时内更换链接次数过多，请稍后再试'],[/^no such feedback/,'这条反馈已不存在'],[/^answer: at most/,'回复最多 500 字'],[/^text: at most/,'最多 1000 个字'],
+ // a joined server's sync error (cluster.py), shown on its row
+ [/^certificate changed and is not publicly trusted/,'这台服务器的证书变了，而且不是公开信任的证书。为安全起见已停止同步：请移除它，再用新的加入码重新添加。'],
+ [/^certificate does not match/,'这台服务器的证书和添加时不一致。请移除它，再用新的加入码重新添加。'],
+ [/^cannot resolve node|^node has no DNS answers/,'解析不了这台服务器的域名，请检查域名解析'],
+ [/^node DNS (returned an invalid|resolved to a non-public) address/,'这台服务器的域名解析到了无效地址或内网地址'],
+ [/^node has no reachable public address/,'连不上这台服务器的公网地址'],
+ [/^node sync refused: (.*)$/,(m,a)=>'这台服务器拒绝了同步：'+errText(a)],
+ [/^node sync response (is not an object|has (invalid|unsafe) )/,'这台服务器返回的数据格式不对，可能两边版本不一致：请把两台都升级到最新版'],
+ [/^node answered (\d+): (.*)$/,(m,a,b)=>'这台服务器返回错误 '+a+'：'+errText(b)],
+ [/^invalid node port|^node URL has no host/,'这台服务器的地址不对，请移除后重新添加'],
+ [/^(TimeoutError|timeout|socket\.timeout|ReadTimeout)\b|timed out/,'连接这台服务器超时'],
+ [/^ConnectionRefusedError/,'这台服务器拒绝连接：面板可能没在运行，或端口被防火墙挡住'],
+ [/^(ConnectionResetError|ConnectionAbortedError|RemoteDisconnected|IncompleteRead)/,'连接中途断开了'],
+ [/^(SSLError|SSLCertVerificationError|SSLEOFError)/,'和这台服务器的加密连接没有建立起来'],
+ [/^(URLError|OSError|gaierror|HTTPException)/,'连不上这台服务器'],
+ [/^cannot reach that server: (.*)$/,(m,a)=>'连不上这台服务器：'+errText(a)],
+ [/^that server is already added/,'这台服务器已经添加过了'],
+ [/^not a vps2vpn join code/,'这不是 vps2vpn 的加入码'],[/^the join code is damaged/,'加入码不完整，请重新复制'],
+ [/^server address must be a public IP or domain/,'服务器地址必须是公网 IP 或域名'],
+ [/^remote UUID conflicts with a local account/,'子服务器上有账号和主服务器的账号冲突'],
+ [/^(node sync requires a complete user list|node sync has too many users|invalid main-server identity|malformed node sync user|duplicate or invalid remote|invalid remote )/,'主服务器发来的数据格式不对，可能两边版本不一致：请把两台都升级到最新版'],
  [/^internal error/,'服务器内部出错，请看日志'],[/^unknown endpoint/,'这个功能不可用（可能被管理员关掉了）'],[/^login required/,'请先登录']];
 function errText(m){if(typeof KT==='undefined'||KT!==KT_ZH||!m)return m;for(const [re,f] of ERR_ZH){const x=String(m).match(re);if(x)return typeof f==='string'?f:f(...x);}return m;}
+// a long server message: two lines with an ellipsis; a click (or Enter) shows all of it and, when it was
+// translated, the server's own words under it. Hovering shows the original too.
+function xdetail(text,orig,cls){orig=orig&&orig!==text?String(orig):'';const el=h('div',{class:'xdetail'+(cls?' '+cls:''),tabindex:'0',role:'button','aria-expanded':'false',title:orig||String(text)},h('span',null,text),orig?h('span',{class:'orig'},orig):null);
+ const flip=()=>{el.classList.toggle('open');el.setAttribute('aria-expanded',String(el.classList.contains('open')));};el.onclick=flip;el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();flip();}};return el;}
 function toast(text,kind){if(kind==='err')text=errText(text);let box=$('toasts');if(!box){box=h('div',{id:'toasts','aria-live':'polite'});document.body.append(box);}const t=h('div',{class:'toast'+(kind==='err'?' err':''),role:'status'},text);const close=()=>{t.classList.add('out');setTimeout(()=>t.remove(),200);};t.onclick=close;box.append(t);setTimeout(close,kind==='err'?8000:4500);while(box.children.length>4)box.firstChild.remove();}
 function modal({title,text,input,value,type,confirm,danger,cancel,placeholder,multiline,maxlength}){return new Promise(res=>{const d=h('dialog',{class:'modal'});const f=h('form',{method:'dialog'});let field=null;if(input){const a={placeholder:placeholder||''};if(maxlength>0)a.maxlength=String(maxlength);field=multiline?h('textarea',a):h('input',Object.assign({type:type||'text',autocomplete:'off'},a));field.value=value??'';if(type==='number'){field.step='any';field.min='0.001';}}
  const ok=h('button',{class:'btn '+(danger?'danger':'primary'),type:'submit'},confirm||KT.ok);const no=h('button',{class:'btn ghost',type:'button'},cancel||KT.cancel);
