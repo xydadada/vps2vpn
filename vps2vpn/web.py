@@ -14,6 +14,7 @@ URL map (paths are secret random prefixes chosen at install time):
 import hmac
 import html
 import http.server
+import io
 import ipaddress
 import json
 import math
@@ -49,6 +50,70 @@ _SVG_CSP = "default-src 'none'; style-src 'none'; sandbox"
 
 class _BadRequest(ValueError):
     """Malformed HTTP request framing, JSON body, or query parameter (answered with 400)."""
+
+
+# Each read from a client waits at most REQUEST_IDLE seconds, but a client sending one byte every few seconds
+# would pass every single read and keep a worker for ever (128 of them serve everybody). So the request line and
+# headers, counted from their first byte, must arrive within HEADER_SECONDS and HEADER_MAX bytes, and a body within
+# BODY_SECONDS plus the time its length takes at BODY_MIN_RATE (a 32 MB restore: about 35 minutes).
+REQUEST_IDLE = 20
+HEADER_SECONDS = 20
+HEADER_MAX = 32 << 10
+BODY_SECONDS = 30
+BODY_MIN_RATE = 16 << 10          # bytes per second
+
+
+class _HeadersTooLarge(ValueError):
+    """The request line and headers went past HEADER_MAX bytes."""
+
+
+class _DeadlineReader(io.RawIOBase):
+    """The socket under a handler's rfile: every read is held to the deadline and byte budget of the part of the
+    request being read. Works the same on a plain socket and an SSLSocket (both have recv_into)."""
+
+    def __init__(self, sock):
+        super().__init__()
+        self.sock = sock
+        self.deadline = None       # monotonic time the current part must be in by (None: only REQUEST_IDLE per read)
+        self.budget = None         # bytes the current part may still read (None: no cap)
+        self.waiting = False       # headers expected, first byte not seen yet: the deadline starts with it
+
+    def readable(self):
+        return True
+
+    def head(self):
+        """The next request's line and headers come now (an idle keep-alive connection waits REQUEST_IDLE)."""
+        self.deadline, self.budget, self.waiting = None, HEADER_MAX, True
+
+    def body(self, size):
+        """A body of up to `size` bytes comes now."""
+        self.deadline = time.monotonic() + BODY_SECONDS + size / BODY_MIN_RATE
+        self.budget, self.waiting = None, False
+
+    def done_reading(self):
+        """Headers parsed: the handler works without a deadline until it reads a body."""
+        self.deadline, self.budget, self.waiting = None, None, False
+
+    def readinto(self, b):
+        view = memoryview(b).cast('B')
+        if self.budget is not None:
+            if self.budget <= 0:
+                raise _HeadersTooLarge('request headers too large')
+            view = view[:self.budget]
+        timeout = REQUEST_IDLE
+        if self.deadline is not None:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                raise socket.timeout('request too slow')
+            timeout = min(timeout, left)
+        self.sock.settimeout(timeout)
+        n = self.sock.recv_into(view)
+        if n and self.waiting:
+            self.waiting = False
+            self.deadline = time.monotonic() + HEADER_SECONDS
+        if self.budget is not None:
+            self.budget -= n
+        return n
 
 
 def _rate_key(ip):
@@ -446,7 +511,7 @@ class Server(http.server.ThreadingHTTPServer):
             self._client_slot(client_address, False)
 
     def finish_request(self, request, client_address):
-        request.settimeout(20)
+        request.settimeout(REQUEST_IDLE)
         try:
             first = request.recv(1, socket.MSG_PEEK)
         except OSError:
@@ -490,6 +555,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+    def setup(self):
+        super().setup()
+        old, self._reader = self.rfile, _DeadlineReader(self.connection)
+        self.rfile = io.BufferedReader(self._reader)
+        old.close()                      # only lets go of the socket's file reference, the socket stays open
+
+    def handle_one_request(self):
+        self._reader.head()
+        try:
+            super().handle_one_request()
+        except _HeadersTooLarge:
+            self.close_connection = True
+            try:
+                self.wfile.write(b'HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\n'
+                                 b'Connection: close\r\n\r\n')
+            except OSError:
+                pass
+
+    def parse_request(self):
+        ok = super().parse_request()
+        if ok:
+            self._reader.done_reading()
+        return ok
 
     # --- helpers ----------------------------------------------------------------
     def send(self, code, body=b'', ctype='text/plain; charset=utf-8', headers=None):
@@ -551,6 +640,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._raw = b''
                 self.close_connection = True
                 raise _BadRequest('unsupported transfer-encoding')
+            self._reader.body(limit)
             self._raw = self._read_chunked(limit)    # some HTTP libraries (Dart, Go) send bodies this way
             return
         if len(cl_vals) > 1:
@@ -570,6 +660,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._raw = b''
             self.close_connection = True
             raise _BadRequest('request too large')
+        self._reader.body(n)
         data = self.rfile.read(n) if n > 0 else b''
         if len(data) != n:
             self._raw = b''
