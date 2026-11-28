@@ -682,8 +682,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     now = a.now if a.now is not None else int(dt.datetime.now(dt.timezone.utc).timestamp())
     try:
-        ins = [os.path.abspath(p) for p in (a.base, a.settings, a.usage, a.template, a.lines) if p]
-        if os.path.abspath(a.output) in ins:
+        inputs = (a.base, a.settings, a.usage, a.template, a.lines)
+        # A symlink in a parent directory can make different spellings replace the same input.
+        ins = {os.path.normcase(os.path.realpath(p)) for p in inputs if p}
+        if os.path.normcase(os.path.realpath(a.output)) in ins:
             raise Problem('-o 不能覆盖输入文件')
         targets = dict(TARGETS)
         for m in a.map:
