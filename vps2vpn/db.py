@@ -412,6 +412,18 @@ def set_settings(**kv):
         clock.forget()
 
 
+def revert_settings(written, before):
+    """Undo a save: put `before` back for each key that still holds what `written` stored there. A key that
+    someone else saved since keeps their value. Returns the keys put back."""
+    with transaction():
+        cur = settings()
+        back = {k: before[k] for k in written
+                if k in before and json.dumps(cur.get(k), sort_keys=True) == json.dumps(written[k], sort_keys=True)}
+        if back:
+            set_settings(**back)
+    return back
+
+
 def ensure_secrets():
     """Fill in keys a fresh install needs. Never overwrites existing ones."""
     s = settings()

@@ -6,6 +6,7 @@ Hysteria 2 use a trusted certificate even when the owner has no domain name.
 The client below uses only the standard library plus the `openssl` command.
 """
 import base64
+import contextlib
 import errno
 import hashlib
 import http.server
@@ -23,6 +24,11 @@ import urllib.error
 import urllib.request
 
 from . import paths, secure
+
+try:
+    import fcntl                  # not on Windows, where the tests also run
+except ImportError:               # pragma: no cover
+    fcntl = None
 
 LE_DIRECTORY = 'https://acme-v02.api.letsencrypt.org/directory'
 LE_STAGING = 'https://acme-staging-v02.api.letsencrypt.org/directory'
@@ -103,32 +109,113 @@ def _publish_pair(key_dst, key_data, crt_dst, crt_data):
 
 
 # --- self-signed ----------------------------------------------------------------
+_address_rlock = threading.RLock()
+_address_depth = 0
+_address_fd = None
+
+
+def _open_address_lock():
+    """The cross-process half of address_lock: an exclusive flock on a file in the certificate folder, so
+    `vps2vpn init` (a separate process) and the panel take turns. None when that is not possible (no fcntl,
+    or the file cannot be opened); the thread lock alone then still orders this process."""
+    if fcntl is None:
+        return None
+    try:
+        paths.ensure_dirs()
+        fd = os.open(os.path.join(paths.CERT_DIR, '.address.lock'), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+@contextlib.contextmanager
+def address_lock():
+    """Owner of the server's address and its self-signed certificate (#163).
+
+    Whoever reads the saved address (settings `public_host` / `domain`) to write the self-signed pair, or
+    changes the address and then writes the pair for it, holds this from the read to the end of the write:
+    the settings save, IpWatch, first-time setup, restore, the TLS fallback, `serve` start-up and
+    `vps2vpn init`. Otherwise one writer's certificate (or its rollback) lands after another writer's newer
+    address, and the address and the certificate disagree. ensure_self_signed takes it itself.
+
+    Re-entrant: a holder may call ensure_self_signed. The flock is taken once, by the outermost level (a
+    second flock on a new descriptor in the same process would wait for itself forever).
+    Lock order: this, then the database. Never take TLSContext.lock, cores' or web's _apply_lock while holding
+    it, never hold it across a db.transaction() that is already open, and never across Let's Encrypt
+    issuance (that writes the ACME files, not these, and talks to the network)."""
+    global _address_depth, _address_fd
+    with _address_rlock:
+        if _address_depth == 0:
+            _address_fd = _open_address_lock()
+        _address_depth += 1
+        try:
+            yield
+        finally:
+            _address_depth -= 1
+            if _address_depth == 0:
+                fd, _address_fd = _address_fd, None
+                if fd is not None:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                    os.close(fd)
+
+
+def saved_cert_host(s):
+    """The name the self-signed certificate is made for, from these settings."""
+    return s['domain'] or s['public_host'] or 'vps2vpn.local'
+
+
+def ensure_self_signed_saved():
+    """Make the self-signed certificate match the address saved right now; returns those settings."""
+    from . import db
+    with address_lock():
+        s = db.settings()
+        ensure_self_signed(saved_cert_host(s))
+        return s
+
+
 def ensure_self_signed(host):
-    """Create (or recreate for a new host) a 10-year self-signed ECDSA certificate."""
-    paths.ensure_dirs()
+    """Create (or recreate for a new host) a 10-year self-signed ECDSA certificate.
+
+    The `.host` marker names the host the pair on disk is for, or is missing: it is removed before a new pair
+    is published and written after, so a failure in between makes the next call build the pair again."""
     raw = (host or '').strip()
     if not raw or any(c in raw for c in '/\n\r,\x00'):
         raise ValueError('invalid host for self-signed certificate: %r' % (host,))
     h = _norm_host(raw)
     if not h or any(c in h for c in '/\n\r,\x00'):
         raise ValueError('invalid host for self-signed certificate: %r' % (host,))
+    paths.ensure_dirs()
     marker = paths.SELF_CRT + '.host'
-    # a lost or damaged key is not "already there": make a new pair
-    if os.path.exists(paths.SELF_CRT) and os.path.exists(marker) and _pair_ok(paths.SELF_CRT, paths.SELF_KEY):
+    with address_lock():
+        # a lost or damaged key is not "already there": make a new pair
+        if os.path.exists(paths.SELF_CRT) and os.path.exists(marker) and _pair_ok(paths.SELF_CRT, paths.SELF_KEY):
+            try:
+                with open(marker, encoding='utf-8') as f:
+                    if f.read() == h:
+                        return
+            except OSError:
+                pass
+        subj = '/CN=' + h if len(h) <= 64 else '/O=vps2vpn'
+        with tempfile.TemporaryDirectory() as d:
+            key, crt = os.path.join(d, 'k'), os.path.join(d, 'c')
+            _openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
+                     '-keyout', key, '-out', crt, '-days', '3650', '-subj', subj,
+                     '-addext', 'subjectAltName=' + _san(h))
+            key_data, crt_data = _pem(key), _pem(crt)
         try:
-            with open(marker, encoding='utf-8') as f:
-                if f.read() == h:
-                    return
-        except OSError:
+            os.remove(marker)
+        except FileNotFoundError:
             pass
-    subj = '/CN=' + h if len(h) <= 64 else '/O=vps2vpn'
-    with tempfile.TemporaryDirectory() as d:
-        key, crt = os.path.join(d, 'k'), os.path.join(d, 'c')
-        _openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
-                 '-keyout', key, '-out', crt, '-days', '3650', '-subj', subj,
-                 '-addext', 'subjectAltName=' + _san(h))
-        _publish_pair(paths.SELF_KEY, _pem(key), paths.SELF_CRT, _pem(crt))
-    paths.write_atomic(marker, h, 0o644)
+        _publish_pair(paths.SELF_KEY, key_data, paths.SELF_CRT, crt_data)
+        paths.write_atomic(marker, h, 0o644)
 
 
 def acme_valid(min_hours=24):

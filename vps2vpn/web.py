@@ -352,7 +352,9 @@ class TLSContext:
             try:
                 sc, sk = os.stat(crt), os.stat(key)
             except OSError:
-                certs.ensure_self_signed(host or 'vps2vpn.local')
+                # lock order: this lock, then certs.address_lock (whose holders never take this one)
+                s = certs.ensure_self_signed_saved()
+                host = s['domain'] or s['public_host']
                 crt, key = certs.current(host)
                 sc, sk = os.stat(crt), os.stat(key)
             stamp = (crt, key, sc.st_ino, sc.st_mtime_ns, sc.st_size,
@@ -1118,12 +1120,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with _SETUP_LOCK:
             if db.settings()['setup_done'] or not secure.hmac_eq(str(d.get('token', '')), setup_token()):
                 return self.json({'error': 'already set up'}, 409)
-            with db.transaction():
-                db.set_settings(**changes)
-                if not db.users():
-                    db.add_user(first)
-            s = db.settings()
-            certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
+            with certs.address_lock():          # lock order: _SETUP_LOCK, then the address (#163)
+                with db.transaction():
+                    db.set_settings(**changes)
+                    if not db.users():
+                        db.add_user(first)
+                s = certs.ensure_self_signed_saved()
             db.set_settings(setup_done=True)
             try:
                 os.unlink(SETUP_TOKEN_FILE)
@@ -1366,22 +1368,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
         changes = validate_settings(self.body_json(), s)
         if isinstance(changes, str):
             return self.json({'error': changes}, 400)
-        before = {k: s.get(k) for k in changes}
-        db.set_settings(**changes)
-        s2 = db.settings()
-        if 'public_host' in changes or 'domain' in changes:
-            try:
-                certs.ensure_self_signed(s2['domain'] or s2['public_host'] or 'vps2vpn.local')
-            except Exception as e:
-                # #126: the new address must not stay saved without its certificate. Put the old values back
-                # and make sure the certificate matches them again (a half-written pair is replaced).
-                db.set_settings(**before)
+        failed = None
+        # #163: every save, not only an address change, holds the address lock from its read to its
+        # certificate: a failed address save that undoes itself must not undo a save that finished meanwhile,
+        # and certificates must be written in the order the addresses were saved.
+        with certs.address_lock():
+            before = {k: v for k, v in db.settings().items() if k in changes}
+            db.set_settings(**changes)
+            s2 = db.settings()
+            if 'public_host' in changes or 'domain' in changes:
                 try:
-                    certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
-                except Exception:
-                    pass
-                jobs.log('settings not saved: certificate for the new address failed: %s' % e)
-                return self.json({'error': 'certificate for the new address could not be written: %s' % e}, 500)
+                    certs.ensure_self_signed(certs.saved_cert_host(s2))
+                except Exception as e:
+                    # #126: the new address must not stay saved without its certificate. Put the old values
+                    # back (only where nobody saved since) and make the certificate match what is saved now
+                    # (a half-written pair is replaced).
+                    failed = e
+                    db.revert_settings(changes, before)
+                    try:
+                        certs.ensure_self_signed_saved()
+                    except Exception:
+                        pass
+        if failed is not None:
+            jobs.log('settings not saved: certificate for the new address failed: %s' % failed)
+            return self.json({'error': 'certificate for the new address could not be written: %s' % failed}, 500)
         if 'tune_network' in changes:
             system.tune_network(s2['tune_network'])
         system.open_firewall(s2)
@@ -2223,8 +2233,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.json({'error': 'restore failed: %s' % e}, 400)
         db.end_all_sessions()
         db.end_all_member_sessions()
-        s2 = db.ensure_secrets()    # a backup without some keys (older, or made by hand) gets them now, not at restart
-        certs.ensure_self_signed(s2['domain'] or s2['public_host'])
+        db.ensure_secrets()    # a backup without some keys (older, or made by hand) gets them now, not at restart
+        certs.ensure_self_signed_saved()    # reads the address under the address lock (#163)
         apply_async(force=True)
         return self.json({'ok': True}, headers={'Set-Cookie': self.session_cookie(db.new_session())})
 
@@ -2610,12 +2620,11 @@ def serve(port=None, host='::'):
     paths.ensure_dirs()
     s = db.ensure_secrets()
     port = port or s['panel_port']
-    if not s['public_host']:
-        ip = system.public_ip()
-        if ip:
+    ip = None if s['public_host'] else system.public_ip()     # the network, before the address lock
+    with certs.address_lock():
+        if ip and not db.settings()['public_host']:
             db.set_settings(public_host=ip)
-    s = db.settings()
-    certs.ensure_self_signed(s['domain'] or s['public_host'] or 'vps2vpn.local')
+        s = certs.ensure_self_signed_saved()
     if s['setup_done']:
         system.port_hopping(s)
     tls = TLSContext()

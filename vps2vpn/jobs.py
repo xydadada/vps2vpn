@@ -821,9 +821,24 @@ class IpWatch:
         if self.seen != now:              # must be seen twice, 10 minutes apart, before we act
             self.seen, self.seen_at = now, time.monotonic()
             return None
-        db.set_settings(public_host=now)
-        certs.ensure_self_signed(now)
-        cores.apply(force=True)
+        # #163: the owner may have saved another address since `s` was read (or be saving one right now).
+        # Their address wins; this one is only taken while the saved address is still the one seen.
+        with certs.address_lock():
+            cur = db.settings()
+            if cur['public_host'] != host or cur['domain']:
+                self.seen = None
+                return None
+            db.set_settings(public_host=now)
+            try:
+                certs.ensure_self_signed(now)
+            except Exception:
+                db.revert_settings({'public_host': now}, {'public_host': host})
+                try:
+                    certs.ensure_self_signed_saved()
+                except Exception:
+                    pass
+                raise
+        cores.apply(force=True)         # after the lock: the cores' lock is never taken inside it
         log('public IP changed %s -> %s; subscriptions now use the new address' % (host, now))
         if s['node_master']:
             # a joined server: people use the main server's links, which pick up the new address at its next sync

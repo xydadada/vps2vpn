@@ -43,15 +43,15 @@ def cmd_init(a):
     v6 = system.public_ip(v6=True)
     if v6:
         db.set_settings(public_ipv6=v6)
-    if not s['public_host']:
-        ip = system.public_ip() or v6          # IPv6-only servers get their IPv6 address
-        if ip:
+    ip = None if s['public_host'] else (system.public_ip() or v6)   # IPv6-only servers get their IPv6 address
+    # #163: this is another process than the panel; the address lock's file lock makes the two take turns
+    # between reading the address and writing its certificate
+    with certs.address_lock():
+        if ip and not db.settings()['public_host']:
             db.set_settings(public_host=ip)
-    s = db.settings()
+        s = certs.ensure_self_signed_saved()
     if not s['setup_done'] and not web.setup_token():
         paths.write_atomic(web.SETUP_TOKEN_FILE, secure.token(16), 0o600)
-    cert_host = s['domain'] or s['public_host']
-    certs.ensure_self_signed(cert_host or 'vps2vpn.local')
     warnings = []
     if not s['setup_done']:
         best, _ = system.best_target()
