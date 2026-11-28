@@ -13,7 +13,7 @@ import secrets
 import threading
 import time
 
-from . import db, secure
+from . import clock, db, secure
 
 ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'   # no 0/O, 1/I/L
 MIN_KEEP_GB = 1.0
@@ -188,6 +188,7 @@ def propagate_lifetime(uid, new_expire_at, new_reset_day=None):
     if not fields:
         return []
     updated = []
+    label = clock.label_after_change(new_reset_day) if new_reset_day else ''
     with db.transaction():
         by_inviter = invitee_index(db.invite_tree(uid))
         queue = [uid]
@@ -200,7 +201,10 @@ def propagate_lifetime(uid, new_expire_at, new_reset_day=None):
                     continue
                 visited.add(cid)
                 if child.get('invite_deduct', 0) > 0:
-                    db.update_user(cid, **fields)
+                    child_fields = dict(fields)
+                    if new_reset_day and int(new_reset_day) != child['reset_day']:
+                        child_fields['last_reset'] = label
+                    db.update_user(cid, **child_fields)
                     updated.append(cid)
                     queue.append(cid)
     return updated
@@ -329,7 +333,7 @@ def register(code, name, password, now=None):
     note = ('invite %s' if db.settings()['language'] == 'en' else '邀请码 %s') % inv['code'] + (
         ' · ' + inv['note'] if inv['note'] else '')
     with db.transaction():
-        uid = db.add_user(name, inv['quota_gb'], expire_at, inv['reset_day'], note[:200], **fields)
+        uid = db.add_user(name, inv['quota_gb'], expire_at, src['reset_day'], note[:200], **fields)
         used = [x for x in inv['used_by'].split(',') if x] + [str(uid)]
         db.update_invite(inv['id'], uses=inv['uses'] + 1, used_by=','.join(used),
                          status='used' if inv['uses'] + 1 >= inv['max_uses'] else 'unused')
