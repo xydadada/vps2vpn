@@ -465,7 +465,9 @@ def apply(s=None, force=False):
         _save_before_restart(s, start + [u for u, on in units.items() if not on])
         for unit, on in units.items():
             if not on:
-                system.systemctl('disable', '--now', unit)
+                r = system.systemctl('disable', '--now', unit)
+                if r.returncode != 0:
+                    errors.append('%s did not stop: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
             elif unit in start:
                 system.systemctl('enable', unit)
                 r = system.systemctl('restart', unit)
