@@ -18,7 +18,7 @@ class SettingsTimeZone(tu.Base):
     def submit_form(self, settings):
         script = r'''
 const fs = require('node:fs');
-const S = {data:{settings:JSON.parse(fs.readFileSync(0,'utf8')),cert:{}},viewSeq:1};
+const S = {view:'settings',data:{settings:JSON.parse(fs.readFileSync(0,'utf8')),cert:{}},viewSeq:1};
 let L = 'en', submitted;
 const nodes = [];
 function h(tag, attrs, ...children) {
