@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-from vps2vpn import bench  # noqa: E402
+from vps2vpn import bench, bench_compare  # noqa: E402
 
 
 def free_port():
@@ -107,8 +107,8 @@ def fetch_proxies(url, insecure=False, ca_file=None):
 
 
 def wait_port(port, timeout=15):
-    end = time.time() + timeout
-    while time.time() < end:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
         try:
             socket.create_connection(('127.0.0.1', port), timeout=1).close()
             return True
@@ -127,9 +127,24 @@ def main():
     ap.add_argument('--mihomo', default=shutil.which('mihomo') or shutil.which('mihomo.exe'))
     ap.add_argument('--quick', action='store_true', help='shorter tests')
     ap.add_argument('--origin', help='optional controlled measurement HTTP(S) origin; serves /generate_204, /__down and /__up')
+    ap.add_argument('--compare', action='store_true', help='repeat anonymous paths against one required --origin; no fallback')
+    ap.add_argument('--rounds', type=int, help='comparison rounds, 1–20 (default: 3)')
+    ap.add_argument('--seed', type=int, help='comparison order seed, 0–4294967295 (default: 0)')
+    ap.add_argument('--budget', type=int, help='comparison sampling budget, 1–3600 seconds (default: 600)')
+    ap.add_argument('--sample-timeout', type=int, help='comparison per-sample deadline, 1–300 seconds (default: 120)')
     ap.add_argument('--no-direct', action='store_true', help='skip the direct (no proxy) baseline')
     ap.add_argument('--json', help='also write results to this file')
     a = ap.parse_args()
+    comparison_options = {'rounds': 3 if a.rounds is None else a.rounds, 'seed': 0 if a.seed is None else a.seed,
+                          'budget': 600 if a.budget is None else a.budget,
+                          'sample_timeout': 120 if a.sample_timeout is None else a.sample_timeout}
+    if a.compare:
+        try:
+            bench_compare.validate(a.origin, **comparison_options)
+        except ValueError as error:
+            ap.error(str(error))
+    elif any(value is not None for value in (a.rounds, a.seed, a.budget, a.sample_timeout)):
+        ap.error('--rounds, --seed, --budget and --sample-timeout require --compare')
     if not (a.subscription or a.config):
         ap.error('give a subscription link or --config')
     if not a.mihomo or not os.path.exists(a.mihomo):
@@ -139,10 +154,13 @@ def main():
             proxies = parse_proxies(f.read(MAX_SUBSCRIPTION_BYTES + 1))
     else:
         proxies = fetch_proxies(a.subscription, insecure=a.insecure, ca_file=a.ca_file)
+    if a.compare and len(proxies) + (not a.no_direct) > bench_compare.MAX_PATHS:
+        ap.error('comparison supports at most %d paths including the direct baseline' % bench_compare.MAX_PATHS)
     bench.measurement_urls(a.origin)  # Validate before starting a core or sending measurement traffic.
     work = tempfile.mkdtemp(prefix='v2v-bench-')
     proc = None
     rows = []
+    comparison = None
     try:
         ports = {p['name']: free_port() for p in proxies}
         conf = {'mode': 'rule', 'log-level': 'warning', 'ipv6': True, 'allow-lan': False, 'proxies': proxies,
@@ -152,14 +170,22 @@ def main():
         with open(os.path.join(work, 'config.yaml'), 'w', encoding='utf-8') as f:
             json.dump(conf, f)
         proc = subprocess.Popen([a.mihomo, '-d', work], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not all(wait_port(p) for p in ports.values()):
+        startup_deadline = time.monotonic() + 15
+        if not all(wait_port(p, max(0, startup_deadline - time.monotonic()) if a.compare else 15)
+                   for p in ports.values()):
             sys.exit('mihomo did not start; run it by hand with -d %s to see why' % work)
-        if not a.no_direct:
-            print('direct (no proxy)')
-            rows.append(('direct', bench.run(None, a.quick, origin=a.origin)))
-        for p in proxies:
-            print(p['name'])
-            rows.append((p['name'], bench.run('http://127.0.0.1:%d' % ports[p['name']], a.quick, origin=a.origin)))
+        if a.compare:
+            paths = [] if a.no_direct else [{'proxy': None, 'protocol': 'direct'}]
+            paths.extend({'proxy': 'http://127.0.0.1:%d' % ports[p['name']], 'protocol': p.get('type')}
+                         for p in proxies)
+            comparison = bench_compare.run(paths, a.origin, quick=a.quick, **comparison_options)
+        else:
+            if not a.no_direct:
+                print('direct (no proxy)')
+                rows.append(('direct', bench.run(None, a.quick, origin=a.origin)))
+            for p in proxies:
+                print(p['name'])
+                rows.append((p['name'], bench.run('http://127.0.0.1:%d' % ports[p['name']], a.quick, origin=a.origin)))
     finally:
         try:
             if proc is not None:
@@ -171,6 +197,16 @@ def main():
                     proc.wait()
         finally:
             shutil.rmtree(work, ignore_errors=True)
+    if comparison is not None:
+        print('%d/%d samples complete; failed and timed-out samples are retained.' %
+              (comparison['successful_samples'], comparison['scheduled_samples']))
+        print('One controlled origin; fresh HTTP(S) request times are not loaded latency or raw network RTT.')
+        if a.json:
+            with open(a.json, 'w', encoding='utf-8') as f:
+                json.dump(comparison, f, indent=1, ensure_ascii=False, allow_nan=False)
+        if not comparison['complete']:
+            raise SystemExit(1)
+        return
     print()
     print(bench.table(rows))
     print('\nping = median of fresh HTTPS requests through the proxy; down/up in Mbit/s.')
