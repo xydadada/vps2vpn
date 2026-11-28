@@ -177,6 +177,7 @@ def _validated_sync_snapshot(body):
 
 def handle_sync(s, body, base_url=''):
     """Apply an authenticated snapshot atomically; never treat malformed rows as deletions."""
+    authenticated_key = s.get('node_key')
     master, master_id, wanted, uuids = _validated_sync_snapshot(body)
     now = time.time()
     for w in wanted.values():
@@ -187,6 +188,8 @@ def handle_sync(s, body, base_url=''):
             w['enabled'], w['reason'] = 0, 'expired'
     with _node_lock, db.transaction():
         s = db.settings()
+        if not secure.hmac_eq(authenticated_key, s['node_key']):
+            raise PermissionError('bad node key')
         if s['node_master_id'] and master_id != s['node_master_id']:
             return {'error': 'this server already belongs to main server "%s"; on it press "New join code" to free it'
                              % s['node_master'], 'conflict': True}
