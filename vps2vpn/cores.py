@@ -232,12 +232,14 @@ def _placeholder(s):
     return hashlib.sha256(('vps2vpn-placeholder:' + s['stats_secret']).encode()).hexdigest()[:32]
 
 
-def write_configs(s=None, errors=None):
-    """Render the core configs. Returns the paths that changed; a config a core rejects is reported in `errors`."""
+def write_configs(s=None, errors=None, changed=None):
+    """Render the core configs. Returns the paths that changed; a config a core rejects is reported in `errors`.
+    Each path is added to `changed` as soon as it is written, so a caller still knows which files are new when a
+    later one fails."""
     s = s or db.settings()
     errors = [] if errors is None else errors
     users = active_users()
-    changed = []
+    changed = [] if changed is None else changed
     group = 'vps2vpn'
     for path, data, on in ((paths.XRAY_CONFIG, xray_config(s, users), s['reality_enabled']),
                            (paths.HY2_CONFIG, hysteria_config(s, users), s['hy2_enabled']),
@@ -435,57 +437,137 @@ def _save_before_restart(s, units):
         print('traffic collection before restart failed: %s' % e, flush=True)
 
 
-_restart_owed = set()     # units whose last restart failed; see apply
+# Units whose config on disk may be newer than what the running core loaded: a restart failed (#141), or an
+# apply stopped between writing a config and restarting its core (a later write failed, systemctl timed out:
+# #166). The next apply restarts them even though the files are "unchanged". Kept on disk too, so a panel
+# restart or a `vps2vpn apply` from the command line in between does not lose it; a reboot does (every core
+# then starts from its file).
+_restart_owed = set()
+_owed_loaded = [False]
+_CONFIG_UNITS = ((paths.XRAY_CONFIG, XRAY_UNIT), (paths.HY2_CONFIG, HY2_UNIT), (paths.TUIC_CONFIG, TUIC_UNIT))
+
+
+def _owed_file():
+    return os.path.join(paths.VAR, 'restart-owed.json')
+
+
+def _boot_id():
+    try:
+        with open('/proc/sys/kernel/random/boot_id', encoding='ascii') as f:
+            return f.read().strip()
+    except (OSError, ValueError):
+        return ''
+
+
+def _owed_on_disk():
+    """The units a panel process still owed a restart, if it ran since this boot."""
+    try:
+        with open(_owed_file(), encoding='utf-8') as f:
+            d = json.load(f)
+        if d.get('boot') == _boot_id():
+            return {u for u in d.get('units', []) if u in _ENABLED}
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return set()
+
+
+def restart_pending():
+    """True when a core restart is owed (by this process or an earlier one): the scheduler applies at once."""
+    return bool(_restart_owed or _owed_on_disk())
+
+
+def _sync_owed():
+    """Record _restart_owed on disk. Best effort: the set in memory still works when the disk does not."""
+    try:
+        if _restart_owed:
+            text = json.dumps({'boot': _boot_id(), 'units': sorted(_restart_owed)})
+            try:
+                with open(_owed_file(), encoding='utf-8') as f:
+                    if f.read() == text:
+                        return
+            except OSError:
+                pass
+            paths.write_atomic(_owed_file(), text, 0o600)
+        elif os.path.exists(_owed_file()):
+            os.remove(_owed_file())
+    except OSError as e:
+        print('could not record pending core restarts: %s' % e, flush=True)
 
 
 def apply(s=None, force=False):
     """Write configs and restart only what changed. Safe to call any time."""
     with _apply_lock:
-        s = s or db.settings()
-        errors = []
-        old_xray = None if force else _read_json(paths.XRAY_CONFIG)
-        changed = write_configs(s, errors)
-        units = {XRAY_UNIT: s['reality_enabled'], HY2_UNIT: s['hy2_enabled'], TUIC_UNIT: s['tuic_enabled']}
-        restart = []
-        if force or paths.XRAY_CONFIG in changed:
-            # Users only added: hand them to the running core and keep everyone else connected. The file is
-            # already written, so a later restart comes up in the same state.
-            if force or not s['reality_enabled'] or \
-                    not _xray_live_update(s, old_xray, _read_json(paths.XRAY_CONFIG)):
-                restart.append(XRAY_UNIT)
-        if force or paths.HY2_CONFIG in changed:
-            restart.append(HY2_UNIT)
-        if force or paths.TUIC_CONFIG in changed:
-            restart.append(TUIC_UNIT)
-        # A restart that failed while the old process kept running: the file on disk is already the new one, so
-        # the next call sees "no change, service active" and would call it done. Owe it until it works (#141).
-        restart += [u for u in sorted(_restart_owed) if u not in restart and units.get(u)]
-        # also when the config did not change but the service is down (protocol switched back on, crash)
-        start = [u for u, on in units.items() if on and (u in restart or system.unit_active(u) is False)]
-        _save_before_restart(s, start + [u for u, on in units.items() if not on])
-        for unit, on in units.items():
-            if not on:
-                system.systemctl('disable', '--now', unit)
-            elif unit in start:
-                system.systemctl('enable', unit)
-                r = system.systemctl('restart', unit)
-                if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
-                    _restart_owed.add(unit)
-                    errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
-                else:
-                    _restart_owed.discard(unit)
-        # after the cores: they now mark exactly the accounts these classes are for
-        # A host that cannot shape at all (no tc / IFB, a container) is reported by the health check
-        # ("limits_unsupported"); retrying would never help there, so only a failure that can pass counts.
-        if not shaper.apply(limits(active_users())) and shaper.available():
-            errors.append('speed limits could not be applied')
-        hop = system.port_hopping(s)
-        if hop and hop.startswith('failed'):
-            # Subscriptions stop listing the hop range; the watchdog tries again every 5 minutes.
-            print('port hopping could not be set up (%s); listing only the Hysteria port' % hop, flush=True)
-        if errors:
-            raise RuntimeError('; '.join(errors))
-        return changed
+        if not _owed_loaded[0]:
+            _owed_loaded[0] = True
+            _restart_owed.update(_owed_on_disk())
+        try:
+            return _apply(s, force)
+        finally:
+            _sync_owed()
+
+
+def _apply(s, force):
+    s = s or db.settings()
+    errors = []
+    old_xray = None if force else _read_json(paths.XRAY_CONFIG)
+    units = {XRAY_UNIT: s['reality_enabled'], HY2_UNIT: s['hy2_enabled'], TUIC_UNIT: s['tuic_enabled']}
+    owed_before = set(_restart_owed)
+    changed = []
+    try:
+        changed = write_configs(s, errors, changed)
+    finally:
+        # a new file is owed its restart from the moment it is written, even if this call stops half way (#166)
+        _restart_owed.update(unit for path, unit in _CONFIG_UNITS if path in changed and units[unit])
+    restart = []
+    if force or paths.XRAY_CONFIG in changed:
+        # Users only added: hand them to the running core and keep everyone else connected. The file is
+        # already written, so a later restart comes up in the same state. Not when an earlier file is still
+        # waiting for its restart: the running core is then further behind than this one change (#166).
+        if force or XRAY_UNIT in owed_before or not s['reality_enabled'] or \
+                not _xray_live_update(s, old_xray, _read_json(paths.XRAY_CONFIG)):
+            restart.append(XRAY_UNIT)
+        else:
+            _restart_owed.discard(XRAY_UNIT)
+    if force or paths.HY2_CONFIG in changed:
+        restart.append(HY2_UNIT)
+    if force or paths.TUIC_CONFIG in changed:
+        restart.append(TUIC_UNIT)
+    # A restart that failed while the old process kept running: the file on disk is already the new one, so
+    # the next call sees "no change, service active" and would call it done. Owe it until it works (#141).
+    restart += [u for u in sorted(_restart_owed) if u not in restart and units.get(u)]
+    # also when the config did not change but the service is down (protocol switched back on, crash)
+    start = [u for u, on in units.items() if on and (u in restart or system.unit_active(u) is False)]
+    # owed until each restart has worked: a systemctl that times out on one unit leaves the others untouched
+    _restart_owed.update(start)
+    _save_before_restart(s, start + [u for u, on in units.items() if not on])
+    for unit, on in units.items():
+        if not on:
+            r = system.systemctl('disable', '--now', unit)
+            if r.returncode == 0 or system.unit_active(unit) is False:
+                _restart_owed.discard(unit)        # stopped: it reads its file when it is switched back on
+            else:
+                # a protocol switched off that still serves (accounts it should no longer let in): an error,
+                # so apply_async tries again (#171). A unit that is not running at all is not one.
+                errors.append('%s did not stop: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
+        elif unit in start:
+            system.systemctl('enable', unit)
+            r = system.systemctl('restart', unit)
+            if r.returncode != 0:      # surfaces as an error, and apply_async retries with backoff
+                errors.append('%s did not start: %s' % (unit, (r.stderr or r.stdout or '').strip()[-200:]))
+            else:
+                _restart_owed.discard(unit)
+    # after the cores: they now mark exactly the accounts these classes are for
+    # A host that cannot shape at all (no tc / IFB, a container) is reported by the health check
+    # ("limits_unsupported"); retrying would never help there, so only a failure that can pass counts.
+    if not shaper.apply(limits(active_users())) and shaper.available():
+        errors.append('speed limits could not be applied')
+    hop = system.port_hopping(s)
+    if hop and hop.startswith('failed'):
+        # Subscriptions stop listing the hop range; the watchdog tries again every 5 minutes.
+        print('port hopping could not be set up (%s); listing only the Hysteria port' % hop, flush=True)
+    if errors:
+        raise RuntimeError('; '.join(errors))
+    return changed
 
 
 def _count(v):

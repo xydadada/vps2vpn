@@ -846,6 +846,8 @@ class Scheduler:
         self.last = {}
         self.cert_backoff_until = 0.0
         self.apply_owed, self.apply_wait, self.apply_at = False, 0, 0.0   # a failed apply, tried again later
+        # a core the last panel process (or `vps2vpn apply`) left behind its config is restarted at once (#166)
+        self.apply_owed = cores.restart_pending()
         self.backup_wait, self.backup_at = 0, 0.0
         self.stop = threading.Event()
         self.ipwatch = IpWatch()
