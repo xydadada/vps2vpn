@@ -146,7 +146,7 @@ PYTHONIOENCODING=utf-8 V2V_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe" pyt
 1. 改 `CHANGELOG.md`、`vps2vpn/__init__.py` 的 `VERSION`、`install.sh` 的 `PINNED_TAG`，以及 README 中英文两处测试数量。
 2. 提交时只 add 自己改的文件。
 3. 先 `git push origin main`，等 `test` workflow 全绿（容器里的安装和卸载只有 CI 能测）。
-4. 再 `git tag vX.Y.Z && git push origin vX.Y.Z`，等 `release` workflow 通过。`release` 不看测试结果，打 tag 就会发布。
+4. 再 `git tag vX.Y.Z && git push origin vX.Y.Z`，等 `release` workflow 通过。自 0.2.51 起，`release` 先调用 `test.yml`，在 tag 指向的提交上重跑完整测试；`source` 通过 `needs: tests` 等待测试成功后才发布。仍保留第 3 步：先确认主分支测试通过，再打 tag。
 5. 用 `gh release edit vX.Y.Z --notes-file 说明.md` 写中英双语说明。
 6. 用 `gh api repos/xydadada/vps2vpn/releases/latest` 确认它是 Latest。
 
