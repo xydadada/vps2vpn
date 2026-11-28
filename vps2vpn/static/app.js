@@ -838,6 +838,7 @@ function renderUsersList() {
     h('div', {class: 'panel'}, head, ...(rows.length ? rows : [h('div', {class: 'empty'}, us.length ? t('no_match') : t('no_users'))])));
 }
 function drawUsers() {
+  if (S.view !== 'users' || !$('view')) return;
   if ($('uBody')) { renderUsersList(); return; }
   const search = h('input', {id: 'uSearch', type: 'search', placeholder: t('search'), value: S.q});
   let composing = false;
@@ -1058,6 +1059,7 @@ function editUser(u) {
 
 /* ---------------- members: requests, invite codes, member center ---------------- */
 async function drawMembers() {
+  if (S.view !== 'members' || !$('view')) return;
   const s = S.data.settings, view = $('view'), seq = S.viewSeq;
   view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
   let inv, req, fb;
@@ -1165,6 +1167,7 @@ async function drawMembers() {
 
 /* ---------------- servers: join code, joined servers, monthly traffic ---------------- */
 async function drawServers() {
+  if (S.view !== 'servers' || !$('view')) return;
   const s = S.data.settings, view = $('view'), seq = S.viewSeq;
   view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
   let sv;
@@ -1264,6 +1267,7 @@ function probeErr(r) {
     : /SSL|certificate/i.test(e) ? 'e_tls' : 'e_other');
 }
 async function drawMonitor() {
+  if (S.view !== 'monitor' || !$('view')) return;
   const s = S.data.settings, view = $('view'), seq = S.viewSeq;
   view.replaceChildren(h('div', {class: 'skeleton', style: 'height:200px'}));
   let mo, ab;
@@ -1309,6 +1313,7 @@ async function drawMonitor() {
 
 /* ---------------- settings ---------------- */
 function drawSettings() {
+  if (S.view !== 'settings' || !$('view')) return;
   const s = S.data.settings, inputs = [], seq = S.viewSeq;
   const bind = (k, el) => { el.dataset.k = k; inputs.push(el); return el; };
   const cb = k => bind(k, h('input', {type: 'checkbox', checked: !!s[k]}));
@@ -1485,6 +1490,7 @@ function securityPanel() {
 }
 
 function drawSystem() {
+  if (S.view !== 'system' || !$('view')) return;
   const d = S.data, tg = d.settings.tg_ready;
   const docBox = h('div', null, h('div', {class: 'empty-state'}, h('span', {class: 'es-ic'}, icon('pulse')), h('p', null, t('doctor_tip')))),
     docBtn = h('button', {class: 'btn primary'}, icon('pulse'), t('doctor_run'));
