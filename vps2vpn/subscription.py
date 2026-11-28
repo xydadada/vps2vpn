@@ -119,7 +119,7 @@ def nodes(s, u):
 
 
 # Names a client already uses: Clash/mihomo's built-in policies and sing-box's direct outbound tag.
-CLIENT_RESERVED = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL', 'direct'}
+CLIENT_RESERVED = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'PASS-RULE', 'COMPATIBLE', 'GLOBAL', 'direct'}
 
 
 def _free_groups(s, out):
