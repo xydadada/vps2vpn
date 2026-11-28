@@ -403,6 +403,7 @@ textarea.mono{font:12.5px/1.7 var(--mono)}
  .bulk-acts{grid-column:1/-1;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
  .bulk-acts .btn{flex:none}}
 .panel-h h3{white-space:nowrap}
+@media (max-width:860px){.panel-h h3{min-width:0;white-space:normal;overflow-wrap:anywhere}.proto .btn{max-width:100%;white-space:normal}}
 .page.still{animation:none}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:40px 16px;color:var(--muted)}
 .empty-state p{margin:0;max-width:26em;font-size:13px;line-height:1.8}
