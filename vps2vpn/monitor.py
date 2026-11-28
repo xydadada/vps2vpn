@@ -8,7 +8,6 @@ the server's own bandwidth. The last 288 rounds (24 hours) are kept.
 import http.client
 import ipaddress
 import json
-import math
 import os
 import socket
 import ssl
@@ -216,13 +215,16 @@ def _valid_history_entry(item):
             return False
         if probe['ok']:
             elapsed = probe.get('total')
-            if type(elapsed) not in (int, float) or not math.isfinite(elapsed):
+            # Range comparisons avoid converting arbitrary JSON integers to
+            # floats (which can overflow). This also rejects NaN/Infinity
+            # and negative measurements, with ample room for real telemetry.
+            if type(elapsed) not in (int, float) or not 0 <= elapsed < (1 << 63):
                 return False
     speed = item.get('speed')
     if speed is not None:
         if not isinstance(speed, dict) or type(speed.get('at', item['at'])) is not int:
             return False
-        if 'mbps' in speed and (type(speed['mbps']) not in (int, float) or not math.isfinite(speed['mbps'])):
+        if 'mbps' in speed and (type(speed['mbps']) not in (int, float) or not 0 <= speed['mbps'] < (1 << 63)):
             return False
     return True
 
