@@ -658,7 +658,7 @@ restore_previous_app() {   # after a failed upgrade: the previous code back in p
 }
 
 do_install() {
-  local port=""
+  local port="" activation_failed=0
   if [ -n "${V2V_PANEL_PORT:-}" ]; then check_panel_port "$V2V_PANEL_PORT"; port="--port $V2V_PANEL_PORT"; fi
   need_root; detect_arch; install_packages; prepare_system; install_cores; install_app; install_units
   local json setup_done
@@ -671,14 +671,14 @@ do_install() {
     die "vps2vpn init failed"
   fi
   # a failing enable / restart must reach the check below (and its rollback), not end the script here (#120)
-  systemctl enable vps2vpn >/dev/null 2>&1 || true
-  systemctl restart vps2vpn || true
+  systemctl enable vps2vpn >/dev/null 2>&1 || activation_failed=1
+  systemctl restart vps2vpn || activation_failed=1
   setup_done=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)' 2>/dev/null || echo 0)
   if [ "$setup_done" = 1 ]; then          # configured (upgrade or --auto): write configs for the new version
     PYTHONPATH="$LIB/app" "$PY" -m vps2vpn apply --force >/dev/null 2>&1 || true
   fi
   sleep 1
-  if ! systemctl is-active --quiet vps2vpn; then
+  if [ "$activation_failed" = 1 ] || ! systemctl is-active --quiet vps2vpn; then
     journalctl -u vps2vpn -n 30 --no-pager || true
     if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade broke the panel: put the previous version back
       restore_previous_app
