@@ -117,6 +117,19 @@ def enforce(now=None):
         def can_slow(u):
             return ((main_slow and db.allowed_on(u, db.MAIN_SERVER))
                     or any(db.allowed_on(u, sid) for sid in slow_servers))
+
+        def switch(u, **kv):
+            """Change on/off only if the row is still what `u` says (#172): an admin may have switched the account
+            off meanwhile. Otherwise `u` is refreshed and nothing is done; the next pass decides again."""
+            was_reason = None if u['enabled'] else u['disabled_reason']
+            if db.switch_user(u['id'], u['enabled'], was_reason, **kv):
+                u.update(kv)
+                return True
+            fresh = db.user(u['id'])
+            if fresh:
+                u.update(fresh)
+            log('%s was changed meanwhile; left as it is now' % u['name'])
+            return False
         # Usually one pass; quota shared down an invite tree may need one more per level (stops when nothing moves).
         for _pass in range(max(2, min(len(users), 32))):
             pass_changed = False
@@ -124,9 +137,8 @@ def enforce(now=None):
                 if u['remote_id']:
                     # an account of a main server: it decides about limits. Only expiry is applied here as well,
                     # so an expired account stops even while the main server is unreachable.
-                    if u['enabled'] and u['expire_at'] and t_now >= u['expire_at']:
-                        db.update_user(u['id'], enabled=0, disabled_reason='expired')
-                        u.update(enabled=0, disabled_reason='expired')
+                    if u['enabled'] and u['expire_at'] and t_now >= u['expire_at'] and \
+                            switch(u, enabled=0, disabled_reason='expired'):
                         log('disabled %s (expired; main server account)' % u['name'])
                         pass_changed = True
                     continue
@@ -176,12 +188,9 @@ def enforce(now=None):
                         log('full speed again: %s' % u['name'])
                 if device_due:
                     if reason:
-                        db.update_user(u['id'], enabled=0, disabled_reason=reason, paused_until=0)
-                        u.update(enabled=0, disabled_reason=reason, paused_until=0)
-                        log('device pause over: %s (now disabled: %s)' % (u['name'], reason))
-                    else:
-                        db.update_user(u['id'], enabled=1, disabled_reason='', paused_until=0)
-                        u.update(enabled=1, disabled_reason='', paused_until=0)
+                        if switch(u, enabled=0, disabled_reason=reason, paused_until=0):
+                            log('device pause over: %s (now disabled: %s)' % (u['name'], reason))
+                    elif switch(u, enabled=1, disabled_reason='', paused_until=0):
                         log('device pause over: %s' % u['name'])
                         pass_changed = True
                     continue
@@ -190,17 +199,14 @@ def enforce(now=None):
                         u['used_up'] + u['used_down'] >= 0.8 * quota * (1 << 30):
                     notify.send('%s has used 80%% of %g GB / %s 已用掉 80%% 流量' % (u['name'], quota, u['name']),
                                 key=quota_alert_key(u, quota, t_now), every=40 * 86400)
-                if u['enabled'] and reason:
-                    db.update_user(u['id'], enabled=0, disabled_reason=reason)
-                    u.update(enabled=0, disabled_reason=reason)
+                if u['enabled'] and reason and switch(u, enabled=0, disabled_reason=reason):
                     log('disabled %s (%s)' % (u['name'], reason))
                     notify.send('%s paused: %s / %s 已停用（%s）' % (u['name'], reason, u['name'],
                                                                  '流量用完' if reason == 'quota' else '已到期'),
                                 key='off-%d-%s' % (u['id'], reason), every=86400)
                     pass_changed = True
-                elif not u['enabled'] and u['disabled_reason'] in ('quota', 'expired') and not reason:
-                    db.update_user(u['id'], enabled=1, disabled_reason='')
-                    u.update(enabled=1, disabled_reason='')
+                elif not u['enabled'] and u['disabled_reason'] in ('quota', 'expired') and not reason and \
+                        switch(u, enabled=1, disabled_reason=''):
                     log('re-enabled %s' % u['name'])
                     pass_changed = True
             if pass_changed:

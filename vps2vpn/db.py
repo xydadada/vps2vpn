@@ -520,6 +520,23 @@ def update_user(uid, **kv):
         x('UPDATE users SET %s WHERE id=?' % ','.join(sets), args + [uid])
 
 
+def switch_user(uid, was_enabled, was_reason=None, **kv):
+    """Turn an account on or off only while it is still as the caller read it (`enabled`, and `disabled_reason`
+    unless None). The scheduler decides from a snapshot; an admin who switched the account off by hand meanwhile
+    must not be overruled by it (#172). Returns True when the row was changed."""
+    for k in kv:
+        if k not in ('enabled', 'disabled_reason', 'paused_until'):
+            raise KeyError(k)
+    where, args = 'id=? AND enabled=?', [uid, int(bool(was_enabled))]
+    if was_reason is not None:
+        where += ' AND disabled_reason=?'
+        args.append(was_reason)
+    with _lock:
+        cur = connect().execute('UPDATE users SET %s WHERE %s' % (','.join(k + '=?' for k in kv), where),
+                                list(kv.values()) + args)
+        return cur.rowcount == 1
+
+
 def pause_for_devices(uid, until):
     """Pause an account over its device limit, but only while it is still on: the device check works
     from a reading that takes seconds, and an admin who turned the account off meanwhile must not have

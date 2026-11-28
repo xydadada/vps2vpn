@@ -178,6 +178,7 @@ class Base(unittest.TestCase):
         notify._recent.clear()
         notify._unreachable_until[0] = 0.0
         jobs._device_events.clear()
+        cores._restart_owed.clear()          # a core restart owed by an earlier test is not this one's
         db.ensure_secrets()
         db.set_settings(public_host='203.0.113.7', panel_port=54321)
         certs.ensure_self_signed('203.0.113.7')

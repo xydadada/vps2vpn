@@ -207,5 +207,47 @@ class FailedStopIsAnError(tu.Base):
             cores.apply()
 
 
+class SchedulerKeepsAManualDisable(tu.Base):
+    """#172: enforce decides from a snapshot; an admin's "off" saved meanwhile stays."""
+
+    def run_with_admin_between(self, uid, **admin):
+        def admin_saves(_settings):          # runs after enforce read the accounts, before it writes
+            db.update_user(uid, **admin)
+            return False
+        with mock.patch.object(cores, 'can_slow_here', side_effect=admin_saves), mock.patch.object(jobs, 'log'):
+            jobs.enforce()
+        return db.user(uid)
+
+    def test_auto_resume_does_not_undo_it(self):
+        uid = db.add_user('synthetic', quota_gb=10)
+        db.update_user(uid, enabled=0, disabled_reason='quota')      # quota available again, not resumed yet
+        row = self.run_with_admin_between(uid, enabled=0, disabled_reason='manual')
+        self.assertEqual((row['enabled'], row['disabled_reason']), (0, 'manual'))
+        jobs.enforce()
+        row = db.user(uid)
+        self.assertEqual((row['enabled'], row['disabled_reason']), (0, 'manual'))
+
+    def test_auto_pause_does_not_relabel_it(self):
+        # relabelled "quota", it would be switched back on by itself after the next reset or top-up
+        uid = db.add_user('synthetic', quota_gb=1)
+        db.update_user(uid, used_down=2 << 30)
+        row = self.run_with_admin_between(uid, enabled=0, disabled_reason='manual')
+        self.assertEqual((row['enabled'], row['disabled_reason']), (0, 'manual'))
+
+    def test_end_of_a_device_pause_does_not_undo_it(self):
+        uid = db.add_user('synthetic', quota_gb=10)
+        db.update_user(uid, enabled=0, disabled_reason='devices', paused_until=1)
+        row = self.run_with_admin_between(uid, enabled=0, disabled_reason='manual')
+        self.assertEqual((row['enabled'], row['disabled_reason']), (0, 'manual'))
+
+    def test_without_an_admin_the_usual_transitions_still_happen(self):
+        a, b = db.add_user('a', quota_gb=10), db.add_user('b', quota_gb=1)
+        db.update_user(a, enabled=0, disabled_reason='quota')
+        db.update_user(b, used_down=2 << 30)
+        with mock.patch.object(jobs, 'log'):
+            self.assertTrue(jobs.enforce())
+        self.assertEqual((db.user(a)['enabled'], db.user(b)['disabled_reason']), (1, 'quota'))
+
+
 if __name__ == '__main__':
     unittest.main()
