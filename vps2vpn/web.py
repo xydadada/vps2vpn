@@ -910,6 +910,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.json({'error': 'bad node key'}, 403)
             try:
                 res = cluster.handle_sync(s, self.body_json(8 << 20))
+            except PermissionError:
+                return self.json({'error': 'bad node key'}, 403)
             except ValueError as e:      # a damaged account list is refused whole, nothing is changed
                 return self.json({'error': 'sync refused: %s' % str(e)[:200]}, 400)
             return self.json(res, 409 if res.get('conflict') else 200)
