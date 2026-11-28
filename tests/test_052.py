@@ -112,7 +112,7 @@ class FailedActivationRollsBack(unittest.TestCase):
         self.stub('systemctl', systemctl)
         env = dict(os.environ, STUBS=_posix(self.stubs), INSTALL=_posix(INSTALL_SH),
                    LIBDIR=_posix(os.path.join(self.tmp, 'lib')))
-        out = subprocess.run([TEST_BASH, '-c', self.SCRIPT], env=env, capture_output=True, text=True, timeout=120)
+        out = subprocess.run([TEST_BASH, '-c', self.SCRIPT], env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
         with open(os.path.join(self.tmp, 'lib', 'app', 'vps2vpn', 'which')) as f:
             return out, f.read()
 
@@ -135,6 +135,31 @@ class FailedActivationRollsBack(unittest.TestCase):
     def test_a_good_upgrade_keeps_the_new_code(self):
         out, live = self.run_install('exit 0\n')
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(live, 'new')
+
+    # #164: the old process can still be active after a refused restart (a unit that no longer loads, a job
+    # that timed out), and a failed enable means the panel does not come back after a reboot.
+    def test_refused_restart_with_the_old_process_still_active_rolls_back(self):
+        out, live = self.run_install('case "$1" in restart) [ -f "$STUBS/restarted" ] && exit 0; '
+                                     ': > "$STUBS/restarted"; exit 1 ;; esac\nexit 0\n')
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn('previous version was restored', out.stdout + out.stderr)
+        self.assertIn('systemctl restart vps2vpn failed', out.stdout + out.stderr)
+        self.assertEqual(live, 'old')
+
+    def test_failed_enable_with_an_active_panel_rolls_back(self):
+        out, live = self.run_install('case "$1" in enable) exit 1 ;; esac\nexit 0\n')
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn('previous version was restored', out.stdout + out.stderr)
+        self.assertIn('systemctl enable vps2vpn failed', out.stdout + out.stderr)
+        self.assertEqual(live, 'old')
+
+    def test_a_fresh_install_says_which_step_failed(self):
+        shutil.rmtree(os.path.join(self.tmp, 'lib', 'app', 'vps2vpn.old'))
+        out, live = self.run_install('case "$1" in enable) exit 1 ;; esac\nexit 0\n')
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn('systemctl enable vps2vpn failed', out.stdout + out.stderr)
+        self.assertIn('panel failed to start', out.stdout + out.stderr)
         self.assertEqual(live, 'new')
 
 

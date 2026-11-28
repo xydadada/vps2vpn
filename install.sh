@@ -658,7 +658,7 @@ restore_previous_app() {   # after a failed upgrade: the previous code back in p
 }
 
 do_install() {
-  local port=""
+  local port="" activation=""
   if [ -n "${V2V_PANEL_PORT:-}" ]; then check_panel_port "$V2V_PANEL_PORT"; port="--port $V2V_PANEL_PORT"; fi
   need_root; detect_arch; install_packages; prepare_system; install_cores; install_app; install_units
   local json setup_done
@@ -670,16 +670,18 @@ do_install() {
     fi
     die "vps2vpn init failed"
   fi
-  # a failing enable / restart must reach the check below (and its rollback), not end the script here (#120)
-  systemctl enable vps2vpn >/dev/null 2>&1 || true
-  systemctl restart vps2vpn || true
+  # a failing enable / restart must reach the check below (and its rollback), not end the script here (#120).
+  # It counts even when the old process is still active afterwards: then the new code is not what runs (#164).
+  systemctl enable vps2vpn >/dev/null 2>&1 || activation="systemctl enable vps2vpn failed"
+  systemctl restart vps2vpn || activation="${activation:+$activation; }systemctl restart vps2vpn failed"
   setup_done=$(printf '%s' "$json" | "$PY" -c 'import json,sys; print(1 if json.load(sys.stdin).get("setup_done") else 0)' 2>/dev/null || echo 0)
   if [ "$setup_done" = 1 ]; then          # configured (upgrade or --auto): write configs for the new version
     PYTHONPATH="$LIB/app" "$PY" -m vps2vpn apply --force >/dev/null 2>&1 || true
   fi
   sleep 1
-  if ! systemctl is-active --quiet vps2vpn; then
+  if [ -n "$activation" ] || ! systemctl is-active --quiet vps2vpn; then
     journalctl -u vps2vpn -n 30 --no-pager || true
+    [ -z "$activation" ] || warn "$activation"
     if [ -d "$LIB/app/vps2vpn.old" ]; then          # an upgrade broke the panel: put the previous version back
       restore_previous_app
       die "the new version failed to start, so the previous version was restored${SNAPSHOT:+ (database too: sudo bash $SNAPSHOT/restore.sh)}"
